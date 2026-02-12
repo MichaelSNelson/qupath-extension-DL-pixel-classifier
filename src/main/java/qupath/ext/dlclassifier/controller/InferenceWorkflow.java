@@ -195,7 +195,7 @@ public class InferenceWorkflow {
             }
             if (imgData == null) {
                 logger.warn("No image data available for inference");
-                return new InferenceResult(Map.of());
+                return new InferenceResult(0, 0, 0, false, "No image data available");
             }
 
             try {

@@ -205,7 +205,8 @@ public class TrainingWorkflow {
             }
             if (imgData == null) {
                 logger.warn("No image data available for training");
-                return new TrainingResult(null, 0.0, 0.0);
+                return new TrainingResult(null, name, 0.0, 0.0, 0, false,
+                        "No image data available");
             }
 
             ClassifierHandler handler = ClassifierRegistry.getHandler(config.getModelType())
