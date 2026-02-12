@@ -380,7 +380,8 @@ public class OutputGenerator {
         }
 
         ml.put("DL: Total pixels", totalPixels);
-        ml.put("DL: Classifier", metadata.getName());
+        // Classifier name stored in logger only; MeasurementList accepts only numeric values
+        logger.info("Measurements from classifier: {}", metadata.getName());
 
         logger.info("Added {} measurements", numClasses * 2 + 2);
     }

@@ -18,6 +18,7 @@ import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.utilities.AnnotationExtractor;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.scripting.QP;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.projects.ProjectImageEntry;
@@ -200,11 +201,11 @@ public class TrainingWorkflow {
         public TrainingResult run() {
             ImageData<BufferedImage> imgData = this.imageData;
             if (imgData == null) {
-                imgData = qupath.lib.scripting.QP.getCurrentImageData();
+                imgData = QP.getCurrentImageData();
             }
             if (imgData == null) {
-                return new TrainingResult(null, name, 0, 0, 0, false,
-                        "No image data available");
+                logger.warn("No image data available for training");
+                return new TrainingResult(null, 0.0, 0.0);
             }
 
             ClassifierHandler handler = ClassifierRegistry.getHandler(config.getModelType())

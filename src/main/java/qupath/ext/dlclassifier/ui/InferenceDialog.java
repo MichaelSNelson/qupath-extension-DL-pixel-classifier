@@ -215,7 +215,7 @@ public class InferenceDialog {
             nameCol.setPrefWidth(150);
 
             TableColumn<ClassifierMetadata, String> typeCol = new TableColumn<>("Type");
-            typeCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().getClassifierType()));
+            typeCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().getModelType()));
             typeCol.setPrefWidth(80);
 
             TableColumn<ClassifierMetadata, String> channelsCol = new TableColumn<>("Channels");
@@ -482,13 +482,13 @@ public class InferenceDialog {
 
             // Update info label
             StringBuilder info = new StringBuilder();
-            info.append("Architecture: ").append(classifier.getClassifierType());
+            info.append("Architecture: ").append(classifier.getModelType());
             if (classifier.getBackbone() != null) {
                 info.append(" (").append(classifier.getBackbone()).append(")");
             }
             info.append("\n");
             info.append("Input: ").append(classifier.getInputChannels()).append(" channels, ");
-            info.append(classifier.getTileSize()).append("x").append(classifier.getTileSize()).append(" tiles\n");
+            info.append(classifier.getInputWidth()).append("x").append(classifier.getInputHeight()).append(" tiles\n");
             info.append("Classes: ").append(String.join(", ", classifier.getClassNames()));
 
             classifierInfoLabel.setText(info.toString());
@@ -499,7 +499,7 @@ public class InferenceDialog {
             channelPanel.setExpectedChannels(classifier.getExpectedChannelNames());
 
             // Update tile size to match classifier
-            tileSizeSpinner.getValueFactory().setValue(classifier.getTileSize());
+            tileSizeSpinner.getValueFactory().setValue(classifier.getInputWidth());
 
             updateValidation();
         }

@@ -354,7 +354,7 @@ public class TrainingDialog {
             int row = 0;
 
             // Architecture selection
-            List<String> architectures = ClassifierRegistry.getRegisteredTypes();
+            List<String> architectures = new ArrayList<>(ClassifierRegistry.getAllTypes());
             architectureCombo = new ComboBox<>(FXCollections.observableArrayList(architectures));
             architectureCombo.setValue(architectures.isEmpty() ? "unet" : architectures.get(0));
             architectureCombo.setTooltip(new Tooltip("Model architecture for pixel classification"));

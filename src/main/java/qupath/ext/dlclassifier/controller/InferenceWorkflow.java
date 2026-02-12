@@ -18,6 +18,7 @@ import qupath.ext.dlclassifier.utilities.OutputGenerator;
 import qupath.ext.dlclassifier.utilities.TileProcessor;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.scripting.QP;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.objects.PathObject;
@@ -29,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
@@ -189,10 +191,11 @@ public class InferenceWorkflow {
         public InferenceResult run() {
             ImageData<BufferedImage> imgData = this.imageData;
             if (imgData == null) {
-                imgData = qupath.lib.scripting.QP.getCurrentImageData();
+                imgData = QP.getCurrentImageData();
             }
             if (imgData == null) {
-                return new InferenceResult(0, 0, 0, false, "No image data available");
+                logger.warn("No image data available for inference");
+                return new InferenceResult(Map.of());
             }
 
             try {
@@ -521,9 +524,14 @@ public class InferenceWorkflow {
                     inferenceConfig
             );
 
-            // Collect results
+            // Collect results - convert per-tile class probabilities to 1x1xC arrays
+            // TODO: Use pixel-level inference for full per-pixel predictions
             if (result != null && result.predictions() != null) {
-                allResults.addAll(result.predictions());
+                for (float[] probs : result.predictions().values()) {
+                    float[][][] tileResult = new float[1][1][probs.length];
+                    tileResult[0][0] = probs;
+                    allResults.add(tileResult);
+                }
             }
         }
 
