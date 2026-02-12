@@ -41,8 +41,8 @@ dependencies {
     shadow(libs.snakeyaml)
     shadow(libs.gson)
 
-    // HTTP client for REST API communication
-    shadow("com.squareup.okhttp3:okhttp:4.12.0")
+    // HTTP client for REST API communication (not provided by QuPath, must be bundled)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Groovy for scripting support
     shadow(libs.bundles.groovy)
