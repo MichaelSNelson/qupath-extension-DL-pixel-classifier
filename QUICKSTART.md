@@ -229,13 +229,40 @@ qupath-extension-DL-pixel-classifier/
 
 The extension stores preferences via QuPath's preference system. Defaults:
 
+**Server & Processing:**
+
 | Preference | Default | Where to change |
 |-----------|---------|-----------------|
 | Server host | `localhost` | Extensions > DL Pixel Classifier > Utilities > Server Settings |
 | Server port | `8765` | Extensions > DL Pixel Classifier > Utilities > Server Settings |
-| Default tile size | `512` | Training dialog |
+| Default tile size | `512` | Training / Inference dialog |
 | Default epochs | `50` | Training dialog |
 | Default batch size | `8` | Training dialog |
+
+**Training Dialog (remembered across sessions):**
+
+| Preference | Default | Description |
+|-----------|---------|-------------|
+| Architecture | `unet` | Last used model architecture |
+| Backbone | `resnet34` | Last used encoder backbone |
+| Validation split | `20%` | Percentage of data held for validation |
+| Horizontal flip | `true` | Augmentation: random horizontal flip |
+| Vertical flip | `true` | Augmentation: random vertical flip |
+| Rotation | `true` | Augmentation: random 90-degree rotation |
+| Color jitter | `false` | Augmentation: brightness/contrast variation |
+| Elastic deformation | `false` | Augmentation: elastic distortion |
+
+**Inference Dialog (remembered across sessions):**
+
+| Preference | Default | Description |
+|-----------|---------|-------------|
+| Output type | `MEASUREMENTS` | How to output classification results |
+| Blend mode | `LINEAR` | How overlapping tiles are merged |
+| Smoothing | `1.0` | Boundary smoothing amount |
+| Apply to selected | `true` | Apply to selected annotations only |
+| Create backup | `false` | Back up measurements before overwriting |
+
+> **Note:** Dialog settings are saved automatically when you click "Start Training" or "Apply". The next time you open the dialog, your previous settings are restored.
 
 If the Python server runs on a different machine (e.g., a GPU workstation), change the host/port in Server Settings to point to that machine's IP and port.
 

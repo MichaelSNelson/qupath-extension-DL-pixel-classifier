@@ -70,6 +70,49 @@ public final class DLClassifierPreferences {
     private static final StringProperty defaultNormalization = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultNormalization", "PERCENTILE_99");
 
+    // ==================== Training Dialog Preferences ====================
+
+    private static final StringProperty lastArchitecture = PathPrefs.createPersistentPreference(
+            "dlclassifier.lastArchitecture", "unet");
+
+    private static final StringProperty lastBackbone = PathPrefs.createPersistentPreference(
+            "dlclassifier.lastBackbone", "resnet34");
+
+    private static final IntegerProperty validationSplit = PathPrefs.createPersistentPreference(
+            "dlclassifier.validationSplit", 20);
+
+    private static final BooleanProperty augFlipHorizontal = PathPrefs.createPersistentPreference(
+            "dlclassifier.augFlipHorizontal", true);
+
+    private static final BooleanProperty augFlipVertical = PathPrefs.createPersistentPreference(
+            "dlclassifier.augFlipVertical", true);
+
+    private static final BooleanProperty augRotation = PathPrefs.createPersistentPreference(
+            "dlclassifier.augRotation", true);
+
+    private static final BooleanProperty augColorJitter = PathPrefs.createPersistentPreference(
+            "dlclassifier.augColorJitter", false);
+
+    private static final BooleanProperty augElasticDeform = PathPrefs.createPersistentPreference(
+            "dlclassifier.augElasticDeform", false);
+
+    // ==================== Inference Dialog Preferences ====================
+
+    private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
+            "dlclassifier.lastOutputType", "MEASUREMENTS");
+
+    private static final StringProperty lastBlendMode = PathPrefs.createPersistentPreference(
+            "dlclassifier.lastBlendMode", "LINEAR");
+
+    private static final DoubleProperty smoothing = PathPrefs.createPersistentPreference(
+            "dlclassifier.smoothing", 1.0);
+
+    private static final BooleanProperty applyToSelected = PathPrefs.createPersistentPreference(
+            "dlclassifier.applyToSelected", true);
+
+    private static final BooleanProperty createBackup = PathPrefs.createPersistentPreference(
+            "dlclassifier.createBackup", false);
+
     private DLClassifierPreferences() {
         // Utility class - no instantiation
     }
@@ -276,5 +319,165 @@ public final class DLClassifierPreferences {
 
     public static StringProperty defaultNormalizationProperty() {
         return defaultNormalization;
+    }
+
+    // ==================== Training Dialog Preferences ====================
+
+    public static String getLastArchitecture() {
+        return lastArchitecture.get();
+    }
+
+    public static void setLastArchitecture(String architecture) {
+        lastArchitecture.set(architecture);
+    }
+
+    public static StringProperty lastArchitectureProperty() {
+        return lastArchitecture;
+    }
+
+    public static String getLastBackbone() {
+        return lastBackbone.get();
+    }
+
+    public static void setLastBackbone(String backbone) {
+        lastBackbone.set(backbone);
+    }
+
+    public static StringProperty lastBackboneProperty() {
+        return lastBackbone;
+    }
+
+    public static int getValidationSplit() {
+        return validationSplit.get();
+    }
+
+    public static void setValidationSplit(int split) {
+        validationSplit.set(split);
+    }
+
+    public static IntegerProperty validationSplitProperty() {
+        return validationSplit;
+    }
+
+    public static boolean isAugFlipHorizontal() {
+        return augFlipHorizontal.get();
+    }
+
+    public static void setAugFlipHorizontal(boolean flip) {
+        augFlipHorizontal.set(flip);
+    }
+
+    public static BooleanProperty augFlipHorizontalProperty() {
+        return augFlipHorizontal;
+    }
+
+    public static boolean isAugFlipVertical() {
+        return augFlipVertical.get();
+    }
+
+    public static void setAugFlipVertical(boolean flip) {
+        augFlipVertical.set(flip);
+    }
+
+    public static BooleanProperty augFlipVerticalProperty() {
+        return augFlipVertical;
+    }
+
+    public static boolean isAugRotation() {
+        return augRotation.get();
+    }
+
+    public static void setAugRotation(boolean rotation) {
+        augRotation.set(rotation);
+    }
+
+    public static BooleanProperty augRotationProperty() {
+        return augRotation;
+    }
+
+    public static boolean isAugColorJitter() {
+        return augColorJitter.get();
+    }
+
+    public static void setAugColorJitter(boolean jitter) {
+        augColorJitter.set(jitter);
+    }
+
+    public static BooleanProperty augColorJitterProperty() {
+        return augColorJitter;
+    }
+
+    public static boolean isAugElasticDeform() {
+        return augElasticDeform.get();
+    }
+
+    public static void setAugElasticDeform(boolean deform) {
+        augElasticDeform.set(deform);
+    }
+
+    public static BooleanProperty augElasticDeformProperty() {
+        return augElasticDeform;
+    }
+
+    // ==================== Inference Dialog Preferences ====================
+
+    public static String getLastOutputType() {
+        return lastOutputType.get();
+    }
+
+    public static void setLastOutputType(String type) {
+        lastOutputType.set(type);
+    }
+
+    public static StringProperty lastOutputTypeProperty() {
+        return lastOutputType;
+    }
+
+    public static String getLastBlendMode() {
+        return lastBlendMode.get();
+    }
+
+    public static void setLastBlendMode(String mode) {
+        lastBlendMode.set(mode);
+    }
+
+    public static StringProperty lastBlendModeProperty() {
+        return lastBlendMode;
+    }
+
+    public static double getSmoothing() {
+        return smoothing.get();
+    }
+
+    public static void setSmoothing(double value) {
+        smoothing.set(value);
+    }
+
+    public static DoubleProperty smoothingProperty() {
+        return smoothing;
+    }
+
+    public static boolean isApplyToSelected() {
+        return applyToSelected.get();
+    }
+
+    public static void setApplyToSelected(boolean selected) {
+        applyToSelected.set(selected);
+    }
+
+    public static BooleanProperty applyToSelectedProperty() {
+        return applyToSelected;
+    }
+
+    public static boolean isCreateBackup() {
+        return createBackup.get();
+    }
+
+    public static void setCreateBackup(boolean backup) {
+        createBackup.set(backup);
+    }
+
+    public static BooleanProperty createBackupProperty() {
+        return createBackup;
     }
 }

@@ -26,9 +26,12 @@ import qupath.lib.roi.interfaces.ROI;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -486,92 +489,146 @@ public class InferenceWorkflow {
         logger.info("Generated {} tiles for region", tileSpecs.size());
         if (progress != null) progress.log("Generated " + tileSpecs.size() + " tiles");
 
+        // Branch on output type: MEASUREMENTS uses aggregated tile-level inference,
+        // OBJECTS and OVERLAY need full pixel-level probability maps
+        boolean usePixelInference = inferenceConfig.getOutputType() != InferenceConfig.OutputType.MEASUREMENTS;
+
         // Process in batches
         int batchSize = tileProcessor.getMaxTilesInMemory();
         List<float[][][]> allResults = new ArrayList<>();
+        Path tempDir = null;
 
-        for (int i = 0; i < tileSpecs.size(); i += batchSize) {
-            if (progress != null && progress.isCancelled()) {
-                return i;
+        try {
+            if (usePixelInference) {
+                tempDir = Files.createTempDirectory("dl-pixel-inference-");
+                logger.info("Using pixel-level inference, temp dir: {}", tempDir);
             }
 
-            int end = Math.min(i + batchSize, tileSpecs.size());
-            List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
-
-            if (progress != null) {
-                progress.setDetail(String.format("Processing tiles %d-%d of %d", i + 1, end, tileSpecs.size()));
-                progress.setCurrentProgress((double) i / tileSpecs.size());
-            }
-
-            // Read and encode tiles
-            List<ClassifierClient.TileData> tileDataList = new ArrayList<>();
-            for (TileProcessor.TileSpec spec : batch) {
-                BufferedImage tileImage = tileProcessor.readTile(spec, server);
-                String encoded = encodeTile(tileImage);
-                tileDataList.add(new ClassifierClient.TileData(
-                        String.valueOf(spec.index()),
-                        encoded,
-                        spec.x(),
-                        spec.y()
-                ));
-            }
-
-            // Run inference
-            ClassifierClient.InferenceResult result = client.runInference(
-                    metadata.getId(),
-                    tileDataList,
-                    channelConfig,
-                    inferenceConfig
-            );
-
-            // Collect results - convert per-tile class probabilities to 1x1xC arrays
-            // TODO: Use pixel-level inference for full per-pixel predictions
-            if (result != null && result.predictions() != null) {
-                for (float[] probs : result.predictions().values()) {
-                    float[][][] tileResult = new float[1][1][probs.length];
-                    tileResult[0][0] = probs;
-                    allResults.add(tileResult);
+            for (int i = 0; i < tileSpecs.size(); i += batchSize) {
+                if (progress != null && progress.isCancelled()) {
+                    return i;
                 }
-            }
-        }
 
-        if (progress != null) progress.setCurrentProgress(1.0);
+                int end = Math.min(i + batchSize, tileSpecs.size());
+                List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
 
-        // Create output generator
-        OutputGenerator outputGenerator = new OutputGenerator(imageData, metadata, inferenceConfig);
-
-        // Generate output based on type
-        switch (inferenceConfig.getOutputType()) {
-            case MEASUREMENTS:
-                outputGenerator.addMeasurements(parentObject, allResults, tileSpecs);
-                if (progress != null) progress.log("Added measurements to annotation");
-                break;
-
-            case OBJECTS:
-                // Use the new merged-map approach for proper cross-tile object handling
-                int numClasses = metadata.getClasses().size();
-                List<PathObject> objects = outputGenerator.createObjectsFromTiles(
-                        tileProcessor,
-                        allResults,
-                        tileSpecs,
-                        region,
-                        numClasses,
-                        inferenceConfig.getObjectType()
-                );
-                imageData.getHierarchy().addObjects(objects);
                 if (progress != null) {
-                    progress.log("Created " + objects.size() + " " +
-                            inferenceConfig.getObjectType().name().toLowerCase() + " objects");
+                    progress.setDetail(String.format("Processing tiles %d-%d of %d", i + 1, end, tileSpecs.size()));
+                    progress.setCurrentProgress((double) i / tileSpecs.size());
                 }
-                break;
 
-            case OVERLAY:
-                // Overlay is handled by OverlayService
-                if (progress != null) progress.log("Classification overlay created");
-                break;
+                // Read and encode tiles
+                List<ClassifierClient.TileData> tileDataList = new ArrayList<>();
+                for (TileProcessor.TileSpec spec : batch) {
+                    BufferedImage tileImage = tileProcessor.readTile(spec, server);
+                    String encoded = encodeTile(tileImage);
+                    tileDataList.add(new ClassifierClient.TileData(
+                            String.valueOf(spec.index()),
+                            encoded,
+                            spec.x(),
+                            spec.y()
+                    ));
+                }
+
+                if (usePixelInference) {
+                    // Pixel-level inference: get full probability maps for each tile
+                    ClassifierClient.PixelInferenceResult pixelResult = client.runPixelInference(
+                            metadata.getId(),
+                            tileDataList,
+                            channelConfig,
+                            inferenceConfig,
+                            tempDir
+                    );
+
+                    if (pixelResult != null && pixelResult.outputPaths() != null) {
+                        int tileSize = inferenceConfig.getTileSize();
+                        for (ClassifierClient.TileData tile : tileDataList) {
+                            String outputPath = pixelResult.outputPaths().get(tile.id());
+                            if (outputPath != null) {
+                                float[][][] probMap = ClassifierClient.readProbabilityMap(
+                                        Path.of(outputPath),
+                                        pixelResult.numClasses(),
+                                        tileSize,
+                                        tileSize
+                                );
+                                allResults.add(probMap);
+                            }
+                        }
+                    }
+                } else {
+                    // Aggregated tile-level inference for MEASUREMENTS output
+                    ClassifierClient.InferenceResult result = client.runInference(
+                            metadata.getId(),
+                            tileDataList,
+                            channelConfig,
+                            inferenceConfig
+                    );
+
+                    if (result != null && result.predictions() != null) {
+                        for (float[] probs : result.predictions().values()) {
+                            float[][][] tileResult = new float[1][1][probs.length];
+                            tileResult[0][0] = probs;
+                            allResults.add(tileResult);
+                        }
+                    }
+                }
+            }
+
+            if (progress != null) progress.setCurrentProgress(1.0);
+
+            // Create output generator
+            OutputGenerator outputGenerator = new OutputGenerator(imageData, metadata, inferenceConfig);
+
+            // Generate output based on type
+            switch (inferenceConfig.getOutputType()) {
+                case MEASUREMENTS:
+                    outputGenerator.addMeasurements(parentObject, allResults, tileSpecs);
+                    if (progress != null) progress.log("Added measurements to annotation");
+                    break;
+
+                case OBJECTS:
+                    // Use the new merged-map approach for proper cross-tile object handling
+                    int numClasses = metadata.getClasses().size();
+                    List<PathObject> objects = outputGenerator.createObjectsFromTiles(
+                            tileProcessor,
+                            allResults,
+                            tileSpecs,
+                            region,
+                            numClasses,
+                            inferenceConfig.getObjectType()
+                    );
+                    imageData.getHierarchy().addObjects(objects);
+                    if (progress != null) {
+                        progress.log("Created " + objects.size() + " " +
+                                inferenceConfig.getObjectType().name().toLowerCase() + " objects");
+                    }
+                    break;
+
+                case OVERLAY:
+                    // Overlay is handled by OverlayService
+                    if (progress != null) progress.log("Classification overlay created");
+                    break;
+            }
+
+            return tileSpecs.size();
+        } finally {
+            // Clean up temp directory for pixel inference
+            if (tempDir != null) {
+                try {
+                    Files.walk(tempDir)
+                            .sorted(Comparator.reverseOrder())
+                            .forEach(path -> {
+                                try {
+                                    Files.deleteIfExists(path);
+                                } catch (IOException e) {
+                                    logger.warn("Failed to delete temp file: {}", path, e);
+                                }
+                            });
+                } catch (IOException e) {
+                    logger.warn("Failed to clean up temp directory: {}", tempDir, e);
+                }
+            }
         }
-
-        return tileSpecs.size();
     }
 
     /**

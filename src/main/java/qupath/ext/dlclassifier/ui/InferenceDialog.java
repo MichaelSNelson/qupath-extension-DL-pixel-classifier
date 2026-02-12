@@ -265,9 +265,13 @@ public class InferenceDialog {
 
             int row = 0;
 
-            // Output type
+            // Output type - restore from preferences
             outputTypeCombo = new ComboBox<>(FXCollections.observableArrayList(InferenceConfig.OutputType.values()));
-            outputTypeCombo.setValue(InferenceConfig.OutputType.MEASUREMENTS);
+            try {
+                outputTypeCombo.setValue(InferenceConfig.OutputType.valueOf(DLClassifierPreferences.getLastOutputType()));
+            } catch (IllegalArgumentException e) {
+                outputTypeCombo.setValue(InferenceConfig.OutputType.MEASUREMENTS);
+            }
             outputTypeCombo.setTooltip(new Tooltip("How to output classification results"));
             outputTypeCombo.valueProperty().addListener((obs, old, newVal) -> updateOutputOptions(newVal));
 
@@ -306,8 +310,8 @@ public class InferenceDialog {
             grid.add(holeFillingSpinner, 1, row);
             row++;
 
-            // Smoothing
-            smoothingSpinner = new Spinner<>(0.0, 10.0, 1.0, 0.5);
+            // Smoothing - restore from preferences
+            smoothingSpinner = new Spinner<>(0.0, 10.0, DLClassifierPreferences.getSmoothing(), 0.5);
             smoothingSpinner.setEditable(true);
             smoothingSpinner.setPrefWidth(100);
             smoothingSpinner.setTooltip(new Tooltip("Boundary smoothing amount"));
@@ -315,8 +319,8 @@ public class InferenceDialog {
             grid.add(new Label("Boundary Smoothing:"), 0, row);
             grid.add(smoothingSpinner, 1, row);
 
-            // Initially disable object-specific options
-            updateOutputOptions(InferenceConfig.OutputType.MEASUREMENTS);
+            // Set object-specific options based on restored output type
+            updateOutputOptions(outputTypeCombo.getValue());
 
             TitledPane pane = new TitledPane("OUTPUT OPTIONS", grid);
             pane.setExpanded(true);
@@ -377,9 +381,13 @@ public class InferenceDialog {
             overlapSpinner = new Spinner<>(0, 256, DLClassifierPreferences.getTileOverlap(), 8);
             // Don't add to grid - it's computed from overlapPercentSpinner
 
-            // Blend mode
+            // Blend mode - restore from preferences
             blendModeCombo = new ComboBox<>(FXCollections.observableArrayList(InferenceConfig.BlendMode.values()));
-            blendModeCombo.setValue(InferenceConfig.BlendMode.LINEAR);
+            try {
+                blendModeCombo.setValue(InferenceConfig.BlendMode.valueOf(DLClassifierPreferences.getLastBlendMode()));
+            } catch (IllegalArgumentException e) {
+                blendModeCombo.setValue(InferenceConfig.BlendMode.LINEAR);
+            }
             blendModeCombo.setTooltip(new Tooltip("How to blend overlapping tiles"));
 
             grid.add(new Label("Blend Mode:"), 0, row);
@@ -431,14 +439,15 @@ public class InferenceDialog {
 
             applyToSelectedRadio = new RadioButton("Apply to selected annotations only");
             applyToSelectedRadio.setToggleGroup(scopeGroup);
-            applyToSelectedRadio.setSelected(true);
+            applyToSelectedRadio.setSelected(DLClassifierPreferences.isApplyToSelected());
 
             applyToAllRadio = new RadioButton("Apply to all annotations");
             applyToAllRadio.setToggleGroup(scopeGroup);
+            applyToAllRadio.setSelected(!DLClassifierPreferences.isApplyToSelected());
 
-            // Backup option
+            // Backup option - restore from preferences
             createBackupCheck = new CheckBox("Create backup of annotation measurements before applying");
-            createBackupCheck.setSelected(false);
+            createBackupCheck.setSelected(DLClassifierPreferences.isCreateBackup());
             createBackupCheck.setTooltip(new Tooltip("Save existing measurements before overwriting"));
 
             content.getChildren().addAll(
@@ -519,6 +528,13 @@ public class InferenceDialog {
         }
 
         private InferenceDialogResult buildResult() {
+            // Save dialog settings to preferences for next session
+            DLClassifierPreferences.setLastOutputType(outputTypeCombo.getValue().name());
+            DLClassifierPreferences.setLastBlendMode(blendModeCombo.getValue().name());
+            DLClassifierPreferences.setSmoothing(smoothingSpinner.getValue());
+            DLClassifierPreferences.setApplyToSelected(applyToSelectedRadio.isSelected());
+            DLClassifierPreferences.setCreateBackup(createBackupCheck.isSelected());
+
             ClassifierMetadata classifier = classifierTable.getSelectionModel().getSelectedItem();
 
             // Calculate pixel overlap from percentage

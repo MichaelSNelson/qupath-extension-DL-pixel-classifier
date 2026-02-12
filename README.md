@@ -9,6 +9,8 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Multi-channel support** with per-channel normalization
 - **Real-time progress** with separate train/val loss charting
 - **Multiple output types**: Measurements, detection objects, or classification overlays
+- **Pixel-level inference** for OBJECTS and OVERLAY output types with full per-pixel probability maps
+- **Dialog preference persistence** -- training and inference settings are remembered across sessions
 - **Pluggable architecture** supporting UNet, SegFormer, and custom ONNX models
 - **REST API communication** with Python deep learning server
 - **Groovy scripting API** for batch processing
@@ -230,7 +232,8 @@ qupath-extension-DL-pixel-classifier/
 | GET | /api/v1/models | List available models |
 | POST | /api/v1/train | Start training job |
 | GET | /api/v1/train/{job_id}/status | Training progress (train_loss, val_loss, accuracy) |
-| POST | /api/v1/inference | Run inference |
+| POST | /api/v1/inference | Run tile-level aggregated inference (for MEASUREMENTS) |
+| POST | /api/v1/inference/pixel | Run pixel-level inference returning probability maps (for OBJECTS/OVERLAY) |
 
 ## Supported Image Types
 

@@ -356,7 +356,13 @@ public class TrainingDialog {
             // Architecture selection
             List<String> architectures = new ArrayList<>(ClassifierRegistry.getAllTypes());
             architectureCombo = new ComboBox<>(FXCollections.observableArrayList(architectures));
-            architectureCombo.setValue(architectures.isEmpty() ? "unet" : architectures.get(0));
+            // Restore last used architecture from preferences, falling back to first in list
+            String savedArchitecture = DLClassifierPreferences.getLastArchitecture();
+            if (architectures.contains(savedArchitecture)) {
+                architectureCombo.setValue(savedArchitecture);
+            } else {
+                architectureCombo.setValue(architectures.isEmpty() ? "unet" : architectures.get(0));
+            }
             architectureCombo.setTooltip(new Tooltip("Model architecture for pixel classification"));
             architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateBackboneOptions(newVal));
 
@@ -474,7 +480,7 @@ public class TrainingDialog {
             row++;
 
             // Validation split
-            validationSplitSpinner = new Spinner<>(5, 50, 20, 5);
+            validationSplitSpinner = new Spinner<>(5, 50, DLClassifierPreferences.getValidationSplit(), 5);
             validationSplitSpinner.setEditable(true);
             validationSplitSpinner.setPrefWidth(100);
             validationSplitSpinner.setTooltip(new Tooltip("Percentage of data to use for validation"));
@@ -551,23 +557,23 @@ public class TrainingDialog {
             content.setPadding(new Insets(10));
 
             flipHorizontalCheck = new CheckBox("Horizontal flip");
-            flipHorizontalCheck.setSelected(true);
+            flipHorizontalCheck.setSelected(DLClassifierPreferences.isAugFlipHorizontal());
             flipHorizontalCheck.setTooltip(new Tooltip("Randomly flip images horizontally"));
 
             flipVerticalCheck = new CheckBox("Vertical flip");
-            flipVerticalCheck.setSelected(true);
+            flipVerticalCheck.setSelected(DLClassifierPreferences.isAugFlipVertical());
             flipVerticalCheck.setTooltip(new Tooltip("Randomly flip images vertically"));
 
             rotationCheck = new CheckBox("Random rotation (90 deg)");
-            rotationCheck.setSelected(true);
+            rotationCheck.setSelected(DLClassifierPreferences.isAugRotation());
             rotationCheck.setTooltip(new Tooltip("Randomly rotate images by 90 degree increments"));
 
             colorJitterCheck = new CheckBox("Color jitter");
-            colorJitterCheck.setSelected(false);
+            colorJitterCheck.setSelected(DLClassifierPreferences.isAugColorJitter());
             colorJitterCheck.setTooltip(new Tooltip("Randomly adjust brightness, contrast, saturation"));
 
             elasticCheck = new CheckBox("Elastic deformation");
-            elasticCheck.setSelected(false);
+            elasticCheck.setSelected(DLClassifierPreferences.isAugElasticDeform());
             elasticCheck.setTooltip(new Tooltip("Apply elastic deformation augmentation"));
 
             content.getChildren().addAll(
@@ -653,7 +659,11 @@ public class TrainingDialog {
             }
 
             backboneCombo.setItems(FXCollections.observableArrayList(backboneList));
-            if (!backboneList.isEmpty()) {
+            // Restore last used backbone from preferences if it's available for this architecture
+            String savedBackbone = DLClassifierPreferences.getLastBackbone();
+            if (backboneList.contains(savedBackbone)) {
+                backboneCombo.setValue(savedBackbone);
+            } else if (!backboneList.isEmpty()) {
                 backboneCombo.setValue(backboneList.get(0));
             }
 
@@ -713,6 +723,16 @@ public class TrainingDialog {
         }
 
         private TrainingDialogResult buildResult() {
+            // Save dialog settings to preferences for next session
+            DLClassifierPreferences.setLastArchitecture(architectureCombo.getValue());
+            DLClassifierPreferences.setLastBackbone(backboneCombo.getValue());
+            DLClassifierPreferences.setValidationSplit(validationSplitSpinner.getValue());
+            DLClassifierPreferences.setAugFlipHorizontal(flipHorizontalCheck.isSelected());
+            DLClassifierPreferences.setAugFlipVertical(flipVerticalCheck.isSelected());
+            DLClassifierPreferences.setAugRotation(rotationCheck.isSelected());
+            DLClassifierPreferences.setAugColorJitter(colorJitterCheck.isSelected());
+            DLClassifierPreferences.setAugElasticDeform(elasticCheck.isSelected());
+
             // Get frozen layers for transfer learning
             List<String> frozenLayers = new ArrayList<>();
             if (usePretrainedCheck.isSelected() && layerFreezePanel != null) {
