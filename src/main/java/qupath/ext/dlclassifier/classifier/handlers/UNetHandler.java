@@ -151,11 +151,19 @@ public class UNetHandler implements ClassifierHandler {
     public Map<String, Object> getArchitectureParams(TrainingConfig config) {
         Map<String, Object> params = new HashMap<>();
         params.put("architecture", "unet");
-        params.put("backbone", config.getBackbone());
+        params.put("available_backbones", BACKBONES);
         params.put("encoder_depth", 5);
         params.put("decoder_channels", List.of(256, 128, 64, 32, 16));
-        params.put("use_pretrained", config.isUsePretrainedWeights());
-        params.put("freeze_encoder_layers", config.getFreezeEncoderLayers());
+
+        if (config != null) {
+            params.put("backbone", config.getBackbone());
+            params.put("use_pretrained", config.isUsePretrainedWeights());
+            params.put("freeze_encoder_layers", config.getFreezeEncoderLayers());
+        } else {
+            params.put("backbone", "resnet34");
+            params.put("use_pretrained", true);
+            params.put("freeze_encoder_layers", 0);
+        }
         return params;
     }
 
