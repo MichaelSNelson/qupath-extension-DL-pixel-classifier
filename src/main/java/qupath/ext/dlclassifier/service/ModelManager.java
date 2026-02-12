@@ -1,0 +1,365 @@
+package qupath.ext.dlclassifier.service;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.projects.Project;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Stream;
+
+/**
+ * Manages classifier persistence and loading.
+ * <p>
+ * Classifiers are stored in the project's classifiers/dl directory or
+ * in a user-level directory for shared classifiers.
+ *
+ * @author UW-LOCI
+ * @since 0.1.0
+ */
+public class ModelManager {
+
+    private static final Logger logger = LoggerFactory.getLogger(ModelManager.class);
+    private static final String CLASSIFIERS_DIR = "classifiers/dl";
+    private static final String METADATA_FILE = "metadata.json";
+
+    private final Gson gson;
+    private final Path userClassifiersDir;
+
+    public ModelManager() {
+        this.gson = new GsonBuilder().setPrettyPrinting().create();
+
+        // User-level classifiers directory
+        String userHome = System.getProperty("user.home");
+        this.userClassifiersDir = Path.of(userHome, ".qupath", "classifiers", "dl");
+    }
+
+    /**
+     * Lists all available classifiers.
+     *
+     * @return list of classifier metadata
+     */
+    public List<ClassifierMetadata> listClassifiers() {
+        List<ClassifierMetadata> classifiers = new ArrayList<>();
+
+        // Load from project
+        Project<?> project = QuPathGUI.getInstance().getProject();
+        if (project != null) {
+            Path projectDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR);
+            classifiers.addAll(loadClassifiersFromDir(projectDir));
+        }
+
+        // Load from user directory
+        classifiers.addAll(loadClassifiersFromDir(userClassifiersDir));
+
+        logger.info("Found {} classifiers", classifiers.size());
+        return classifiers;
+    }
+
+    /**
+     * Loads classifiers from a directory.
+     */
+    private List<ClassifierMetadata> loadClassifiersFromDir(Path dir) {
+        List<ClassifierMetadata> classifiers = new ArrayList<>();
+
+        if (!Files.exists(dir)) {
+            return classifiers;
+        }
+
+        try (Stream<Path> paths = Files.list(dir)) {
+            paths.filter(Files::isDirectory)
+                    .forEach(classifierDir -> {
+                        try {
+                            ClassifierMetadata metadata = loadMetadata(classifierDir);
+                            if (metadata != null) {
+                                classifiers.add(metadata);
+                            }
+                        } catch (Exception e) {
+                            logger.warn("Failed to load classifier from {}: {}",
+                                    classifierDir, e.getMessage());
+                        }
+                    });
+        } catch (IOException e) {
+            logger.warn("Failed to list classifiers in {}: {}", dir, e.getMessage());
+        }
+
+        return classifiers;
+    }
+
+    /**
+     * Loads a classifier by ID.
+     *
+     * @param classifierId the classifier ID
+     * @return the classifier metadata, or null if not found
+     */
+    public ClassifierMetadata loadClassifier(String classifierId) {
+        // Try project first
+        Project<?> project = QuPathGUI.getInstance().getProject();
+        if (project != null) {
+            Path projectDir = project.getPath().getParent()
+                    .resolve(CLASSIFIERS_DIR)
+                    .resolve(classifierId);
+            if (Files.exists(projectDir)) {
+                return loadMetadata(projectDir);
+            }
+        }
+
+        // Try user directory
+        Path userDir = userClassifiersDir.resolve(classifierId);
+        if (Files.exists(userDir)) {
+            return loadMetadata(userDir);
+        }
+
+        logger.warn("Classifier not found: {}", classifierId);
+        return null;
+    }
+
+    /**
+     * Loads metadata from a classifier directory.
+     */
+    private ClassifierMetadata loadMetadata(Path classifierDir) {
+        Path metadataPath = classifierDir.resolve(METADATA_FILE);
+        if (!Files.exists(metadataPath)) {
+            return null;
+        }
+
+        try {
+            String json = Files.readString(metadataPath);
+            JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+
+            // Parse metadata
+            String id = obj.get("id").getAsString();
+            String name = obj.get("name").getAsString();
+            String description = obj.has("description") ? obj.get("description").getAsString() : "";
+
+            JsonObject arch = obj.getAsJsonObject("architecture");
+            String modelType = arch.get("type").getAsString();
+            String backbone = arch.has("backbone") ? arch.get("backbone").getAsString() : "";
+            int inputWidth = arch.has("input_width") ? arch.get("input_width").getAsInt() : 512;
+            int inputHeight = arch.has("input_height") ? arch.get("input_height").getAsInt() : 512;
+            int inputChannels = arch.has("input_channels") ? arch.get("input_channels").getAsInt() : 3;
+
+            // Channel config
+            JsonObject chanConfig = obj.has("channel_config") ?
+                    obj.getAsJsonObject("channel_config") : new JsonObject();
+            List<String> channelNames = new ArrayList<>();
+            if (chanConfig.has("expected_channels")) {
+                chanConfig.getAsJsonArray("expected_channels")
+                        .forEach(e -> channelNames.add(e.getAsString()));
+            }
+            String normStrategy = chanConfig.has("normalization_strategy") ?
+                    chanConfig.get("normalization_strategy").getAsString() : "PERCENTILE_99";
+            int bitDepth = chanConfig.has("bit_depth_trained") ?
+                    chanConfig.get("bit_depth_trained").getAsInt() : 8;
+
+            // Classes
+            List<ClassifierMetadata.ClassInfo> classes = new ArrayList<>();
+            if (obj.has("classes")) {
+                obj.getAsJsonArray("classes").forEach(e -> {
+                    JsonObject c = e.getAsJsonObject();
+                    classes.add(new ClassifierMetadata.ClassInfo(
+                            c.get("index").getAsInt(),
+                            c.get("name").getAsString(),
+                            c.has("color") ? c.get("color").getAsString() : "#808080"
+                    ));
+                });
+            }
+
+            // Build metadata
+            return ClassifierMetadata.builder()
+                    .id(id)
+                    .name(name)
+                    .description(description)
+                    .modelType(modelType)
+                    .backbone(backbone)
+                    .inputSize(inputWidth, inputHeight)
+                    .inputChannels(inputChannels)
+                    .expectedChannelNames(channelNames)
+                    .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.valueOf(normStrategy))
+                    .bitDepthTrained(bitDepth)
+                    .classes(classes)
+                    .build();
+
+        } catch (Exception e) {
+            logger.error("Failed to load metadata from {}: {}", metadataPath, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Saves a classifier to the current project.
+     *
+     * @param metadata    classifier metadata
+     * @param modelPath   path to the model file
+     * @return path to the saved classifier
+     * @throws IOException if saving fails
+     */
+    public Path saveClassifier(ClassifierMetadata metadata, Path modelPath) throws IOException {
+        return saveClassifier(metadata, modelPath, true);
+    }
+
+    /**
+     * Saves a classifier to the project.
+     *
+     * @param metadata    classifier metadata
+     * @param modelPath   path to the model file
+     * @param toProject   true to save to project, false for user directory
+     * @return path to the saved classifier
+     * @throws IOException if saving fails
+     */
+    public Path saveClassifier(ClassifierMetadata metadata, Path modelPath, boolean toProject)
+            throws IOException {
+        // Determine target directory
+        Path targetDir;
+        if (toProject) {
+            Project<?> project = QuPathGUI.getInstance().getProject();
+            if (project == null) {
+                throw new IOException("No project is open");
+            }
+            targetDir = project.getPath().getParent()
+                    .resolve(CLASSIFIERS_DIR)
+                    .resolve(metadata.getId());
+        } else {
+            targetDir = userClassifiersDir.resolve(metadata.getId());
+        }
+
+        Files.createDirectories(targetDir);
+
+        // Copy model files
+        if (Files.exists(modelPath)) {
+            if (Files.isDirectory(modelPath)) {
+                // Copy entire directory
+                try (Stream<Path> paths = Files.walk(modelPath)) {
+                    paths.forEach(src -> {
+                        try {
+                            Path dest = targetDir.resolve(modelPath.relativize(src));
+                            if (Files.isDirectory(src)) {
+                                Files.createDirectories(dest);
+                            } else {
+                                Files.copy(src, dest);
+                            }
+                        } catch (IOException e) {
+                            logger.warn("Failed to copy {}: {}", src, e.getMessage());
+                        }
+                    });
+                }
+            } else {
+                // Copy single file
+                Files.copy(modelPath, targetDir.resolve(modelPath.getFileName()));
+            }
+        }
+
+        // Save metadata
+        Path metadataPath = targetDir.resolve(METADATA_FILE);
+        String json = gson.toJson(metadata.toMap());
+        Files.writeString(metadataPath, json);
+
+        logger.info("Saved classifier to: {}", targetDir);
+        return targetDir;
+    }
+
+    /**
+     * Deletes a classifier.
+     *
+     * @param classifierId the classifier ID
+     * @return true if deleted successfully
+     */
+    public boolean deleteClassifier(String classifierId) {
+        // Try project first
+        Project<?> project = QuPathGUI.getInstance().getProject();
+        if (project != null) {
+            Path projectDir = project.getPath().getParent()
+                    .resolve(CLASSIFIERS_DIR)
+                    .resolve(classifierId);
+            if (deleteDirectory(projectDir)) {
+                return true;
+            }
+        }
+
+        // Try user directory
+        Path userDir = userClassifiersDir.resolve(classifierId);
+        return deleteDirectory(userDir);
+    }
+
+    /**
+     * Recursively deletes a directory.
+     */
+    private boolean deleteDirectory(Path dir) {
+        if (!Files.exists(dir)) {
+            return false;
+        }
+
+        try (Stream<Path> paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try {
+                            Files.delete(p);
+                        } catch (IOException e) {
+                            logger.warn("Failed to delete {}: {}", p, e.getMessage());
+                        }
+                    });
+            return true;
+        } catch (IOException e) {
+            logger.error("Failed to delete directory {}: {}", dir, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Gets the path to the model file for a classifier.
+     *
+     * @param classifierId the classifier ID
+     * @return path to the model file (ONNX or PT)
+     */
+    public Optional<Path> getModelPath(String classifierId) {
+        // Try project
+        Project<?> project = QuPathGUI.getInstance().getProject();
+        if (project != null) {
+            Path projectDir = project.getPath().getParent()
+                    .resolve(CLASSIFIERS_DIR)
+                    .resolve(classifierId);
+            Optional<Path> modelPath = findModelFile(projectDir);
+            if (modelPath.isPresent()) {
+                return modelPath;
+            }
+        }
+
+        // Try user directory
+        Path userDir = userClassifiersDir.resolve(classifierId);
+        return findModelFile(userDir);
+    }
+
+    /**
+     * Finds the model file in a classifier directory.
+     */
+    private Optional<Path> findModelFile(Path dir) {
+        if (!Files.exists(dir)) {
+            return Optional.empty();
+        }
+
+        // Prefer ONNX
+        Path onnxPath = dir.resolve("model.onnx");
+        if (Files.exists(onnxPath)) {
+            return Optional.of(onnxPath);
+        }
+
+        // Fallback to PyTorch
+        Path ptPath = dir.resolve("model.pt");
+        if (Files.exists(ptPath)) {
+            return Optional.of(ptPath);
+        }
+
+        return Optional.empty();
+    }
+}

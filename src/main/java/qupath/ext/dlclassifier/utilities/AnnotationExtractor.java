@@ -1,0 +1,864 @@
+package qupath.ext.dlclassifier.utilities;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.lib.images.ImageData;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.objects.PathObject;
+import qupath.lib.projects.ProjectImageEntry;
+import qupath.lib.regions.RegionRequest;
+import qupath.lib.roi.interfaces.ROI;
+
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Extracts annotated regions for deep learning training.
+ * <p>
+ * Supports both sparse annotations (lines, brushes) and dense annotations
+ * (filled polygons). For sparse annotations, unlabeled pixels are marked with
+ * an ignore index (255) so the training loss only computes on annotated pixels.
+ *
+ * <h3>Sparse Annotation Handling</h3>
+ * In pixel classification, users typically draw thin lines or brush strokes
+ * over different tissue types. This creates sparse labels where most pixels
+ * in a training tile are unlabeled. The extractor:
+ * <ul>
+ *   <li>Renders line annotations with a configurable stroke width</li>
+ *   <li>Marks unlabeled pixels as 255 (ignore_index)</li>
+ *   <li>Combines all overlapping annotations from different classes into one mask</li>
+ *   <li>Reports class pixel counts for weight balancing</li>
+ * </ul>
+ *
+ * <h3>Export Format</h3>
+ * <pre>
+ * output_dir/
+ *   train/
+ *     images/
+ *       patch_0000.tiff
+ *     masks/
+ *       patch_0000.png
+ *   validation/
+ *     images/
+ *     masks/
+ *   config.json
+ * </pre>
+ *
+ * @author UW-LOCI
+ * @since 0.1.0
+ */
+public class AnnotationExtractor {
+
+    private static final Logger logger = LoggerFactory.getLogger(AnnotationExtractor.class);
+
+    /**
+     * Value used in masks for unlabeled pixels.
+     * Training loss should use ignore_index=255 to skip these pixels.
+     */
+    public static final int UNLABELED_INDEX = 255;
+
+    /**
+     * Default stroke width for rendering line annotations (in pixels).
+     */
+    private static final int DEFAULT_LINE_STROKE_WIDTH = 5;
+
+    private final ImageData<BufferedImage> imageData;
+    private final ImageServer<BufferedImage> server;
+    private final int patchSize;
+    private final ChannelConfiguration channelConfig;
+    private final int lineStrokeWidth;
+
+    /**
+     * Creates a new annotation extractor.
+     *
+     * @param imageData     the image data
+     * @param patchSize     the patch size to extract
+     * @param channelConfig channel configuration
+     */
+    public AnnotationExtractor(ImageData<BufferedImage> imageData,
+                               int patchSize,
+                               ChannelConfiguration channelConfig) {
+        this(imageData, patchSize, channelConfig, DEFAULT_LINE_STROKE_WIDTH);
+    }
+
+    /**
+     * Creates a new annotation extractor with custom line stroke width.
+     *
+     * @param imageData       the image data
+     * @param patchSize       the patch size to extract
+     * @param channelConfig   channel configuration
+     * @param lineStrokeWidth stroke width for rendering line annotations (pixels)
+     */
+    public AnnotationExtractor(ImageData<BufferedImage> imageData,
+                               int patchSize,
+                               ChannelConfiguration channelConfig,
+                               int lineStrokeWidth) {
+        this.imageData = imageData;
+        this.server = imageData.getServer();
+        this.patchSize = patchSize;
+        this.channelConfig = channelConfig;
+        this.lineStrokeWidth = lineStrokeWidth;
+    }
+
+    /**
+     * Exports training data from annotations.
+     * <p>
+     * This method handles both sparse (line/brush) and dense (polygon/area)
+     * annotations. For sparse annotations, masks use 255 for unlabeled pixels.
+     *
+     * @param outputDir      output directory
+     * @param classNames     list of class names to export
+     * @param validationSplit fraction of data for validation (0.0-1.0)
+     * @return export statistics including per-class pixel counts
+     * @throws IOException if export fails
+     */
+    public ExportResult exportTrainingData(Path outputDir, List<String> classNames,
+                                           double validationSplit) throws IOException {
+        logger.info("Exporting training data to: {}", outputDir);
+
+        // Create directories
+        Path trainImages = outputDir.resolve("train/images");
+        Path trainMasks = outputDir.resolve("train/masks");
+        Path valImages = outputDir.resolve("validation/images");
+        Path valMasks = outputDir.resolve("validation/masks");
+
+        Files.createDirectories(trainImages);
+        Files.createDirectories(trainMasks);
+        Files.createDirectories(valImages);
+        Files.createDirectories(valMasks);
+
+        // Build class index map (class 0, 1, 2, ...; 255 = unlabeled)
+        Map<String, Integer> classIndex = new LinkedHashMap<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            classIndex.put(classNames.get(i), i);
+        }
+
+        // Collect all annotations with their class info
+        List<AnnotationInfo> allAnnotations = new ArrayList<>();
+        for (PathObject annotation : imageData.getHierarchy().getAnnotationObjects()) {
+            if (annotation.getPathClass() == null) continue;
+            String className = annotation.getPathClass().getName();
+            if (classIndex.containsKey(className)) {
+                allAnnotations.add(new AnnotationInfo(
+                        annotation,
+                        annotation.getROI(),
+                        classIndex.get(className),
+                        isSparseROI(annotation.getROI())
+                ));
+            }
+        }
+
+        logger.info("Found {} annotations across {} classes",
+                allAnnotations.size(), classIndex.size());
+
+        if (allAnnotations.isEmpty()) {
+            throw new IOException("No annotations found for the specified classes");
+        }
+
+        // Determine patch locations based on annotation locations
+        List<PatchLocation> patchLocations = generatePatchLocations(allAnnotations);
+        logger.info("Generated {} candidate patch locations", patchLocations.size());
+
+        // Extract patches and masks
+        int patchIndex = 0;
+        int trainCount = 0;
+        int valCount = 0;
+        long[] classPixelCounts = new long[classNames.size()];
+        long totalLabeledPixels = 0;
+
+        Random random = new Random(42);
+
+        for (PatchLocation loc : patchLocations) {
+            // Create combined mask from all overlapping annotations
+            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
+
+            // Skip patches with no labeled pixels
+            if (maskResult.labeledPixelCount == 0) continue;
+
+            // Read image patch
+            RegionRequest request = RegionRequest.createInstance(
+                    server.getPath(), 1.0,
+                    loc.x, loc.y, patchSize, patchSize,
+                    0, 0);
+            BufferedImage image = server.readRegion(request);
+
+            // Train/validation split
+            boolean isValidation = random.nextDouble() < validationSplit;
+
+            Path imgDir = isValidation ? valImages : trainImages;
+            Path maskDir = isValidation ? valMasks : trainMasks;
+
+            Path imgPath = imgDir.resolve(String.format("patch_%04d.tiff", patchIndex));
+            Path maskPath = maskDir.resolve(String.format("patch_%04d.png", patchIndex));
+
+            savePatch(image, imgPath);
+            saveMask(maskResult.mask, maskPath);
+
+            // Track statistics
+            for (int i = 0; i < classNames.size(); i++) {
+                classPixelCounts[i] += maskResult.classPixelCounts[i];
+            }
+            totalLabeledPixels += maskResult.labeledPixelCount;
+
+            if (isValidation) valCount++;
+            else trainCount++;
+            patchIndex++;
+        }
+
+        logger.info("Exported {} patches ({} train, {} validation)",
+                patchIndex, trainCount, valCount);
+
+        // Calculate class weights
+        Map<String, Long> pixelCounts = new LinkedHashMap<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            pixelCounts.put(classNames.get(i), classPixelCounts[i]);
+            logger.info("  Class '{}': {} labeled pixels", classNames.get(i), classPixelCounts[i]);
+        }
+
+        // Save configuration with class distribution and metadata
+        saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels,
+                trainCount, valCount, allAnnotations.size());
+
+        return new ExportResult(patchIndex, trainCount, valCount,
+                pixelCounts, totalLabeledPixels);
+    }
+
+    /**
+     * Overload for backward compatibility.
+     */
+    public void exportTrainingData(Path outputDir, List<String> classNames) throws IOException {
+        exportTrainingData(outputDir, classNames, 0.2);
+    }
+
+    /**
+     * Exports training data with a patch numbering offset, for use in multi-image export.
+     * <p>
+     * Assumes output directories already exist. Does not write config.json (caller handles that).
+     *
+     * @param outputDir       output directory (with train/images, train/masks, etc.)
+     * @param classNames      list of class names
+     * @param validationSplit fraction for validation
+     * @param startIndex      starting patch index for sequential numbering
+     * @return export statistics for this image
+     * @throws IOException if export fails
+     */
+    ExportResult exportTrainingDataWithOffset(Path outputDir, List<String> classNames,
+                                              double validationSplit, int startIndex) throws IOException {
+        Path trainImages = outputDir.resolve("train/images");
+        Path trainMasks = outputDir.resolve("train/masks");
+        Path valImages = outputDir.resolve("validation/images");
+        Path valMasks = outputDir.resolve("validation/masks");
+
+        // Build class index map
+        Map<String, Integer> classIndex = new LinkedHashMap<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            classIndex.put(classNames.get(i), i);
+        }
+
+        // Collect annotations
+        List<AnnotationInfo> allAnnotations = new ArrayList<>();
+        for (PathObject annotation : imageData.getHierarchy().getAnnotationObjects()) {
+            if (annotation.getPathClass() == null) continue;
+            String className = annotation.getPathClass().getName();
+            if (classIndex.containsKey(className)) {
+                allAnnotations.add(new AnnotationInfo(
+                        annotation, annotation.getROI(),
+                        classIndex.get(className),
+                        isSparseROI(annotation.getROI())
+                ));
+            }
+        }
+
+        if (allAnnotations.isEmpty()) {
+            logger.info("No annotations found in this image, skipping");
+            return new ExportResult(0, 0, 0, new LinkedHashMap<>(), 0);
+        }
+
+        List<PatchLocation> patchLocations = generatePatchLocations(allAnnotations);
+
+        int patchIndex = startIndex;
+        int trainCount = 0;
+        int valCount = 0;
+        long[] classPixelCounts = new long[classNames.size()];
+        long totalLabeledPixels = 0;
+        Random random = new Random(42 + startIndex);
+
+        for (PatchLocation loc : patchLocations) {
+            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
+            if (maskResult.labeledPixelCount == 0) continue;
+
+            RegionRequest request = RegionRequest.createInstance(
+                    server.getPath(), 1.0,
+                    loc.x, loc.y, patchSize, patchSize, 0, 0);
+            BufferedImage image = server.readRegion(request);
+
+            boolean isValidation = random.nextDouble() < validationSplit;
+            Path imgDir = isValidation ? valImages : trainImages;
+            Path maskDir = isValidation ? valMasks : trainMasks;
+
+            savePatch(image, imgDir.resolve(String.format("patch_%04d.tiff", patchIndex)));
+            saveMask(maskResult.mask, maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
+
+            for (int i = 0; i < classNames.size(); i++) {
+                classPixelCounts[i] += maskResult.classPixelCounts[i];
+            }
+            totalLabeledPixels += maskResult.labeledPixelCount;
+
+            if (isValidation) valCount++;
+            else trainCount++;
+            patchIndex++;
+        }
+
+        int exportedCount = patchIndex - startIndex;
+        logger.info("Exported {} patches from this image ({} train, {} val)",
+                exportedCount, trainCount, valCount);
+
+        Map<String, Long> pixelCounts = new LinkedHashMap<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            pixelCounts.put(classNames.get(i), classPixelCounts[i]);
+        }
+
+        return new ExportResult(exportedCount, trainCount, valCount, pixelCounts, totalLabeledPixels);
+    }
+
+    /**
+     * Exports training data from multiple project images into a single training directory.
+     * <p>
+     * Each image's annotations are exported with sequential patch numbering across all images.
+     * A combined config.json with aggregated class statistics is written at the end.
+     *
+     * @param entries         project image entries to export from
+     * @param patchSize       the patch size to extract
+     * @param channelConfig   channel configuration
+     * @param classNames      list of class names to export
+     * @param outputDir       output directory for combined training data
+     * @param validationSplit fraction of data for validation (0.0-1.0)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit) throws IOException {
+
+        logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
+
+        // Create shared directories
+        Path trainImages = outputDir.resolve("train/images");
+        Path trainMasks = outputDir.resolve("train/masks");
+        Path valImages = outputDir.resolve("validation/images");
+        Path valMasks = outputDir.resolve("validation/masks");
+        Files.createDirectories(trainImages);
+        Files.createDirectories(trainMasks);
+        Files.createDirectories(valImages);
+        Files.createDirectories(valMasks);
+
+        // Accumulators across all images
+        int totalPatchIndex = 0;
+        int totalTrainCount = 0;
+        int totalValCount = 0;
+        long[] totalClassPixelCounts = new long[classNames.size()];
+        long totalLabeledPixels = 0;
+        int totalAnnotationCount = 0;
+        List<String> sourceImages = new ArrayList<>();
+
+        for (ProjectImageEntry<BufferedImage> entry : entries) {
+            logger.info("Processing image: {}", entry.getImageName());
+            try {
+                ImageData<BufferedImage> imageData = entry.readImageData();
+                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig);
+
+                ExportResult result = extractor.exportTrainingDataWithOffset(
+                        outputDir, classNames, validationSplit, totalPatchIndex);
+
+                // Accumulate statistics
+                totalPatchIndex += result.totalPatches();
+                totalTrainCount += result.trainPatches();
+                totalValCount += result.validationPatches();
+                totalLabeledPixels += result.totalLabeledPixels();
+
+                for (int i = 0; i < classNames.size(); i++) {
+                    String className = classNames.get(i);
+                    totalClassPixelCounts[i] += result.classPixelCounts().getOrDefault(className, 0L);
+                }
+
+                totalAnnotationCount += imageData.getHierarchy().getAnnotationObjects().stream()
+                        .filter(a -> a.getPathClass() != null)
+                        .count();
+                sourceImages.add(entry.getImageName());
+
+                imageData.getServer().close();
+            } catch (Exception e) {
+                logger.warn("Failed to export from image '{}': {}",
+                        entry.getImageName(), e.getMessage());
+            }
+        }
+
+        if (totalPatchIndex == 0) {
+            throw new IOException("No training patches exported from any image");
+        }
+
+        // Build combined pixel counts map
+        Map<String, Long> pixelCounts = new LinkedHashMap<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            pixelCounts.put(classNames.get(i), totalClassPixelCounts[i]);
+            logger.info("  Class '{}': {} labeled pixels (combined)", classNames.get(i), totalClassPixelCounts[i]);
+        }
+
+        // Save combined config.json
+        // Use a temporary extractor just for config saving (needs channelConfig and server reference)
+        // Instead, write config directly here
+        saveProjectConfig(outputDir, classNames, totalClassPixelCounts, totalLabeledPixels,
+                channelConfig, patchSize, totalTrainCount, totalValCount,
+                totalAnnotationCount, sourceImages);
+
+        logger.info("Multi-image export complete: {} patches ({} train, {} val) from {} images",
+                totalPatchIndex, totalTrainCount, totalValCount, entries.size());
+
+        return new ExportResult(totalPatchIndex, totalTrainCount, totalValCount,
+                pixelCounts, totalLabeledPixels);
+    }
+
+    /**
+     * Saves a combined config.json for multi-image project export.
+     */
+    private static void saveProjectConfig(Path outputDir, List<String> classNames,
+                                           long[] classPixelCounts, long totalLabeledPixels,
+                                           ChannelConfiguration channelConfig, int patchSize,
+                                           int trainCount, int valCount,
+                                           int annotationCount, List<String> sourceImages)
+            throws IOException {
+        Path configPath = outputDir.resolve("config.json");
+        List<String> channelNames = channelConfig.getChannelNames();
+        String normStrategy = channelConfig.getNormalizationStrategy().name().toLowerCase();
+
+        StringBuilder json = new StringBuilder();
+        json.append("{\n");
+        json.append("  \"patch_size\": ").append(patchSize).append(",\n");
+        json.append("  \"unlabeled_index\": ").append(UNLABELED_INDEX).append(",\n");
+        json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");
+        json.append("  \"classes\": [\n");
+        for (int i = 0; i < classNames.size(); i++) {
+            json.append("    {\"index\": ").append(i)
+                    .append(", \"name\": \"").append(classNames.get(i))
+                    .append("\", \"pixel_count\": ").append(classPixelCounts[i]).append("}");
+            if (i < classNames.size() - 1) json.append(",");
+            json.append("\n");
+        }
+        json.append("  ],\n");
+        json.append("  \"class_weights\": [\n");
+        for (int i = 0; i < classNames.size(); i++) {
+            double weight = classPixelCounts[i] > 0 ?
+                    (double) totalLabeledPixels / (classNames.size() * classPixelCounts[i]) : 1.0;
+            json.append("    ").append(String.format("%.6f", weight));
+            if (i < classNames.size() - 1) json.append(",");
+            json.append("\n");
+        }
+        json.append("  ],\n");
+        json.append("  \"channel_config\": {\n");
+        json.append("    \"num_channels\": ").append(channelConfig.getNumChannels()).append(",\n");
+        json.append("    \"channel_names\": [");
+        for (int i = 0; i < channelNames.size(); i++) {
+            json.append("\"").append(channelNames.get(i)).append("\"");
+            if (i < channelNames.size() - 1) json.append(", ");
+        }
+        json.append("],\n");
+        json.append("    \"bit_depth\": ").append(channelConfig.getBitDepth()).append(",\n");
+        json.append("    \"normalization\": {\n");
+        json.append("      \"strategy\": \"").append(normStrategy).append("\",\n");
+        json.append("      \"per_channel\": false,\n");
+        json.append("      \"clip_percentile\": 99.0\n");
+        json.append("    }\n");
+        json.append("  },\n");
+        json.append("  \"metadata\": {\n");
+        json.append("    \"source_images\": [");
+        for (int i = 0; i < sourceImages.size(); i++) {
+            json.append("\"").append(sourceImages.get(i).replace("\"", "\\\"")).append("\"");
+            if (i < sourceImages.size() - 1) json.append(", ");
+        }
+        json.append("],\n");
+        json.append("    \"train_count\": ").append(trainCount).append(",\n");
+        json.append("    \"validation_count\": ").append(valCount).append(",\n");
+        json.append("    \"annotation_count\": ").append(annotationCount).append(",\n");
+        json.append("    \"export_date\": \"").append(
+                java.time.LocalDateTime.now().format(
+                        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\"\n");
+        json.append("  }\n");
+        json.append("}\n");
+
+        Files.writeString(configPath, json.toString());
+        logger.info("Saved combined config to: {}", configPath);
+    }
+
+    /**
+     * Determines if an ROI represents sparse annotation (line, polyline, etc.).
+     */
+    private boolean isSparseROI(ROI roi) {
+        // Lines, polylines, and very thin shapes are sparse
+        if (roi.isLine()) return true;
+
+        // Check if the shape has very small area relative to its bounding box
+        double bounds = roi.getBoundsWidth() * roi.getBoundsHeight();
+        if (bounds > 0) {
+            double areaRatio = roi.getArea() / bounds;
+            // If area is less than 5% of bounding box, treat as sparse
+            return areaRatio < 0.05;
+        }
+        return false;
+    }
+
+    /**
+     * Generate patch locations based on annotation positions.
+     * <p>
+     * For sparse annotations (lines), we generate patches centered on points
+     * along the line. For area annotations, we tile the bounding box.
+     */
+    private List<PatchLocation> generatePatchLocations(List<AnnotationInfo> annotations) {
+        Set<String> locationKeys = new HashSet<>();
+        List<PatchLocation> locations = new ArrayList<>();
+
+        int step = patchSize / 2; // 50% overlap between patches
+
+        for (AnnotationInfo ann : annotations) {
+            ROI roi = ann.roi;
+            int x0 = (int) roi.getBoundsX();
+            int y0 = (int) roi.getBoundsY();
+            int w = (int) roi.getBoundsWidth();
+            int h = (int) roi.getBoundsHeight();
+
+            if (ann.isSparse) {
+                // For sparse annotations, sample points along the ROI
+                List<double[]> points = samplePointsAlongROI(roi);
+                for (double[] pt : points) {
+                    // Center patch on the sampled point
+                    int px = (int) pt[0] - patchSize / 2;
+                    int py = (int) pt[1] - patchSize / 2;
+
+                    // Clip to image bounds
+                    px = Math.max(0, Math.min(px, server.getWidth() - patchSize));
+                    py = Math.max(0, Math.min(py, server.getHeight() - patchSize));
+
+                    // Snap to grid to avoid too many overlapping patches
+                    px = (px / (step / 2)) * (step / 2);
+                    py = (py / (step / 2)) * (step / 2);
+
+                    String key = px + "," + py;
+                    if (!locationKeys.contains(key)) {
+                        locationKeys.add(key);
+                        locations.add(new PatchLocation(px, py));
+                    }
+                }
+            } else {
+                // For area annotations, tile the bounding box
+                for (int py = y0 - patchSize / 4; py < y0 + h; py += step) {
+                    for (int px = x0 - patchSize / 4; px < x0 + w; px += step) {
+                        int clippedX = Math.max(0, Math.min(px, server.getWidth() - patchSize));
+                        int clippedY = Math.max(0, Math.min(py, server.getHeight() - patchSize));
+
+                        String key = clippedX + "," + clippedY;
+                        if (!locationKeys.contains(key)) {
+                            locationKeys.add(key);
+                            locations.add(new PatchLocation(clippedX, clippedY));
+                        }
+                    }
+                }
+            }
+        }
+
+        return locations;
+    }
+
+    /**
+     * Sample points along a ROI for patch generation.
+     * Works for lines, polylines, and thin shapes.
+     */
+    private List<double[]> samplePointsAlongROI(ROI roi) {
+        List<double[]> points = new ArrayList<>();
+
+        // Get all polygon points from the ROI
+        List<qupath.lib.geom.Point2> roiPoints = roi.getAllPoints();
+
+        if (roiPoints.isEmpty()) {
+            // Fallback: use center of bounding box
+            points.add(new double[]{
+                    roi.getBoundsX() + roi.getBoundsWidth() / 2,
+                    roi.getBoundsY() + roi.getBoundsHeight() / 2
+            });
+            return points;
+        }
+
+        // Sample at intervals along the ROI path
+        double sampleInterval = patchSize / 4.0; // Sample every quarter-patch
+
+        for (int i = 0; i < roiPoints.size() - 1; i++) {
+            double x1 = roiPoints.get(i).getX();
+            double y1 = roiPoints.get(i).getY();
+            double x2 = roiPoints.get(i + 1).getX();
+            double y2 = roiPoints.get(i + 1).getY();
+
+            double segLength = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+            int numSamples = Math.max(1, (int) (segLength / sampleInterval));
+
+            for (int s = 0; s <= numSamples; s++) {
+                double t = (double) s / numSamples;
+                double x = x1 + t * (x2 - x1);
+                double y = y1 + t * (y2 - y1);
+                points.add(new double[]{x, y});
+            }
+        }
+
+        // Also add the last point
+        if (!roiPoints.isEmpty()) {
+            qupath.lib.geom.Point2 last = roiPoints.get(roiPoints.size() - 1);
+            points.add(new double[]{last.getX(), last.getY()});
+        }
+
+        return points;
+    }
+
+    /**
+     * Creates a combined mask from all annotations overlapping a patch region.
+     * <p>
+     * Unlabeled pixels are set to 255 (UNLABELED_INDEX).
+     * Labeled pixels are set to their class index (0, 1, 2, ...).
+     */
+    private MaskResult createCombinedMask(int offsetX, int offsetY,
+                                          List<AnnotationInfo> annotations,
+                                          int numClasses) {
+        BufferedImage mask = new BufferedImage(patchSize, patchSize, BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D g2d = mask.createGraphics();
+
+        // Fill with unlabeled value (255)
+        g2d.setColor(new Color(UNLABELED_INDEX, UNLABELED_INDEX, UNLABELED_INDEX));
+        g2d.fillRect(0, 0, patchSize, patchSize);
+
+        // Set rendering hints for smooth lines
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+
+        // Translate to patch coordinates
+        AffineTransform originalTransform = g2d.getTransform();
+
+        // Render all annotations that overlap this patch
+        Rectangle patchBounds = new Rectangle(offsetX, offsetY, patchSize, patchSize);
+
+        for (AnnotationInfo ann : annotations) {
+            ROI roi = ann.roi;
+
+            // Quick check: does this annotation's bounding box overlap the patch?
+            Rectangle annBounds = new Rectangle(
+                    (int) roi.getBoundsX(), (int) roi.getBoundsY(),
+                    (int) roi.getBoundsWidth() + lineStrokeWidth,
+                    (int) roi.getBoundsHeight() + lineStrokeWidth
+            );
+
+            if (!patchBounds.intersects(annBounds)) continue;
+
+            // Set class color
+            int classIdx = ann.classIndex;
+            g2d.setColor(new Color(classIdx, classIdx, classIdx));
+
+            // Translate to patch-local coordinates
+            g2d.setTransform(originalTransform);
+            g2d.translate(-offsetX, -offsetY);
+
+            Shape shape = roi.getShape();
+
+            if (ann.isSparse || roi.isLine()) {
+                // For sparse/line annotations: DRAW with stroke width
+                g2d.setStroke(new BasicStroke(
+                        lineStrokeWidth,
+                        BasicStroke.CAP_ROUND,
+                        BasicStroke.JOIN_ROUND
+                ));
+                g2d.draw(shape);
+            } else {
+                // For area annotations: FILL the shape
+                g2d.fill(shape);
+            }
+        }
+
+        g2d.dispose();
+
+        // Count pixels per class
+        long[] classPixelCounts = new long[numClasses];
+        long labeledPixelCount = 0;
+
+        int[] pixels = new int[patchSize * patchSize];
+        mask.getRaster().getPixels(0, 0, patchSize, patchSize, pixels);
+
+        for (int pixel : pixels) {
+            if (pixel != UNLABELED_INDEX && pixel < numClasses) {
+                classPixelCounts[pixel]++;
+                labeledPixelCount++;
+            }
+        }
+
+        return new MaskResult(mask, classPixelCounts, labeledPixelCount);
+    }
+
+    /**
+     * Saves a patch image.
+     */
+    private void savePatch(BufferedImage image, Path path) throws IOException {
+        ImageIO.write(image, "TIFF", path.toFile());
+    }
+
+    /**
+     * Saves a mask image.
+     */
+    private void saveMask(BufferedImage mask, Path path) throws IOException {
+        ImageIO.write(mask, "PNG", path.toFile());
+    }
+
+    /**
+     * Saves configuration files including class distribution for weight balancing.
+     */
+    private void saveConfig(Path outputDir, List<String> classNames,
+                            long[] classPixelCounts, long totalLabeledPixels) throws IOException {
+        saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels, 0, 0, 0);
+    }
+
+    /**
+     * Saves configuration files including class distribution, channel info, and metadata.
+     *
+     * @param outputDir          output directory
+     * @param classNames         list of class names
+     * @param classPixelCounts   per-class pixel counts
+     * @param totalLabeledPixels total labeled pixel count
+     * @param trainCount         number of training patches
+     * @param valCount           number of validation patches
+     * @param annotationCount    number of annotations processed
+     */
+    private void saveConfig(Path outputDir, List<String> classNames,
+                            long[] classPixelCounts, long totalLabeledPixels,
+                            int trainCount, int valCount, int annotationCount) throws IOException {
+        Path configPath = outputDir.resolve("config.json");
+
+        List<String> channelNames = channelConfig.getChannelNames();
+        String normStrategy = channelConfig.getNormalizationStrategy().name().toLowerCase();
+
+        StringBuilder json = new StringBuilder();
+        json.append("{\n");
+        json.append("  \"patch_size\": ").append(patchSize).append(",\n");
+        json.append("  \"unlabeled_index\": ").append(UNLABELED_INDEX).append(",\n");
+        json.append("  \"line_stroke_width\": ").append(lineStrokeWidth).append(",\n");
+        json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");
+        json.append("  \"classes\": [\n");
+        for (int i = 0; i < classNames.size(); i++) {
+            json.append("    {\"index\": ").append(i)
+                    .append(", \"name\": \"").append(classNames.get(i))
+                    .append("\", \"pixel_count\": ").append(classPixelCounts[i]).append("}");
+            if (i < classNames.size() - 1) json.append(",");
+            json.append("\n");
+        }
+        json.append("  ],\n");
+        json.append("  \"class_weights\": [\n");
+        // Calculate inverse frequency weights
+        for (int i = 0; i < classNames.size(); i++) {
+            double weight = classPixelCounts[i] > 0 ?
+                    (double) totalLabeledPixels / (classNames.size() * classPixelCounts[i]) : 1.0;
+            json.append("    ").append(String.format("%.6f", weight));
+            if (i < classNames.size() - 1) json.append(",");
+            json.append("\n");
+        }
+        json.append("  ],\n");
+        json.append("  \"channel_config\": {\n");
+        json.append("    \"num_channels\": ").append(channelConfig.getNumChannels()).append(",\n");
+        json.append("    \"channel_names\": [");
+        for (int i = 0; i < channelNames.size(); i++) {
+            json.append("\"").append(channelNames.get(i)).append("\"");
+            if (i < channelNames.size() - 1) json.append(", ");
+        }
+        json.append("],\n");
+        json.append("    \"bit_depth\": ").append(channelConfig.getBitDepth()).append(",\n");
+        json.append("    \"normalization\": {\n");
+        json.append("      \"strategy\": \"").append(normStrategy).append("\",\n");
+        json.append("      \"per_channel\": false,\n");
+        json.append("      \"clip_percentile\": 99.0\n");
+        json.append("    }\n");
+        json.append("  },\n");
+        json.append("  \"metadata\": {\n");
+        json.append("    \"source_image\": \"").append(escapeJson(server.getMetadata().getName())).append("\",\n");
+        json.append("    \"train_count\": ").append(trainCount).append(",\n");
+        json.append("    \"validation_count\": ").append(valCount).append(",\n");
+        json.append("    \"annotation_count\": ").append(annotationCount).append(",\n");
+        json.append("    \"export_date\": \"").append(
+                java.time.LocalDateTime.now().format(
+                        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\"\n");
+        json.append("  }\n");
+        json.append("}\n");
+
+        Files.writeString(configPath, json.toString());
+        logger.info("Saved config to: {}", configPath);
+    }
+
+    /**
+     * Escapes special characters for JSON string values.
+     */
+    private static String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
+    }
+
+    // ==================== Data Classes ====================
+
+    /**
+     * Information about an annotation for processing.
+     */
+    private record AnnotationInfo(PathObject annotation, ROI roi, int classIndex, boolean isSparse) {}
+
+    /**
+     * A candidate patch location.
+     */
+    private record PatchLocation(int x, int y) {}
+
+    /**
+     * Result of creating a combined mask.
+     */
+    private record MaskResult(BufferedImage mask, long[] classPixelCounts, long labeledPixelCount) {}
+
+    /**
+     * Result of the export operation, including class distribution statistics.
+     */
+    public record ExportResult(
+            int totalPatches,
+            int trainPatches,
+            int validationPatches,
+            Map<String, Long> classPixelCounts,
+            long totalLabeledPixels
+    ) {
+        /**
+         * Calculate inverse-frequency class weights for balanced training.
+         *
+         * @return map of class name to weight
+         */
+        public Map<String, Double> calculateClassWeights() {
+            Map<String, Double> weights = new LinkedHashMap<>();
+            int numClasses = classPixelCounts.size();
+
+            for (Map.Entry<String, Long> entry : classPixelCounts.entrySet()) {
+                double weight = entry.getValue() > 0 ?
+                        (double) totalLabeledPixels / (numClasses * entry.getValue()) : 1.0;
+                weights.put(entry.getKey(), weight);
+            }
+            return weights;
+        }
+    }
+}

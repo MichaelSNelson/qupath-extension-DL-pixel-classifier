@@ -1,0 +1,44 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+*.swp
+
+# Training data (large binary files)
+dl_training/
+*.tiff
+*.tif
+*.png
+!src/**/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+venv/
+.venv/
+.pytest_cache/
+*.pth
+
+# Windows Zone.Identifier files
+*:Zone.Identifier
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large binary archives
+*.zip
+
+# Codemap (generated)
+codemap/

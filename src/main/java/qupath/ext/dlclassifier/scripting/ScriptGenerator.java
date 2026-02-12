@@ -1,0 +1,250 @@
+package qupath.ext.dlclassifier.scripting;
+
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.TrainingConfig;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * Generates runnable Groovy scripts from dialog configuration values.
+ * <p>
+ * Scripts are designed to be pasted into QuPath's Script Editor and run
+ * independently, without requiring the GUI dialogs.
+ *
+ * @author UW-LOCI
+ * @since 0.1.0
+ */
+public class ScriptGenerator {
+
+    private ScriptGenerator() {
+        // Utility class
+    }
+
+    /**
+     * Generates a Groovy inference script from the current dialog settings.
+     *
+     * @param classifierId  the classifier ID to load
+     * @param config        the inference configuration
+     * @param channelConfig the channel configuration
+     * @param applyToSelected whether to apply to selected annotations only
+     * @return a runnable Groovy script string
+     */
+    public static String generateInferenceScript(String classifierId,
+                                                  InferenceConfig config,
+                                                  ChannelConfiguration channelConfig,
+                                                  boolean applyToSelected) {
+        StringBuilder sb = new StringBuilder();
+
+        appendLine(sb, "/**");
+        appendLine(sb, " * DL Pixel Classifier - Inference Script");
+        appendLine(sb, " * Generated from dialog settings");
+        appendLine(sb, " */");
+        appendLine(sb, "import qupath.ext.dlclassifier.controller.InferenceWorkflow");
+        appendLine(sb, "import qupath.ext.dlclassifier.model.*");
+        appendLine(sb, "import qupath.ext.dlclassifier.scripting.DLClassifierScripts");
+        appendLine(sb, "");
+
+        // Load classifier
+        appendLine(sb, "// Load classifier");
+        appendLine(sb, "def classifier = DLClassifierScripts.loadClassifier(" +
+                quote(classifierId) + ")");
+        appendLine(sb, "");
+
+        // Configure inference
+        appendLine(sb, "// Configure inference");
+        appendLine(sb, "def inferenceConfig = InferenceConfig.builder()");
+        appendLine(sb, "        .tileSize(" + config.getTileSize() + ")");
+        appendLine(sb, "        .overlap(" + config.getOverlap() + ")");
+        appendLine(sb, "        .blendMode(InferenceConfig.BlendMode." + config.getBlendMode().name() + ")");
+        appendLine(sb, "        .outputType(InferenceConfig.OutputType." + config.getOutputType().name() + ")");
+        if (config.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
+            appendLine(sb, "        .objectType(InferenceConfig.OutputObjectType." + config.getObjectType().name() + ")");
+            appendLine(sb, "        .minObjectSize(" + config.getMinObjectSizeMicrons() + ")");
+            appendLine(sb, "        .holeFilling(" + config.getHoleFillingMicrons() + ")");
+            appendLine(sb, "        .smoothing(" + config.getBoundarySmoothing() + ")");
+        }
+        appendLine(sb, "        .useGPU(" + config.isUseGPU() + ")");
+        appendLine(sb, "        .build()");
+        appendLine(sb, "");
+
+        // Configure channels
+        appendChannelConfig(sb, channelConfig);
+
+        // Get annotations
+        appendLine(sb, "// Get annotations");
+        if (applyToSelected) {
+            appendLine(sb, "def annotations = getSelectedObjects().findAll { it.isAnnotation() }");
+            appendLine(sb, "if (annotations.isEmpty()) {");
+            appendLine(sb, "    annotations = getAnnotationObjects()");
+            appendLine(sb, "}");
+        } else {
+            appendLine(sb, "def annotations = getAnnotationObjects()");
+        }
+        appendLine(sb, "println \"Classifying ${annotations.size()} annotations...\"");
+        appendLine(sb, "");
+
+        // Run inference
+        appendLine(sb, "// Run inference");
+        appendLine(sb, "def result = InferenceWorkflow.builder()");
+        appendLine(sb, "        .classifier(classifier)");
+        appendLine(sb, "        .config(inferenceConfig)");
+        appendLine(sb, "        .channels(channelConfig)");
+        appendLine(sb, "        .annotations(annotations)");
+        appendLine(sb, "        .build()");
+        appendLine(sb, "        .run()");
+        appendLine(sb, "");
+        appendLine(sb, "println \"Done! Processed ${result.processedAnnotations()} annotations, ${result.processedTiles()} tiles\"");
+        appendLine(sb, "if (!result.success()) {");
+        appendLine(sb, "    println \"WARNING: ${result.message()}\"");
+        appendLine(sb, "}");
+
+        return sb.toString();
+    }
+
+    /**
+     * Generates a Groovy training script from the current dialog settings.
+     *
+     * @param classifierName  the classifier name
+     * @param description     the classifier description
+     * @param config          the training configuration
+     * @param channelConfig   the channel configuration
+     * @param selectedClasses the selected class names
+     * @return a runnable Groovy script string
+     */
+    public static String generateTrainingScript(String classifierName,
+                                                 String description,
+                                                 TrainingConfig config,
+                                                 ChannelConfiguration channelConfig,
+                                                 List<String> selectedClasses) {
+        StringBuilder sb = new StringBuilder();
+
+        appendLine(sb, "/**");
+        appendLine(sb, " * DL Pixel Classifier - Training Script");
+        appendLine(sb, " * Generated from dialog settings");
+        appendLine(sb, " */");
+        appendLine(sb, "import qupath.ext.dlclassifier.controller.TrainingWorkflow");
+        appendLine(sb, "import qupath.ext.dlclassifier.model.*");
+        appendLine(sb, "");
+
+        // Configure training
+        appendLine(sb, "// Configure training");
+        appendLine(sb, "def trainingConfig = TrainingConfig.builder()");
+        appendLine(sb, "        .classifierType(" + quote(config.getModelType()) + ")");
+        appendLine(sb, "        .backbone(" + quote(config.getBackbone()) + ")");
+        appendLine(sb, "        .epochs(" + config.getEpochs() + ")");
+        appendLine(sb, "        .batchSize(" + config.getBatchSize() + ")");
+        appendLine(sb, "        .learningRate(" + config.getLearningRate() + ")");
+        appendLine(sb, "        .validationSplit(" + config.getValidationSplit() + ")");
+        appendLine(sb, "        .tileSize(" + config.getTileSize() + ")");
+        appendLine(sb, "        .overlap(" + config.getOverlap() + ")");
+        appendLine(sb, "        .usePretrainedWeights(" + config.isUsePretrainedWeights() + ")");
+
+        // Augmentation config
+        Map<String, Boolean> augConfig = config.getAugmentationConfig();
+        if (augConfig != null && !augConfig.isEmpty()) {
+            appendLine(sb, "        .augmentation([");
+            int i = 0;
+            for (Map.Entry<String, Boolean> entry : augConfig.entrySet()) {
+                String comma = (i < augConfig.size() - 1) ? "," : "";
+                appendLine(sb, "            " + quote(entry.getKey()) + ": " + entry.getValue() + comma);
+                i++;
+            }
+            appendLine(sb, "        ])");
+        }
+
+        // Frozen layers
+        List<String> frozenLayers = config.getFrozenLayers();
+        if (frozenLayers != null && !frozenLayers.isEmpty()) {
+            appendLine(sb, "        .frozenLayers(" + formatStringList(frozenLayers) + ")");
+        }
+
+        appendLine(sb, "        .build()");
+        appendLine(sb, "");
+
+        // Configure channels
+        appendChannelConfig(sb, channelConfig);
+
+        // Selected classes
+        appendLine(sb, "// Classes for training");
+        appendLine(sb, "def selectedClasses = " + formatStringList(selectedClasses));
+        appendLine(sb, "");
+
+        // Run training
+        appendLine(sb, "// Run training");
+        appendLine(sb, "def result = TrainingWorkflow.builder()");
+        appendLine(sb, "        .name(" + quote(classifierName) + ")");
+        if (description != null && !description.isEmpty()) {
+            appendLine(sb, "        .description(" + quote(description) + ")");
+        }
+        appendLine(sb, "        .config(trainingConfig)");
+        appendLine(sb, "        .channels(channelConfig)");
+        appendLine(sb, "        .classes(selectedClasses)");
+        appendLine(sb, "        .build()");
+        appendLine(sb, "        .run()");
+        appendLine(sb, "");
+        appendLine(sb, "println \"Training complete! Success: ${result.success()}\"");
+        appendLine(sb, "if (result.success()) {");
+        appendLine(sb, "    println \"Final loss: ${result.finalLoss()}, Accuracy: ${result.finalAccuracy()}\"");
+        appendLine(sb, "    println \"Classifier ID: ${result.classifierId()}\"");
+        appendLine(sb, "} else {");
+        appendLine(sb, "    println \"Training failed: ${result.message()}\"");
+        appendLine(sb, "}");
+
+        return sb.toString();
+    }
+
+    // ==================== Helper Methods ====================
+
+    private static void appendChannelConfig(StringBuilder sb, ChannelConfiguration channelConfig) {
+        appendLine(sb, "// Configure channels");
+        appendLine(sb, "def channelConfig = ChannelConfiguration.builder()");
+        appendLine(sb, "        .selectedChannels(" + formatIntList(channelConfig.getSelectedChannels()) + ")");
+        appendLine(sb, "        .channelNames(" + formatStringList(channelConfig.getChannelNames()) + ")");
+        appendLine(sb, "        .bitDepth(" + channelConfig.getBitDepth() + ")");
+        appendLine(sb, "        .normalizationStrategy(ChannelConfiguration.NormalizationStrategy."
+                + channelConfig.getNormalizationStrategy().name() + ")");
+        appendLine(sb, "        .build()");
+        appendLine(sb, "");
+    }
+
+    private static void appendLine(StringBuilder sb, String line) {
+        sb.append(line).append("\n");
+    }
+
+    /**
+     * Quotes and escapes a string for use in Groovy source code.
+     */
+    private static String quote(String value) {
+        if (value == null) return "null";
+        String escaped = value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+        return "\"" + escaped + "\"";
+    }
+
+    /**
+     * Formats a list of strings as a Groovy literal, e.g. ["a", "b", "c"].
+     */
+    private static String formatStringList(List<String> items) {
+        if (items == null || items.isEmpty()) return "[]";
+        return items.stream()
+                .map(ScriptGenerator::quote)
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /**
+     * Formats a list of integers as a Groovy literal, e.g. [0, 1, 2].
+     */
+    private static String formatIntList(List<Integer> items) {
+        if (items == null || items.isEmpty()) return "[]";
+        return items.stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
+}
