@@ -352,8 +352,6 @@ public class ModelManagementWorkflow {
 
         Button exportBtn = new Button("Export...");
         exportBtn.setOnAction(e -> exportSelectedClassifier());
-        exportBtn.disableProperty().bind(
-                classifierTable.getSelectionModel().selectedItemProperty().isNull());
         exportBtn.setDisable(true); // Not yet implemented
         exportBtn.setTooltip(new Tooltip("Export classifier (coming soon)"));
 
