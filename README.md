@@ -5,7 +5,9 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 ## Features
 
 - **Train custom classifiers** from annotated regions using sparse annotations
+- **Multi-image training** from multiple project images in a single training run
 - **Multi-channel support** with per-channel normalization
+- **Real-time progress** with separate train/val loss charting
 - **Multiple output types**: Measurements, detection objects, or classification overlays
 - **Pluggable architecture** supporting UNet, SegFormer, and custom ONNX models
 - **REST API communication** with Python deep learning server
@@ -95,8 +97,12 @@ This creates 6 synthetic images with masks for training validation.
 1. Open an image in QuPath
 2. Create annotations with classification (e.g., "Foreground", "Background")
 3. Go to **Extensions > DL Pixel Classifier > Train Classifier...**
-4. Configure training parameters
-5. Click **Start Training**
+4. Configure training parameters (model, epochs, tile size, etc.)
+5. Select training data source:
+   - **Current image only** (default) - train from annotations on the open image
+   - **Selected project images** - train from annotations across multiple project images
+6. Click **Start Training**
+7. Monitor progress with separate train/val loss charting
 
 ### Applying a Classifier
 
@@ -198,6 +204,7 @@ qupath-extension-DL-pixel-classifier/
 │   │   ├── ChannelConfiguration.java
 │   │   └── ClassifierMetadata.java
 │   ├── utilities/                    # Processing utilities
+│   │   ├── AnnotationExtractor.java # Training data export (single + multi-image)
 │   │   ├── TileProcessor.java
 │   │   ├── ChannelNormalizer.java
 │   │   └── OutputGenerator.java
@@ -222,7 +229,7 @@ qupath-extension-DL-pixel-classifier/
 | GET | /api/v1/gpu | GPU availability info |
 | GET | /api/v1/models | List available models |
 | POST | /api/v1/train | Start training job |
-| GET | /api/v1/train/{job_id}/status | Training progress |
+| GET | /api/v1/train/{job_id}/status | Training progress (train_loss, val_loss, accuracy) |
 | POST | /api/v1/inference | Run inference |
 
 ## Supported Image Types
