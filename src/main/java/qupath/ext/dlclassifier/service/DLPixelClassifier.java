@@ -27,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,8 @@ public class DLPixelClassifier implements PixelClassifier {
     private final InferenceConfig inferenceConfig;
     private final PixelClassifierMetadata pixelMetadata;
     private final IndexColorModel colorModel;
+    private final ClassifierClient client;
+    private final Path sharedTempDir;
 
     /**
      * Creates a new DL pixel classifier.
@@ -70,6 +73,14 @@ public class DLPixelClassifier implements PixelClassifier {
         this.inferenceConfig = inferenceConfig;
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
+        this.client = new ClassifierClient(
+                DLClassifierPreferences.getServerHost(),
+                DLClassifierPreferences.getServerPort());
+        try {
+            this.sharedTempDir = Files.createTempDirectory("dl-overlay-");
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create temp directory for overlay", e);
+        }
     }
 
     @Override
@@ -102,47 +113,52 @@ public class DLPixelClassifier implements PixelClassifier {
                 new ClassifierClient.TileData(tileId, encoded, request.getX(), request.getY())
         );
 
-        // Send to Python server for classification
-        ClassifierClient client = new ClassifierClient(
-                DLClassifierPreferences.getServerHost(),
-                DLClassifierPreferences.getServerPort()
-        );
+        // Use pixel inference to get per-pixel probability maps (shared temp dir + cached client)
+        ClassifierClient.PixelInferenceResult result = client.runPixelInference(
+                metadata.getId(), tiles, channelConfig, inferenceConfig, sharedTempDir);
 
-        // Use pixel inference to get per-pixel probability maps
-        Path tempDir = Files.createTempDirectory("dl-overlay-tile-");
+        if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
+            throw new IOException("No inference result returned for tile");
+        }
+
+        String outputPath = result.outputPaths().get(tileId);
+        if (outputPath == null) {
+            throw new IOException("No output path for tile " + tileId);
+        }
+
+        // Read probability map and convert to class index image
+        int tileWidth = tileImage.getWidth();
+        int tileHeight = tileImage.getHeight();
+        float[][][] probMap = ClassifierClient.readProbabilityMap(
+                Path.of(outputPath), result.numClasses(), tileHeight, tileWidth);
+
+        // Clean up this tile's prob map file (shared dir persists)
         try {
-            ClassifierClient.PixelInferenceResult result = client.runPixelInference(
-                    metadata.getId(), tiles, channelConfig, inferenceConfig, tempDir);
+            Files.deleteIfExists(Path.of(outputPath));
+        } catch (IOException e) {
+            logger.debug("Failed to delete tile output: {}", outputPath);
+        }
 
-            if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
-                throw new IOException("No inference result returned for tile");
-            }
+        return createClassIndexImage(probMap, tileWidth, tileHeight);
+    }
 
-            String outputPath = result.outputPaths().get(tileId);
-            if (outputPath == null) {
-                throw new IOException("No output path for tile " + tileId);
-            }
-
-            // Read probability map and convert to class index image
-            int tileWidth = tileImage.getWidth();
-            int tileHeight = tileImage.getHeight();
-            float[][][] probMap = ClassifierClient.readProbabilityMap(
-                    Path.of(outputPath), result.numClasses(), tileHeight, tileWidth);
-
-            return createClassIndexImage(probMap, tileWidth, tileHeight);
-
-        } finally {
-            // Clean up temp directory
-            try {
-                Files.walk(tempDir)
-                        .sorted(java.util.Comparator.reverseOrder())
+    /**
+     * Cleans up resources used by this classifier (shared temp directory).
+     * Called by {@link OverlayService} when the overlay is removed.
+     */
+    public void cleanup() {
+        try {
+            if (sharedTempDir != null && Files.exists(sharedTempDir)) {
+                Files.walk(sharedTempDir)
+                        .sorted(Comparator.reverseOrder())
                         .forEach(path -> {
                             try { Files.deleteIfExists(path); }
                             catch (IOException ignored) {}
                         });
-            } catch (IOException e) {
-                logger.warn("Failed to clean up temp dir: {}", tempDir, e);
+                logger.debug("Cleaned up shared temp dir: {}", sharedTempDir);
             }
+        } catch (IOException e) {
+            logger.warn("Failed to clean up shared temp dir: {}", sharedTempDir, e);
         }
     }
 

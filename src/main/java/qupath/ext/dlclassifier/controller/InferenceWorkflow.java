@@ -204,6 +204,12 @@ public class InferenceWorkflow {
             }
 
             try {
+                // Validate classifier-image compatibility
+                String compatError = validateCompatibility(classifier, imgData);
+                if (compatError != null) {
+                    return new InferenceResult(0, 0, 0, false, compatError);
+                }
+
                 ImageServer<BufferedImage> server = imgData.getServer();
                 TileProcessor tileProcessor = new TileProcessor(config);
 
@@ -356,6 +362,15 @@ public class InferenceWorkflow {
                 progress.log("Processing " + targetObjects.size() + " annotation(s)");
 
                 ImageData<BufferedImage> imageData = qupath.getImageData();
+
+                // Validate classifier-image compatibility
+                String compatError = validateCompatibility(metadata, imageData);
+                if (compatError != null) {
+                    progress.log("ERROR: " + compatError);
+                    progress.complete(false, compatError);
+                    return;
+                }
+
                 ImageServer<BufferedImage> server = imageData.getServer();
 
                 // Create tile processor
@@ -698,6 +713,33 @@ public class InferenceWorkflow {
         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(image, "png", baos);
         return Base64.getEncoder().encodeToString(baos.toByteArray());
+    }
+
+    /**
+     * Validates that the classifier is compatible with the current image.
+     *
+     * @param metadata  classifier metadata
+     * @param imageData image data
+     * @return null if compatible, or an error message string if not
+     */
+    static String validateCompatibility(ClassifierMetadata metadata,
+                                        ImageData<BufferedImage> imageData) {
+        if (imageData == null || imageData.getServer() == null) {
+            return "No image data available";
+        }
+
+        ImageServer<BufferedImage> server = imageData.getServer();
+        int imageChannels = server.nChannels();
+        int classifierChannels = metadata.getInputChannels();
+
+        if (imageChannels < classifierChannels) {
+            return String.format(
+                    "Channel mismatch: classifier expects %d channel(s) but image has %d.\n" +
+                    "The classifier was trained on %d-channel images and cannot be applied to this image.",
+                    classifierChannels, imageChannels, classifierChannels);
+        }
+
+        return null;
     }
 
     /**

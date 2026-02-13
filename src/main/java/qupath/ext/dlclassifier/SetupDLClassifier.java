@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.controller.DLClassifierController;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
@@ -148,7 +149,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         );
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
 
-        // 3) Manage Models - browse and manage saved classifiers
+        // 3) Remove Overlay - remove any active classification overlay
+        MenuItem removeOverlayOption = new MenuItem(res.getString("menu.removeOverlay"));
+        setMenuItemTooltip(removeOverlayOption,
+                "Remove the current DL classification overlay from the viewer.");
+        removeOverlayOption.setOnAction(e -> {
+            OverlayService.getInstance().removeOverlay();
+            Dialogs.showInfoNotification(EXTENSION_NAME, "Classification overlay removed.");
+        });
+
+        // 4) Manage Models - browse and manage saved classifiers
         MenuItem modelsOption = new MenuItem(res.getString("menu.manageModels"));
         setMenuItemTooltip(modelsOption,
                 "Browse, import, export, and delete saved classifiers. " +
@@ -171,6 +181,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         extensionMenu.getItems().addAll(
                 trainOption,
                 inferenceOption,
+                removeOverlayOption,
                 new SeparatorMenuItem(),
                 modelsOption,
                 new SeparatorMenuItem(),

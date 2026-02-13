@@ -26,6 +26,7 @@ public class OverlayService {
     private static OverlayService instance;
 
     private PixelClassificationOverlay currentOverlay;
+    private DLPixelClassifier currentClassifier;
 
     private OverlayService() {}
 
@@ -79,6 +80,7 @@ public class OverlayService {
         }
 
         this.currentOverlay = overlay;
+        this.currentClassifier = classifier;
         logger.info("Applied DL pixel classifier overlay");
     }
 
@@ -99,6 +101,13 @@ public class OverlayService {
             }
 
             currentOverlay = null;
+
+            // Clean up classifier resources (shared temp directory)
+            if (currentClassifier != null) {
+                currentClassifier.cleanup();
+                currentClassifier = null;
+            }
+
             logger.info("Removed DL pixel classifier overlay");
         }
     }

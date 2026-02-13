@@ -320,10 +320,7 @@ public class TrainingWorkflow {
                                             List<ProjectImageEntry<BufferedImage>> selectedImages) {
         // Create progress monitor
         ProgressMonitorController progress = ProgressMonitorController.forTraining();
-        progress.setOnCancel(v -> {
-            // Cancel training on server if possible
-            logger.info("Training cancellation requested");
-        });
+        progress.setOnCancel(v -> logger.info("Training cancellation requested"));
         progress.show();
 
         CompletableFuture.runAsync(() -> {
@@ -448,10 +445,12 @@ public class TrainingWorkflow {
                             progress.log(String.format("Epoch %d: train_loss=%.4f, val_loss=%.4f",
                                     trainingProgress.epoch(), trainingProgress.loss(), trainingProgress.valLoss()));
                         }
-                    }
+                    },
+                    () -> progress != null && progress.isCancelled()
             );
 
-            if (progress != null && progress.isCancelled()) {
+            if (serverResult.isCancelled()) {
+                if (progress != null) progress.log("Training cancelled");
                 return new TrainingResult(null, classifierName, 0, 0, 0, false,
                         "Training cancelled by user");
             }

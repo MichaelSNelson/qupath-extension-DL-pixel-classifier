@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * HTTP client for communicating with the Python deep learning classification server.
@@ -146,6 +147,28 @@ public class ClassifierClient {
                                         List<String> classNames,
                                         Path trainingDataPath,
                                         Consumer<TrainingProgress> progressCallback) throws IOException {
+        return startTraining(trainingConfig, channelConfig, classNames,
+                trainingDataPath, progressCallback, () -> false);
+    }
+
+    /**
+     * Starts a training job on the server with cancellation support.
+     *
+     * @param trainingConfig    training configuration
+     * @param channelConfig     channel configuration
+     * @param classNames        list of class names
+     * @param trainingDataPath  path to exported training data
+     * @param progressCallback  callback for progress updates
+     * @param cancelledCheck    supplier that returns true when cancelled
+     * @return training job result containing model path and metrics
+     * @throws IOException if communication fails
+     */
+    public TrainingResult startTraining(TrainingConfig trainingConfig,
+                                        ChannelConfiguration channelConfig,
+                                        List<String> classNames,
+                                        Path trainingDataPath,
+                                        Consumer<TrainingProgress> progressCallback,
+                                        Supplier<Boolean> cancelledCheck) throws IOException {
         // Build request body
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model_type", trainingConfig.getModelType());
@@ -210,18 +233,30 @@ public class ClassifierClient {
             String jobId = result.get("job_id").getAsString();
             logger.info("Training job started: {}", jobId);
 
-            // Poll for progress
-            return pollTrainingProgress(jobId, progressCallback);
+            // Poll for progress with cancellation support
+            return pollTrainingProgress(jobId, progressCallback, cancelledCheck);
         }
     }
 
     /**
-     * Polls for training progress until completion.
+     * Polls for training progress until completion, failure, or cancellation.
      */
     private TrainingResult pollTrainingProgress(String jobId,
-                                                Consumer<TrainingProgress> progressCallback)
+                                                Consumer<TrainingProgress> progressCallback,
+                                                Supplier<Boolean> cancelledCheck)
             throws IOException {
         while (true) {
+            // Check for cancellation before each poll
+            if (cancelledCheck.get()) {
+                logger.info("Training cancelled by user, sending cancel to server for job: {}", jobId);
+                try {
+                    cancelTraining(jobId);
+                } catch (IOException e) {
+                    logger.warn("Failed to send cancel to server: {}", e.getMessage());
+                }
+                return new TrainingResult(jobId, null, 0, 0);
+            }
+
             Request request = new Request.Builder()
                     .url(baseUrl + "/train/" + jobId + "/status")
                     .get()
@@ -252,10 +287,13 @@ public class ClassifierClient {
                     double finalAccuracy = status.get("final_accuracy").getAsDouble();
 
                     logger.info("Training completed. Model saved to: {}", modelPath);
-                    return new TrainingResult(modelPath, finalLoss, finalAccuracy);
+                    return new TrainingResult(jobId, modelPath, finalLoss, finalAccuracy);
                 } else if ("failed".equals(state)) {
                     String error = status.get("error").getAsString();
                     throw new IOException("Training failed: " + error);
+                } else if ("cancelled".equals(state)) {
+                    logger.info("Training job {} confirmed cancelled by server", jobId);
+                    return new TrainingResult(jobId, null, 0, 0);
                 }
             }
 
@@ -265,6 +303,28 @@ public class ClassifierClient {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Training interrupted");
+            }
+        }
+    }
+
+    /**
+     * Cancels a running training job on the server.
+     *
+     * @param jobId the job ID to cancel
+     * @throws IOException if communication fails
+     */
+    public void cancelTraining(String jobId) throws IOException {
+        Request request = new Request.Builder()
+                .url(baseUrl + "/train/" + jobId + "/cancel")
+                .post(RequestBody.create("", JSON))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String error = response.body() != null ? response.body().string() : "Unknown error";
+                logger.warn("Failed to cancel training job {}: {}", jobId, error);
+            } else {
+                logger.info("Cancelled training job: {}", jobId);
             }
         }
     }
@@ -651,7 +711,12 @@ public class ClassifierClient {
     /**
      * Training result information.
      */
-    public record TrainingResult(String modelPath, double finalLoss, double finalAccuracy) {}
+    public record TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
+        /** Returns true if training was cancelled (no model produced). */
+        public boolean isCancelled() {
+            return modelPath == null;
+        }
+    }
 
     /**
      * Tile data for inference.
