@@ -1,7 +1,11 @@
 package qupath.ext.dlclassifier.utilities;
 
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.LinearRing;
+import org.locationtech.jts.geom.MultiPolygon;
+import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.operation.union.UnaryUnionOp;
+import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
@@ -580,8 +584,16 @@ public class OutputGenerator {
             ROI roi = createROIFromComponentBoundary(component, offsetX, offsetY);
             if (roi == null) continue;
 
-            // Apply hole filling and smoothing would be done here in a more
-            // sophisticated implementation. For now, we just create the object.
+            // Apply hole filling and boundary smoothing
+            Geometry geometry = GeometryTools.roiToGeometry(roi);
+            geometry = applyGeometryPostProcessing(geometry);
+            if (geometry == null || geometry.isEmpty()) continue;
+            roi = GeometryTools.geometryToROI(geometry, ImagePlane.getDefaultPlane());
+
+            // Re-check area after post-processing
+            double postAreaPixels = geometry.getArea();
+            double postAreaMicrons = postAreaPixels * pixelSizeMicrons * pixelSizeMicrons;
+            if (postAreaMicrons < config.getMinObjectSizeMicrons()) continue;
 
             // Create object based on type
             PathObject pathObject;
@@ -591,14 +603,79 @@ public class OutputGenerator {
                 pathObject = PathObjects.createDetectionObject(roi, pathClass);
             }
 
-            // Add area measurement
-            pathObject.getMeasurementList().put("Area (um^2)", areaMicrons);
-            pathObject.getMeasurementList().put("Area (pixels)", areaPixels);
+            // Add area measurement (use post-processed values)
+            pathObject.getMeasurementList().put("Area (um^2)", postAreaMicrons);
+            pathObject.getMeasurementList().put("Area (pixels)", postAreaPixels);
 
             objects.add(pathObject);
         }
 
         return objects;
+    }
+
+    /**
+     * Applies hole filling and boundary smoothing to a geometry.
+     */
+    private Geometry applyGeometryPostProcessing(Geometry geometry) {
+        if (geometry == null || geometry.isEmpty()) return geometry;
+
+        // Hole filling: remove interior rings smaller than threshold
+        double holeFillingMicrons = config.getHoleFillingMicrons();
+        if (holeFillingMicrons > 0) {
+            double holeAreaPixels = holeFillingMicrons / (pixelSizeMicrons * pixelSizeMicrons);
+            geometry = removeSmallHoles(geometry, holeAreaPixels);
+        }
+
+        // Boundary smoothing via topology-preserving simplification
+        double smoothingMicrons = config.getBoundarySmoothing();
+        if (smoothingMicrons > 0) {
+            double tolerancePixels = smoothingMicrons / pixelSizeMicrons;
+            geometry = TopologyPreservingSimplifier.simplify(geometry, tolerancePixels);
+        }
+
+        // Fix any invalid geometry from post-processing
+        if (!geometry.isValid()) {
+            geometry = geometry.buffer(0);
+        }
+
+        return geometry;
+    }
+
+    /**
+     * Removes interior rings (holes) smaller than the given area threshold.
+     */
+    private Geometry removeSmallHoles(Geometry geometry, double minHoleAreaPixels) {
+        if (geometry instanceof Polygon polygon) {
+            int numHoles = polygon.getNumInteriorRing();
+            if (numHoles == 0) return geometry;
+
+            var factory = geometry.getFactory();
+            var shell = polygon.getExteriorRing();
+            List<LinearRing> keptHoles = new ArrayList<>();
+
+            for (int i = 0; i < numHoles; i++) {
+                var hole = polygon.getInteriorRingN(i);
+                double holeArea = Math.abs(
+                        org.locationtech.jts.algorithm.Area.ofRing(hole.getCoordinates()));
+                if (holeArea >= minHoleAreaPixels) {
+                    keptHoles.add((LinearRing) hole);
+                }
+            }
+
+            return factory.createPolygon(
+                    (LinearRing) shell,
+                    keptHoles.toArray(new LinearRing[0]));
+
+        } else if (geometry instanceof MultiPolygon mp) {
+            var factory = geometry.getFactory();
+            Polygon[] processed = new Polygon[mp.getNumGeometries()];
+            for (int i = 0; i < mp.getNumGeometries(); i++) {
+                processed[i] = (Polygon) removeSmallHoles(mp.getGeometryN(i), minHoleAreaPixels);
+            }
+            return factory.createMultiPolygon(processed);
+        }
+
+        return geometry;
     }
 
     /**

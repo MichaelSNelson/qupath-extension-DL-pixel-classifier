@@ -1,24 +1,21 @@
 package qupath.ext.dlclassifier.service;
 
-import javafx.scene.image.Image;
-import javafx.scene.image.PixelWriter;
-import javafx.scene.image.WritableImage;
+import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.QuPathViewer;
+import qupath.lib.gui.viewer.overlays.PixelClassificationOverlay;
+import qupath.lib.images.ImageData;
 
 import java.awt.image.BufferedImage;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Service for managing classification overlays in QuPath viewers.
+ * Service for managing DL pixel classification overlays in QuPath viewers.
  * <p>
- * This service caches overlay images and provides methods for updating
- * and displaying classification results as semi-transparent overlays
- * on the viewer.
+ * This service wraps a {@link DLPixelClassifier} in QuPath's native
+ * {@link PixelClassificationOverlay} system, which handles on-demand tile
+ * rendering, caching, and display as the user pans and zooms.
  *
  * @author UW-LOCI
  * @since 0.1.0
@@ -28,13 +25,9 @@ public class OverlayService {
     private static final Logger logger = LoggerFactory.getLogger(OverlayService.class);
     private static OverlayService instance;
 
-    private final Map<String, Image> overlayCache;
-    private double overlayOpacity = 0.5;
-    private boolean overlaysEnabled = true;
+    private PixelClassificationOverlay currentOverlay;
 
-    private OverlayService() {
-        this.overlayCache = new ConcurrentHashMap<>();
-    }
+    private OverlayService() {}
 
     /**
      * Gets the singleton instance.
@@ -49,110 +42,85 @@ public class OverlayService {
     }
 
     /**
-     * Sets an overlay for a region.
+     * Applies a DL pixel classifier as a native QuPath overlay.
+     * <p>
+     * This creates a {@link PixelClassificationOverlay} from the classifier
+     * and sets it on all viewers displaying the given image. Tiles are
+     * classified on demand as the user navigates.
      *
-     * @param regionId  region identifier
-     * @param overlay   overlay image
-     * @param metadata  classifier metadata for coloring
+     * @param imageData  the image data to overlay
+     * @param classifier the DL pixel classifier
      */
-    public void setOverlay(String regionId, BufferedImage overlay, ClassifierMetadata metadata) {
-        // Convert to JavaFX Image
-        Image fxImage = convertToFXImage(overlay);
-        overlayCache.put(regionId, fxImage);
+    public void applyClassifierOverlay(ImageData<BufferedImage> imageData,
+                                        DLPixelClassifier classifier) {
+        QuPathGUI qupath = QuPathGUI.getInstance();
+        if (qupath == null) {
+            logger.warn("QuPath GUI not available - cannot apply overlay");
+            return;
+        }
 
-        logger.debug("Set overlay for region: {}", regionId);
-    }
+        // Remove any existing DL overlay first
+        removeOverlay();
 
-    /**
-     * Removes an overlay.
-     *
-     * @param regionId region identifier
-     */
-    public void removeOverlay(String regionId) {
-        overlayCache.remove(regionId);
-        logger.debug("Removed overlay for region: {}", regionId);
-    }
+        // Create the overlay using QuPath's native system
+        var overlay = PixelClassificationOverlay.create(
+                qupath.getOverlayOptions(),
+                classifier,
+                Runtime.getRuntime().availableProcessors());
 
-    /**
-     * Clears all overlays.
-     */
-    public void clearOverlays() {
-        overlayCache.clear();
-        logger.info("Cleared all overlays");
-    }
+        // Enable live prediction so tiles are classified as the user navigates
+        overlay.setLivePrediction(true);
 
-    /**
-     * Sets the overlay opacity.
-     *
-     * @param opacity opacity value (0.0 to 1.0)
-     */
-    public void setOverlayOpacity(double opacity) {
-        this.overlayOpacity = Math.max(0, Math.min(1, opacity));
-        refreshViewers();
-    }
-
-    /**
-     * Gets the overlay opacity.
-     *
-     * @return current opacity
-     */
-    public double getOverlayOpacity() {
-        return overlayOpacity;
-    }
-
-    /**
-     * Enables or disables overlay display.
-     *
-     * @param enabled true to enable overlays
-     */
-    public void setOverlaysEnabled(boolean enabled) {
-        this.overlaysEnabled = enabled;
-        refreshViewers();
-    }
-
-    /**
-     * Checks if overlays are enabled.
-     *
-     * @return true if enabled
-     */
-    public boolean isOverlaysEnabled() {
-        return overlaysEnabled;
-    }
-
-    /**
-     * Converts a BufferedImage to a JavaFX Image.
-     */
-    private Image convertToFXImage(BufferedImage bImage) {
-        WritableImage fxImage = new WritableImage(bImage.getWidth(), bImage.getHeight());
-        PixelWriter pw = fxImage.getPixelWriter();
-
-        for (int y = 0; y < bImage.getHeight(); y++) {
-            for (int x = 0; x < bImage.getWidth(); x++) {
-                pw.setArgb(x, y, bImage.getRGB(x, y));
+        // Apply to all viewers showing this image
+        for (QuPathViewer viewer : qupath.getAllViewers()) {
+            if (viewer.getImageData() == imageData) {
+                Platform.runLater(() -> viewer.setCustomPixelLayerOverlay(overlay));
             }
         }
 
-        return fxImage;
+        this.currentOverlay = overlay;
+        logger.info("Applied DL pixel classifier overlay");
+    }
+
+    /**
+     * Removes the current DL classification overlay from all viewers.
+     */
+    public void removeOverlay() {
+        if (currentOverlay != null) {
+            currentOverlay.stop();
+
+            QuPathGUI qupath = QuPathGUI.getInstance();
+            if (qupath != null) {
+                for (QuPathViewer viewer : qupath.getAllViewers()) {
+                    if (viewer.getCustomPixelLayerOverlay() == currentOverlay) {
+                        Platform.runLater(viewer::resetCustomPixelLayerOverlay);
+                    }
+                }
+            }
+
+            currentOverlay = null;
+            logger.info("Removed DL pixel classifier overlay");
+        }
+    }
+
+    /**
+     * Checks if an overlay is currently active.
+     *
+     * @return true if an overlay is applied
+     */
+    public boolean hasOverlay() {
+        return currentOverlay != null;
     }
 
     /**
      * Refreshes all viewers to update overlay display.
      */
-    private void refreshViewers() {
+    public void refreshViewers() {
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath != null) {
             for (QuPathViewer viewer : qupath.getAllViewers()) {
                 viewer.repaint();
             }
         }
-    }
-
-    /**
-     * Gets the number of cached overlays.
-     *
-     * @return cache size
-     */
-    public int getCacheSize() {
-        return overlayCache.size();
     }
 }

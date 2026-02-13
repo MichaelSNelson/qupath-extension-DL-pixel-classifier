@@ -10,6 +10,8 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.DLPixelClassifier;
+import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.utilities.BitDepthConverter;
@@ -489,8 +491,20 @@ public class InferenceWorkflow {
         logger.info("Generated {} tiles for region", tileSpecs.size());
         if (progress != null) progress.log("Generated " + tileSpecs.size() + " tiles");
 
+        // OVERLAY mode uses on-demand tile rendering via QuPath's PixelClassifier
+        // interface, so skip batch tile processing entirely
+        if (inferenceConfig.getOutputType() == InferenceConfig.OutputType.OVERLAY) {
+            DLPixelClassifier pixelClassifier = new DLPixelClassifier(
+                    metadata, channelConfig, inferenceConfig, imageData);
+            OverlayService.getInstance().applyClassifierOverlay(imageData, pixelClassifier);
+            if (progress != null) {
+                progress.log("Classification overlay applied - tiles rendered on demand");
+            }
+            return 0;
+        }
+
         // Branch on output type: MEASUREMENTS uses aggregated tile-level inference,
-        // OBJECTS and OVERLAY need full pixel-level probability maps
+        // OBJECTS needs full pixel-level probability maps
         boolean usePixelInference = inferenceConfig.getOutputType() != InferenceConfig.OutputType.MEASUREMENTS;
 
         // Process in batches
@@ -605,8 +619,8 @@ public class InferenceWorkflow {
                     break;
 
                 case OVERLAY:
-                    // Overlay is handled by OverlayService
-                    if (progress != null) progress.log("Classification overlay created");
+                    // Should not reach here - OVERLAY exits early above
+                    logger.warn("OVERLAY case reached in switch - this should not happen");
                     break;
             }
 
