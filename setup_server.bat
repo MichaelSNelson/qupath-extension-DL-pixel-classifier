@@ -4,10 +4,14 @@ setlocal enabledelayedexpansion
 rem ============================================================================
 rem  DL Pixel Classifier - Python Server Setup
 rem
+rem  GPU auto-detection: automatically detects NVIDIA GPU and installs the
+rem  correct CUDA-enabled PyTorch. Use --cpu to force CPU-only mode.
+rem
 rem  Usage:
-rem    setup_server.bat                              (venv, default path)
+rem    setup_server.bat                              (venv, auto-detect GPU)
 rem    setup_server.bat F:\dl-classifier-env         (venv, custom path)
-rem    setup_server.bat --cuda                       (venv, default path, CUDA)
+rem    setup_server.bat --cpu                        (venv, force CPU-only)
+rem    setup_server.bat --cuda                       (venv, force CUDA)
 rem    setup_server.bat F:\dl-env --cuda             (venv, custom path, CUDA)
 rem    setup_server.bat --conda                      (conda env "dlclassifier")
 rem    setup_server.bat --conda F:\dl-env --cuda     (conda env, custom path, CUDA)
@@ -19,13 +23,25 @@ set "SERVER_DIR=%SCRIPT_DIR%python_server"
 set "ENV_PATH="
 set "USE_CUDA=0"
 set "USE_CONDA=0"
+set "FORCE_CPU=0"
+set "FORCE_CUDA=0"
+set "GPU_NAME="
+set "CUDA_VER="
+set "CUDA_MAJOR="
+set "CUDA_INDEX_URL="
+set "PYTORCH_CUDA_TAG="
 set "CONFIG_FILE=%SCRIPT_DIR%.server_config"
 
 rem Parse arguments
 :parse_args
 if "%~1"=="" goto done_args
 if /i "%~1"=="--cuda" (
-    set "USE_CUDA=1"
+    set "FORCE_CUDA=1"
+    shift
+    goto parse_args
+)
+if /i "%~1"=="--cpu" (
+    set "FORCE_CPU=1"
     shift
     goto parse_args
 )
@@ -42,6 +58,34 @@ shift
 goto parse_args
 :done_args
 
+rem ---- Validate flag combinations ----
+if "%FORCE_CPU%"=="1" if "%FORCE_CUDA%"=="1" (
+    echo.
+    echo  ERROR: Cannot use both --cpu and --cuda flags.
+    exit /b 1
+)
+
+rem ---- GPU auto-detection ----
+if "%FORCE_CPU%"=="1" (
+    echo.
+    echo  CPU-only mode requested (--cpu flag).
+    set "USE_CUDA=0"
+    goto detection_done
+)
+
+call :detect_gpu
+
+if "%FORCE_CUDA%"=="1" (
+    if "%USE_CUDA%"=="0" (
+        echo.
+        echo  ERROR: --cuda flag specified but no NVIDIA GPU was detected.
+        echo  If you have an NVIDIA GPU, ensure drivers are installed and nvidia-smi is in PATH.
+        exit /b 1
+    )
+)
+
+:detection_done
+
 rem ---- Determine environment type and defaults ----
 
 if "%USE_CONDA%"=="1" (
@@ -55,6 +99,57 @@ if "%USE_CONDA%"=="1" (
 )
 
 rem ================================================================
+rem  GPU DETECTION SUBROUTINE
+rem ================================================================
+:detect_gpu
+
+nvidia-smi >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo  No NVIDIA GPU detected. Installing CPU-only PyTorch.
+    set "USE_CUDA=0"
+    set "CUDA_INDEX_URL="
+    goto :eof
+)
+
+rem Parse GPU name
+for /f "tokens=*" %%g in ('nvidia-smi --query-gpu=name --format^=csv^,noheader^,nounits 2^>nul') do (
+    set "GPU_NAME=%%g"
+)
+
+rem Parse CUDA version from nvidia-smi header
+for /f "tokens=9 delims= " %%v in ('nvidia-smi ^| findstr /c:"CUDA Version"') do (
+    set "CUDA_VER_RAW=%%v"
+)
+rem Strip trailing pipe/whitespace
+for /f "tokens=1 delims=| " %%c in ("!CUDA_VER_RAW!") do set "CUDA_VER=%%c"
+
+rem Extract major version
+for /f "tokens=1 delims=." %%m in ("!CUDA_VER!") do set "CUDA_MAJOR=%%m"
+
+echo.
+echo  Detected GPU: !GPU_NAME!
+echo  CUDA driver version: !CUDA_VER!
+
+if "!CUDA_MAJOR!"=="12" (
+    set "USE_CUDA=1"
+    set "CUDA_INDEX_URL=https://download.pytorch.org/whl/cu124"
+    set "PYTORCH_CUDA_TAG=12.4"
+    echo  PyTorch CUDA target: 12.4
+) else if "!CUDA_MAJOR!"=="11" (
+    set "USE_CUDA=1"
+    set "CUDA_INDEX_URL=https://download.pytorch.org/whl/cu118"
+    set "PYTORCH_CUDA_TAG=11.8"
+    echo  PyTorch CUDA target: 11.8
+) else (
+    echo  WARNING: CUDA !CUDA_VER! is too old for current PyTorch. Installing CPU-only.
+    set "USE_CUDA=0"
+    set "CUDA_INDEX_URL="
+)
+
+goto :eof
+
+rem ================================================================
 rem  VENV SETUP
 rem ================================================================
 :setup_venv
@@ -65,7 +160,11 @@ echo  ==========================================
 echo.
 echo  Server source: %SERVER_DIR%
 echo  Virtual env:   %ENV_PATH%
-if "%USE_CUDA%"=="1" (echo  GPU support:   CUDA) else (echo  GPU support:   CPU only)
+if "%USE_CUDA%"=="1" (
+    echo  GPU support:   CUDA !PYTORCH_CUDA_TAG!
+) else (
+    echo  GPU support:   CPU only
+)
 echo.
 
 rem Check Python is available
@@ -112,7 +211,15 @@ call "%ENV_PATH%\Scripts\activate.bat"
 python -m pip install --upgrade pip >nul 2>&1
 
 if "%USE_CUDA%"=="1" (
-    echo  Installing with CUDA support...
+    echo  Installing PyTorch with CUDA %PYTORCH_CUDA_TAG% support...
+    pip install torch torchvision --index-url %CUDA_INDEX_URL%
+    if errorlevel 1 (
+        echo.
+        echo  ERROR: PyTorch CUDA installation failed. Check the output above.
+        exit /b 1
+    )
+    echo.
+    echo  Installing server package with GPU extras...
     pip install -e "%SERVER_DIR%[cuda]"
 ) else (
     echo  Installing CPU-only...
@@ -162,7 +269,11 @@ if "%CONDA_USE_PREFIX%"=="1" (
 ) else (
     echo  Conda env:     %ENV_PATH%
 )
-if "%USE_CUDA%"=="1" (echo  GPU support:   CUDA) else (echo  GPU support:   CPU only)
+if "%USE_CUDA%"=="1" (
+    echo  GPU support:   CUDA !PYTORCH_CUDA_TAG!
+) else (
+    echo  GPU support:   CPU only
+)
 echo.
 
 rem Check conda is available
@@ -230,8 +341,16 @@ if "%CONDA_USE_PREFIX%"=="1" (
 
 rem Install PyTorch via conda (better CUDA toolkit bundling)
 if "%USE_CUDA%"=="1" (
-    echo  Installing PyTorch with CUDA via conda...
-    conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
+    if "!CUDA_MAJOR!"=="12" (
+        echo  Installing PyTorch with CUDA 12.4 via conda...
+        conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
+    ) else if "!CUDA_MAJOR!"=="11" (
+        echo  Installing PyTorch with CUDA 11.8 via conda...
+        conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia -y
+    ) else (
+        echo  Installing PyTorch with CUDA 12.4 via conda (default)...
+        conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
+    )
 ) else (
     echo  Installing PyTorch CPU via conda...
     conda install pytorch torchvision cpuonly -c pytorch -y
@@ -239,14 +358,22 @@ if "%USE_CUDA%"=="1" (
 
 if errorlevel 1 (
     echo  WARNING: conda PyTorch install failed, falling back to pip...
-    pip install torch torchvision
+    if "%USE_CUDA%"=="1" (
+        pip install torch torchvision --index-url %CUDA_INDEX_URL%
+    ) else (
+        pip install torch torchvision
+    )
 )
 
 rem Install the server package via pip (fastapi, segmentation-models-pytorch, etc.)
-rem PyTorch is already installed by conda above, pip will skip it.
+rem PyTorch is already installed above, pip will skip it.
 echo.
 echo  Installing server package via pip...
-pip install -e "%SERVER_DIR%"
+if "%USE_CUDA%"=="1" (
+    pip install -e "%SERVER_DIR%[cuda]"
+) else (
+    pip install -e "%SERVER_DIR%"
+)
 if errorlevel 1 (
     echo.
     echo  ERROR: pip install failed. Check the output above.
@@ -305,23 +432,30 @@ exit /b 0
 
 :show_help
 echo.
-echo  Usage: setup_server.bat [ENV_PATH] [--cuda] [--conda]
+echo  Usage: setup_server.bat [ENV_PATH] [--cuda] [--cpu] [--conda]
+echo.
+echo  GPU Detection:
+echo    By default, the script auto-detects NVIDIA GPUs via nvidia-smi.
+echo    If a GPU is found, CUDA-enabled PyTorch is installed automatically.
+echo    If no GPU is found, CPU-only PyTorch is installed.
 echo.
 echo  Arguments:
 echo    ENV_PATH     Path or name for the environment
 echo                   venv mode:  directory path (default: python_server\venv)
 echo                   conda mode: env name or path (default: "dlclassifier")
-echo    --cuda       Install with NVIDIA CUDA GPU support
+echo    --cuda       Force CUDA install (error if no GPU detected)
+echo    --cpu        Force CPU-only install (skip GPU detection)
 echo    --conda      Use conda instead of venv (run from Anaconda Prompt)
 echo.
 echo  Examples (venv):
-echo    setup_server.bat                              CPU, default location
-echo    setup_server.bat --cuda                       CUDA, default location
-echo    setup_server.bat F:\dl-classifier-env --cuda  CUDA, fast drive
+echo    setup_server.bat                              Auto-detect GPU, default location
+echo    setup_server.bat --cpu                        Force CPU, default location
+echo    setup_server.bat --cuda                       Force CUDA, default location
+echo    setup_server.bat F:\dl-classifier-env         Auto-detect, custom path
 echo.
 echo  Examples (conda):
-echo    setup_server.bat --conda --cuda               CUDA, env named "dlclassifier"
-echo    setup_server.bat --conda myenv --cuda         CUDA, env named "myenv"
-echo    setup_server.bat --conda F:\dl-env --cuda     CUDA, env at custom path
+echo    setup_server.bat --conda                      Auto-detect GPU, env "dlclassifier"
+echo    setup_server.bat --conda myenv --cuda         Force CUDA, env "myenv"
+echo    setup_server.bat --conda F:\dl-env --cpu      Force CPU, custom path
 echo.
 exit /b 0
