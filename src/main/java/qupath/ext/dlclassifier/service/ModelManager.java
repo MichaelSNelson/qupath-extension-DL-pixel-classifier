@@ -14,6 +14,7 @@ import qupath.lib.projects.Project;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -143,8 +144,18 @@ public class ModelManager {
             String name = obj.get("name").getAsString();
             String description = obj.has("description") ? obj.get("description").getAsString() : "";
 
+            // Parse creation timestamp
+            LocalDateTime createdAt = null;
+            if (obj.has("createdAt") && !obj.get("createdAt").isJsonNull()) {
+                try {
+                    createdAt = LocalDateTime.parse(obj.get("createdAt").getAsString());
+                } catch (Exception e) {
+                    logger.warn("Could not parse createdAt: {}", e.getMessage());
+                }
+            }
+
             JsonObject arch = obj.getAsJsonObject("architecture");
-            String modelType = arch.get("type").getAsString();
+            String modelType = arch.has("type") ? arch.get("type").getAsString() : "unknown";
             String backbone = arch.has("backbone") ? arch.get("backbone").getAsString() : "";
             int inputWidth = arch.has("input_width") ? arch.get("input_width").getAsInt() : 512;
             int inputHeight = arch.has("input_height") ? arch.get("input_height").getAsInt() : 512;
@@ -176,8 +187,21 @@ public class ModelManager {
                 });
             }
 
+            // Training metrics
+            String trainingImageName = "";
+            int trainingEpochs = 0;
+            double finalLoss = 0.0;
+            double finalAccuracy = 0.0;
+            if (obj.has("training")) {
+                JsonObject train = obj.getAsJsonObject("training");
+                trainingImageName = train.has("image_name") ? train.get("image_name").getAsString() : "";
+                trainingEpochs = train.has("epochs") ? train.get("epochs").getAsInt() : 0;
+                finalLoss = train.has("final_loss") ? train.get("final_loss").getAsDouble() : 0.0;
+                finalAccuracy = train.has("final_accuracy") ? train.get("final_accuracy").getAsDouble() : 0.0;
+            }
+
             // Build metadata
-            return ClassifierMetadata.builder()
+            ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
                     .id(id)
                     .name(name)
                     .description(description)
@@ -189,7 +213,14 @@ public class ModelManager {
                     .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.valueOf(normStrategy))
                     .bitDepthTrained(bitDepth)
                     .classes(classes)
-                    .build();
+                    .trainingImageName(trainingImageName)
+                    .trainingEpochs(trainingEpochs)
+                    .finalLoss(finalLoss)
+                    .finalAccuracy(finalAccuracy);
+            if (createdAt != null) {
+                builder.createdAt(createdAt);
+            }
+            return builder.build();
 
         } catch (Exception e) {
             logger.error("Failed to load metadata from {}: {}", metadataPath, e.getMessage());
@@ -314,6 +345,61 @@ public class ModelManager {
             logger.error("Failed to delete directory {}: {}", dir, e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * Imports a classifier from an extracted directory into the current project.
+     * <p>
+     * The directory must contain a metadata.json file. All files in the directory
+     * are copied to the project's classifiers storage.
+     *
+     * @param extractedDir directory containing the extracted classifier files
+     * @return the imported classifier metadata, or null if import failed
+     * @throws IOException if the import fails due to I/O errors
+     */
+    public ClassifierMetadata importClassifier(Path extractedDir) throws IOException {
+        // Read metadata to get classifier ID
+        ClassifierMetadata metadata = loadMetadata(extractedDir);
+        if (metadata == null) {
+            throw new IOException("Could not read classifier metadata from " + extractedDir);
+        }
+
+        // Determine target directory in the current project
+        Project<?> project = QuPathGUI.getInstance().getProject();
+        if (project == null) {
+            throw new IOException("No project is open");
+        }
+
+        Path targetDir = project.getPath().getParent()
+                .resolve(CLASSIFIERS_DIR)
+                .resolve(metadata.getId());
+
+        // Check for existing classifier with the same ID
+        if (Files.exists(targetDir)) {
+            logger.warn("Classifier with ID '{}' already exists at {}", metadata.getId(), targetDir);
+            throw new IOException(
+                    "A classifier with ID '" + metadata.getId() + "' already exists in this project.");
+        }
+
+        // Copy all files from extracted directory to target
+        Files.createDirectories(targetDir);
+        try (Stream<Path> paths = Files.walk(extractedDir)) {
+            paths.forEach(src -> {
+                try {
+                    Path dest = targetDir.resolve(extractedDir.relativize(src));
+                    if (Files.isDirectory(src)) {
+                        Files.createDirectories(dest);
+                    } else {
+                        Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (IOException e) {
+                    logger.warn("Failed to copy {}: {}", src, e.getMessage());
+                }
+            });
+        }
+
+        logger.info("Imported classifier '{}' to {}", metadata.getName(), targetDir);
+        return metadata;
     }
 
     /**

@@ -11,6 +11,7 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
+import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
@@ -20,10 +21,15 @@ import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 
-import java.nio.file.Path;
+import java.io.IOException;
+import java.nio.file.*;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 /**
  * Workflow for managing trained classifiers.
@@ -33,7 +39,8 @@ import java.util.Optional;
  *   <li>Browse available classifiers</li>
  *   <li>View classifier details and metadata</li>
  *   <li>Delete classifiers</li>
- *   <li>Export classifiers (future)</li>
+ *   <li>Export classifiers as ZIP archives</li>
+ *   <li>Import classifiers from ZIP archives</li>
  * </ul>
  *
  * @author UW-LOCI
@@ -352,8 +359,11 @@ public class ModelManagementWorkflow {
 
         Button exportBtn = new Button("Export...");
         exportBtn.setOnAction(e -> exportSelectedClassifier());
-        exportBtn.setDisable(true); // Not yet implemented
-        exportBtn.setTooltip(new Tooltip("Export classifier (coming soon)"));
+        exportBtn.disableProperty().bind(
+                classifierTable.getSelectionModel().selectedItemProperty().isNull());
+
+        Button importBtn = new Button("Import...");
+        importBtn.setOnAction(e -> importClassifier());
 
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> dialogStage.close());
@@ -366,7 +376,7 @@ public class ModelManagementWorkflow {
         Label infoLabel = new Label("");
         infoLabel.setStyle("-fx-text-fill: #888;");
 
-        box.getChildren().addAll(infoLabel, spacer, deleteBtn, exportBtn, closeBtn);
+        box.getChildren().addAll(infoLabel, spacer, deleteBtn, importBtn, exportBtn, closeBtn);
         return box;
     }
 
@@ -424,7 +434,7 @@ public class ModelManagementWorkflow {
     }
 
     /**
-     * Exports the selected classifier (placeholder for future implementation).
+     * Exports the selected classifier as a ZIP archive.
      */
     private void exportSelectedClassifier() {
         ClassifierMetadata selected = classifierTable.getSelectionModel().getSelectedItem();
@@ -432,15 +442,119 @@ public class ModelManagementWorkflow {
             return;
         }
 
-        // TODO: Implement export as zip archive
-        Dialogs.showInfoNotification(
-                "Export",
-                "Classifier export is not yet implemented.\n" +
-                        "The classifier files can be found at:\n" +
-                        modelManager.getModelPath(selected.getId())
-                                .map(Path::getParent)
-                                .map(Path::toString)
-                                .orElse("Unknown location")
-        );
+        Optional<Path> modelPathOpt = modelManager.getModelPath(selected.getId());
+        if (modelPathOpt.isEmpty()) {
+            Dialogs.showErrorMessage("Export Error", "Could not find model files for this classifier.");
+            return;
+        }
+
+        Path classifierDir = modelPathOpt.get().getParent();
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Export Classifier");
+        fileChooser.setInitialFileName(selected.getName().replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".zip");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
+
+        java.io.File saveFile = fileChooser.showSaveDialog(dialogStage);
+        if (saveFile == null) {
+            return;
+        }
+
+        try {
+            Path zipPath = saveFile.toPath();
+            try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipPath));
+                 Stream<Path> paths = Files.walk(classifierDir)) {
+                paths.filter(p -> !Files.isDirectory(p))
+                        .forEach(filePath -> {
+                            try {
+                                String entryName = classifierDir.relativize(filePath).toString()
+                                        .replace('\\', '/');
+                                zos.putNextEntry(new ZipEntry(entryName));
+                                Files.copy(filePath, zos);
+                                zos.closeEntry();
+                            } catch (IOException ex) {
+                                logger.warn("Failed to add file to ZIP: {}", filePath, ex);
+                            }
+                        });
+            }
+
+            logger.info("Exported classifier '{}' to {}", selected.getName(), zipPath);
+            Dialogs.showInfoNotification("Export Complete",
+                    "Classifier exported to:\n" + zipPath.getFileName());
+
+        } catch (IOException e) {
+            logger.error("Failed to export classifier", e);
+            Dialogs.showErrorMessage("Export Error", "Failed to export classifier: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Imports a classifier from a ZIP archive.
+     */
+    private void importClassifier() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Import Classifier");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
+
+        java.io.File selectedFile = fileChooser.showOpenDialog(dialogStage);
+        if (selectedFile == null) {
+            return;
+        }
+
+        Path tempDir = null;
+        try {
+            // Extract ZIP to temp directory
+            tempDir = Files.createTempDirectory("dl-classifier-import-");
+            try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(selectedFile.toPath()))) {
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    Path target = tempDir.resolve(entry.getName()).normalize();
+                    // Guard against zip slip
+                    if (!target.startsWith(tempDir)) {
+                        throw new IOException("Invalid ZIP entry: " + entry.getName());
+                    }
+                    if (entry.isDirectory()) {
+                        Files.createDirectories(target);
+                    } else {
+                        Files.createDirectories(target.getParent());
+                        Files.copy(zis, target);
+                    }
+                    zis.closeEntry();
+                }
+            }
+
+            // Validate: metadata.json must exist
+            Path metadataFile = tempDir.resolve("metadata.json");
+            if (!Files.exists(metadataFile)) {
+                Dialogs.showErrorMessage("Import Error",
+                        "Invalid classifier archive: metadata.json not found.");
+                return;
+            }
+
+            // Import via ModelManager
+            ClassifierMetadata imported = modelManager.importClassifier(tempDir);
+            if (imported != null) {
+                logger.info("Imported classifier: {}", imported.getName());
+                Dialogs.showInfoNotification("Import Complete",
+                        "Classifier '" + imported.getName() + "' imported successfully.");
+                refreshClassifierList();
+            }
+
+        } catch (IOException e) {
+            logger.error("Failed to import classifier", e);
+            Dialogs.showErrorMessage("Import Error", "Failed to import classifier: " + e.getMessage());
+        } finally {
+            // Clean up temp directory
+            if (tempDir != null) {
+                try (Stream<Path> paths = Files.walk(tempDir)) {
+                    paths.sorted(java.util.Comparator.reverseOrder())
+                            .forEach(p -> {
+                                try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+                            });
+                } catch (IOException ignored) {}
+            }
+        }
     }
 }
