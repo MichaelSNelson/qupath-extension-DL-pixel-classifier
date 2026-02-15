@@ -367,27 +367,28 @@ class InferenceService:
         return e_x / e_x.sum(axis=axis, keepdims=True)
 
     def _load_tile_data(self, tile_data: str) -> np.ndarray:
-        """Load tile image from base64 string or file path.
-
-        Determines whether the data is base64-encoded or a filesystem path
-        by checking if the string points to an existing file.
+        """Load tile image from a data URL or file path.
 
         Args:
-            tile_data: Base64-encoded image data or path to an image file
+            tile_data: Either a data URL (data:image/png;base64,...) or a
+                       filesystem path to an image file.
 
         Returns:
             Image as numpy array
+
+        Raises:
+            ValueError: If tile_data is neither a data URL nor an existing file
         """
-        # Check for data URL prefix first
         if tile_data.startswith("data:"):
             return self._decode_base64(tile_data)
 
-        # Check if it's a valid file path
         if os.path.isfile(tile_data):
             return self._load_image(tile_data)
 
-        # Otherwise treat as raw base64
-        return self._decode_base64(tile_data)
+        raise ValueError(
+            f"Tile data is neither a data URL (data:...) nor an existing file: "
+            f"{tile_data[:80]}..."
+        )
 
     def _decode_base64(self, data: str) -> np.ndarray:
         """Decode base64 image data.

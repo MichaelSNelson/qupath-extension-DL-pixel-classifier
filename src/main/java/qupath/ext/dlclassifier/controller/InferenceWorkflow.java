@@ -739,7 +739,8 @@ public class InferenceWorkflow {
     private static String encodeTile(BufferedImage image) throws IOException {
         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(image, "png", baos);
-        return Base64.getEncoder().encodeToString(baos.toByteArray());
+        return "data:image/png;base64," +
+                Base64.getEncoder().encodeToString(baos.toByteArray());
     }
 
     /**

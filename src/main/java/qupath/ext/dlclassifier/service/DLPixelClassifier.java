@@ -128,7 +128,8 @@ public class DLPixelClassifier implements PixelClassifier {
         // Encode tile as base64 PNG
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         ImageIO.write(tileImage, "png", baos);
-        String encoded = Base64.getEncoder().encodeToString(baos.toByteArray());
+        String encoded = "data:image/png;base64," +
+                Base64.getEncoder().encodeToString(baos.toByteArray());
 
         // Create tile data for server
         String tileId = String.format("%d_%d_%d_%d",
