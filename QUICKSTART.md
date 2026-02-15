@@ -150,7 +150,7 @@ The dialog has collapsible sections. For a quick first test:
 | **Classifier Name** | `test_classifier_v1` |
 | **Training Data Source** | Current image only (default) |
 | **Architecture** | `unet` |
-| **Backbone** | `resnet34` |
+| **Backbone** | `resnet34` (or a histology backbone -- see below) |
 | **Epochs** | `3` (just to verify it works) |
 | **Tile Size** | `256` or `512` |
 | **Use Pretrained Weights** | checked |
@@ -330,6 +330,7 @@ python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {t
 ## Next Steps
 
 - **Increase epochs** once you've verified the pipeline works (50-100 for real training)
+- **Try histology-pretrained backbones** -- select a backbone ending in "(Histology)" for weights pretrained on tissue patches instead of ImageNet. These produce better features for tissue classification and need less layer freezing. ~100MB download on first use (cached afterward).
 - **Try transfer learning** -- freeze early encoder layers for faster convergence on small datasets
 - **Experiment with architectures** -- UNet++ and DeepLabV3+ often outperform vanilla UNet
 - **Multi-image training** -- combine annotations from several images for a more robust classifier

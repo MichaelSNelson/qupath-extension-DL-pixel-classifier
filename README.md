@@ -11,6 +11,7 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Multiple output types**: Measurements, detection objects, or classification overlays
 - **Pixel-level inference** for OBJECTS and OVERLAY output types with full per-pixel probability maps
 - **Dialog preference persistence** -- training and inference settings are remembered across sessions
+- **Histology-pretrained encoders** from TCGA/Lunit/Kather100K for better tissue feature extraction
 - **Pluggable architecture** supporting UNet, SegFormer, and custom ONNX models
 - **REST API communication** with Python deep learning server
 - **Groovy scripting API** for batch processing

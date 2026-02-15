@@ -43,6 +43,16 @@ class LayerInfo:
 class PretrainedModelsService:
     """Service for managing pretrained model architectures and encoders."""
 
+    # Histology-pretrained encoders: composite_name -> (smp_encoder_name, timm_hub_id)
+    # These use ResNet-50 architecture but with weights pretrained on histopathology data
+    # instead of ImageNet, providing much better feature extraction for tissue classification.
+    HISTOLOGY_ENCODERS = {
+        "resnet50_lunit-swav": ("resnet50", "1aurent/resnet50.lunit_swav"),
+        "resnet50_lunit-bt": ("resnet50", "1aurent/resnet50.lunit_bt"),
+        "resnet50_kather100k": ("resnet50", "1aurent/resnet50.tiatoolbox-kather100k"),
+        "resnet50_tcga-brca": ("resnet50", "1aurent/resnet50.tcga_brca_simclr"),
+    }
+
     def __init__(self):
         self._encoders = self._init_encoders()
         self._architectures = self._init_architectures()
@@ -73,6 +83,44 @@ class PretrainedModelsService:
                 license="MIT (torchvision)",
                 recommended_for=["large_datasets", "high_accuracy"]
             ),
+
+            # Histology-pretrained ResNet-50 encoders
+            # These use the same ResNet-50 architecture but with weights pretrained
+            # on millions of histopathology patches, providing much better feature
+            # extraction for tissue classification than ImageNet weights.
+            "resnet50_lunit-swav": EncoderInfo(
+                name="resnet50_lunit-swav",
+                display_name="ResNet-50 Lunit SwAV (Histology)",
+                family="resnet", params_millions=25.6,
+                pretrained_weights=["histology"],
+                license="Non-commercial (Lunit)",
+                recommended_for=["histopathology", "high_accuracy", "tissue_classification"]
+            ),
+            "resnet50_lunit-bt": EncoderInfo(
+                name="resnet50_lunit-bt",
+                display_name="ResNet-50 Lunit Barlow Twins (Histology)",
+                family="resnet", params_millions=25.6,
+                pretrained_weights=["histology"],
+                license="Non-commercial (Lunit)",
+                recommended_for=["histopathology", "high_accuracy", "tissue_classification"]
+            ),
+            "resnet50_kather100k": EncoderInfo(
+                name="resnet50_kather100k",
+                display_name="ResNet-50 Kather100K (Histology)",
+                family="resnet", params_millions=25.6,
+                pretrained_weights=["histology"],
+                license="CC-BY-4.0",
+                recommended_for=["histopathology", "colorectal", "tissue_classification"]
+            ),
+            "resnet50_tcga-brca": EncoderInfo(
+                name="resnet50_tcga-brca",
+                display_name="ResNet-50 TCGA-BRCA (Histology)",
+                family="resnet", params_millions=25.6,
+                pretrained_weights=["histology"],
+                license="GPLv3",
+                recommended_for=["histopathology", "breast_cancer", "tissue_classification"]
+            ),
+
             "resnet101": EncoderInfo(
                 name="resnet101", display_name="ResNet-101",
                 family="resnet", params_millions=44.5,
@@ -284,12 +332,102 @@ class PretrainedModelsService:
         if architecture not in arch_map:
             raise ValueError(f"Unknown architecture: {architecture}")
 
+        # For histology encoders, resolve the smp encoder name and load
+        # the model with imagenet weights first (correct architecture),
+        # then replace encoder weights with histology-pretrained weights.
+        if encoder in self.HISTOLOGY_ENCODERS:
+            smp_encoder, hub_id = self.HISTOLOGY_ENCODERS[encoder]
+            model = arch_map[architecture](
+                encoder_name=smp_encoder,
+                encoder_weights="imagenet",
+                in_channels=num_channels,
+                classes=num_classes
+            )
+            self._load_histology_weights(model, hub_id, smp_encoder, num_channels)
+            return model
+
         return arch_map[architecture](
             encoder_name=encoder,
             encoder_weights="imagenet",
             in_channels=num_channels,
             classes=num_classes
         )
+
+    def _load_histology_weights(self, model, hub_id: str, encoder_name: str,
+                                num_channels: int = 3):
+        """
+        Load histology-pretrained weights from HuggingFace via timm into smp encoder.
+
+        Creates a timm model with the specified hub_id, then transfers matching
+        state_dict keys to the smp model's encoder. Skips the first conv layer
+        if num_channels != 3 to preserve smp's channel adaptation.
+
+        Args:
+            model: smp segmentation model with encoder to update
+            hub_id: HuggingFace/timm model identifier
+            encoder_name: smp encoder name (for logging)
+            num_channels: number of input channels
+        """
+        try:
+            import timm
+
+            logger.info("Downloading histology encoder weights: %s "
+                        "(~100MB on first use, cached in ~/.cache/huggingface/)",
+                        hub_id)
+
+            # Load the timm model with pretrained weights from HuggingFace
+            timm_model = timm.create_model(hub_id, pretrained=True)
+            timm_state = timm_model.state_dict()
+
+            # Get smp encoder state dict
+            encoder_state = model.encoder.state_dict()
+
+            # Transfer matching keys from timm to smp encoder
+            loaded_count = 0
+            total_count = len(encoder_state)
+
+            for key in encoder_state:
+                if key in timm_state:
+                    # Skip first conv layer if channel count differs from 3
+                    # to preserve smp's automatic channel adaptation
+                    if num_channels != 3 and ("conv1.weight" in key or
+                                               "features.0.weight" in key or
+                                               "_conv_stem.weight" in key):
+                        logger.debug("Skipping %s (num_channels=%d != 3)", key,
+                                     num_channels)
+                        continue
+
+                    if encoder_state[key].shape == timm_state[key].shape:
+                        encoder_state[key] = timm_state[key]
+                        loaded_count += 1
+                    else:
+                        logger.debug("Shape mismatch for %s: smp=%s, timm=%s",
+                                     key, encoder_state[key].shape,
+                                     timm_state[key].shape)
+
+            model.encoder.load_state_dict(encoder_state)
+            logger.info("Loaded %d/%d histology encoder weights from %s",
+                        loaded_count, total_count, hub_id)
+
+            if loaded_count < total_count * 0.5:
+                logger.warning("Less than 50%% of encoder weights matched for %s. "
+                               "The model may not benefit from histology pretraining.",
+                               hub_id)
+
+            # Free timm model memory
+            del timm_model, timm_state
+
+        except ImportError:
+            raise RuntimeError(
+                "The 'timm' package is required for histology-pretrained encoders. "
+                "Install it with: pip install timm>=1.0.0"
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load histology encoder weights from {hub_id}: {e}. "
+                "Check your internet connection and try again. "
+                "The weights (~100MB) are downloaded from HuggingFace on first use."
+            )
 
     def _get_encoder_layers(self, model, encoder_name: str) -> List[Dict[str, Any]]:
         """Extract encoder layer information."""
@@ -365,7 +503,8 @@ class PretrainedModelsService:
                     "is_encoder": True,
                     "depth": depth,
                     "recommended_freeze": freeze_default,
-                    "description": self._get_layer_description(depth, True)
+                    "description": self._get_layer_description(depth, True,
+                                                               encoder_name)
                 })
 
         return layers
@@ -424,60 +563,84 @@ class PretrainedModelsService:
         except Exception:
             return 0
 
-    def _get_layer_description(self, depth: int, is_encoder: bool) -> str:
+    def _get_layer_description(self, depth: int, is_encoder: bool,
+                               encoder: Optional[str] = None) -> str:
         """Get description for a layer based on its depth and what features it captures."""
         if not is_encoder:
             return "Task-specific output layer - always train"
 
-        # Descriptions based on what the layer learns and how well it transfers
-        # from ImageNet to histopathology (significant domain shift)
-        descriptions = {
-            0: "Edges, gradients, basic textures - universal features, transfer well, freeze",
-            1: "Low-level patterns (gabor-like filters) - transfer well across domains, freeze",
-            2: "Texture combinations, local patterns - partial transfer, consider fine-tuning",
-            3: "Mid-level shapes, larger patterns - limited transfer to histopathology, train",
-            4: "High-level semantic features - ImageNet concepts don't apply, must retrain",
-        }
-        return descriptions.get(depth, "Deep features - likely need retraining for histopathology")
+        is_histology = encoder is not None and encoder in self.HISTOLOGY_ENCODERS
 
-    def get_freeze_recommendations(self, dataset_size: str) -> Dict[str, bool]:
+        if is_histology:
+            # Histology-pretrained encoders already capture tissue-relevant features
+            # at all depths, so transfer is much better than ImageNet
+            descriptions = {
+                0: "Basic tissue textures - already tissue-aware, safe to freeze",
+                1: "Cell-level patterns - tissue-relevant, freeze for small datasets",
+                2: "Tissue microstructure - already captures histology patterns, consider training",
+                3: "Tissue architecture features - already relevant, train for best adaptation",
+                4: "High-level tissue semantics - good starting point, fine-tune for your task",
+            }
+        else:
+            # ImageNet-pretrained: significant domain shift to histopathology
+            descriptions = {
+                0: "Edges, gradients, basic textures - universal features, transfer well, freeze",
+                1: "Low-level patterns (gabor-like filters) - transfer well across domains, freeze",
+                2: "Texture combinations, local patterns - partial transfer, consider fine-tuning",
+                3: "Mid-level shapes, larger patterns - limited transfer to histopathology, train",
+                4: "High-level semantic features - ImageNet concepts don't apply, must retrain",
+            }
+
+        return descriptions.get(depth, "Deep features - likely need retraining")
+
+    def get_freeze_recommendations(self, dataset_size: str,
+                                    encoder: Optional[str] = None
+                                    ) -> Dict[str, bool]:
         """
         Get recommended freeze settings based on domain adaptation needs.
 
-        The primary factor is what each layer learns and how well it transfers
-        from ImageNet to histopathology (significant domain shift):
-
-        - Depth 0-1: Universal low-level features (edges, textures) - always freeze
-        - Depth 2: Mid-level patterns - partial transfer, depends on data availability
-        - Depth 3-4: High-level semantic features - don't transfer, need retraining
-
-        Dataset size affects HOW MUCH you can safely unfreeze without overfitting,
-        but the need for retraining is primarily driven by feature type.
+        For ImageNet-pretrained encoders, the primary factor is what each layer
+        learns and how well it transfers from natural images to histopathology
+        (significant domain shift). For histology-pretrained encoders, features
+        are already tissue-relevant so less freezing is needed.
 
         Args:
             dataset_size: "small" (<500 tiles), "medium" (500-5000), "large" (>5000)
                          This affects risk of overfitting when training more layers
+            encoder: Optional encoder name. If a histology encoder, returns
+                    less aggressive freeze recommendations.
 
         Returns:
             Dict mapping layer depth to freeze recommendation
         """
-        # Base recommendation: freeze universal features, train domain-specific
-        # Early layers (0-1): Universal visual features - always freeze
-        # Late layers (3-4): Semantic features that don't transfer - always train
-        # Middle layers (2): Depends on data available to prevent overfitting
+        is_histology = encoder is not None and encoder in self.HISTOLOGY_ENCODERS
 
-        if dataset_size == "small":
-            # Small dataset: risk of overfitting if training too many params
-            # Freeze through mid-level, only train highest semantic layers
-            return {0: True, 1: True, 2: True, 3: True, 4: False}
-        elif dataset_size == "medium":
-            # Medium: can afford to train semantic layers
-            # Still freeze universal features
-            return {0: True, 1: True, 2: True, 3: False, 4: False}
-        else:  # large
-            # Large dataset: can fine-tune more, including mid-level
-            # Still freeze truly universal features (edges, gradients)
-            return {0: True, 1: True, 2: False, 3: False, 4: False}
+        if is_histology:
+            # Histology encoders already have tissue-relevant features at all
+            # depths, so we need much less freezing. Mid-level features (depth
+            # 2-3) already capture tissue structures, unlike ImageNet features
+            # at those depths which encode natural-image concepts.
+            if dataset_size == "small":
+                # Small: freeze only earliest layers to prevent overfitting
+                return {0: True, 1: True, 2: False, 3: False, 4: False}
+            elif dataset_size == "medium":
+                # Medium: freeze only the initial conv
+                return {0: True, 1: False, 2: False, 3: False, 4: False}
+            else:  # large
+                # Large: fine-tune everything - histology features are a
+                # great starting point but full adaptation gives best results
+                return {0: False, 1: False, 2: False, 3: False, 4: False}
+        else:
+            # ImageNet-pretrained: significant domain shift to histopathology
+            # Early layers (0-1): Universal visual features - always freeze
+            # Late layers (3-4): Semantic features that don't transfer - always train
+            # Middle layers (2): Depends on data available to prevent overfitting
+            if dataset_size == "small":
+                return {0: True, 1: True, 2: True, 3: True, 4: False}
+            elif dataset_size == "medium":
+                return {0: True, 1: True, 2: True, 3: False, 4: False}
+            else:  # large
+                return {0: True, 1: True, 2: False, 3: False, 4: False}
 
     def create_model_with_frozen_layers(
         self,

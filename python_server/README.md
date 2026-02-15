@@ -8,7 +8,8 @@ Python FastAPI server for deep learning pixel classification, designed to work w
 - **GPU memory management**: Automatic cache clearing and memory monitoring
 - **Multiple architectures**: UNet, UNet++, DeepLabV3+, FPN, PSPNet, MANet, LinkNet, PAN
 - **Pretrained encoders**: ResNet, EfficientNet, MobileNet, DenseNet, VGG, and more
-- **Transfer learning**: Layer-level freeze/unfreeze control
+- **Histology-pretrained encoders**: ResNet-50 models pretrained on TCGA/Lunit/Kather100K tissue patches via timm
+- **Transfer learning**: Layer-level freeze/unfreeze control with encoder-aware recommendations
 - **ONNX export**: Automatic export for deployment without Python server
 - **Sparse annotation support**: Works with line/brush annotations (UNLABELED_INDEX=255)
 
@@ -338,7 +339,12 @@ This creates 6 synthetic images (256x256 RGB) with random circles in `tests/test
 - `unet`, `unet++`, `deeplabv3`, `deeplabv3+`, `fpn`, `pspnet`, `manet`, `linknet`, `pan`
 
 **Encoders** (`backbone`):
-- `resnet34`, `resnet50`, `efficientnet-b0`, `efficientnet-b4`, `mobilenet_v2`, `densenet121`, `vgg16`, `dpn68`, `resnext50_32x4d`, `se_resnet50`, `timm-efficientnet-b3`, `mit_b2`
+- ImageNet-pretrained: `resnet34`, `resnet50`, `efficientnet-b0`, `efficientnet-b4`, `mobilenet_v2`, `densenet121`, `vgg16`, `dpn68`, `resnext50_32x4d`, `se_resnet50`, `timm-efficientnet-b3`, `mit_b2`
+- Histology-pretrained (ResNet-50, downloaded from HuggingFace via timm on first use, ~100MB each):
+  - `resnet50_lunit-swav` -- Lunit SwAV, 19M TCGA patches (non-commercial)
+  - `resnet50_lunit-bt` -- Lunit Barlow Twins, 19M TCGA patches (non-commercial)
+  - `resnet50_kather100k` -- Kather100K colorectal tissue (CC-BY-4.0)
+  - `resnet50_tcga-brca` -- TCGA-BRCA breast cancer SimCLR (GPLv3)
 
 **Normalization Strategies**:
 - `min_max` - Scale to [0, 1] using min/max values
@@ -417,7 +423,7 @@ Response:
 | GET | `/api/v1/pretrained/encoders` | List pretrained encoders |
 | GET | `/api/v1/pretrained/architectures` | List architectures |
 | POST | `/api/v1/pretrained/layers` | Inspect model layers |
-| GET | `/api/v1/pretrained/freeze-recommendations/{size}` | Layer freeze recommendations |
+| GET | `/api/v1/pretrained/freeze-recommendations/{size}?encoder=...` | Layer freeze recommendations (encoder-aware) |
 | GET | `/api/v1/pretrained/encoder/{name}` | Encoder details |
 | GET | `/api/v1/pretrained/architecture/{name}` | Architecture details |
 

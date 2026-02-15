@@ -640,8 +640,29 @@ public class ClassifierClient {
      * @throws IOException if communication fails
      */
     public Map<Integer, Boolean> getFreezeRecommendations(String datasetSize) throws IOException {
+        return getFreezeRecommendations(datasetSize, null);
+    }
+
+    /**
+     * Gets recommended freeze settings for a dataset size and specific encoder.
+     * <p>
+     * When a histology-pretrained encoder is specified, the server returns less
+     * aggressive freeze recommendations since the features are already tissue-relevant.
+     *
+     * @param datasetSize "small", "medium", or "large"
+     * @param encoder     optional encoder name for encoder-specific recommendations
+     * @return map of depth to freeze recommendation
+     * @throws IOException if communication fails
+     */
+    public Map<Integer, Boolean> getFreezeRecommendations(String datasetSize,
+                                                           String encoder) throws IOException {
+        String url = baseUrl + "/pretrained/freeze-recommendations/" + datasetSize;
+        if (encoder != null && !encoder.isEmpty()) {
+            url += "?encoder=" + encoder;
+        }
+
         Request request = new Request.Builder()
-                .url(baseUrl + "/pretrained/freeze-recommendations/" + datasetSize)
+                .url(url)
                 .get()
                 .build();
 

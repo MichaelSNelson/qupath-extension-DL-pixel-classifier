@@ -3,11 +3,9 @@ package qupath.ext.dlclassifier.classifier.handlers;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
-import javafx.scene.control.ComboBox;
-import javafx.scene.control.Label;
-import javafx.scene.control.Spinner;
-import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
+import javafx.util.StringConverter;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
@@ -48,8 +46,38 @@ public class UNetHandler implements ClassifierHandler {
             "efficientnet-b0",
             "efficientnet-b1",
             "efficientnet-b2",
-            "mobilenet_v2"
+            "mobilenet_v2",
+            // Histology-pretrained ResNet-50 encoders (weights from HuggingFace)
+            "resnet50_lunit-swav",
+            "resnet50_lunit-bt",
+            "resnet50_kather100k",
+            "resnet50_tcga-brca"
     );
+
+    /** Human-readable display names for backbone encoders. */
+    private static final Map<String, String> BACKBONE_DISPLAY_NAMES = Map.ofEntries(
+            Map.entry("resnet18", "ResNet-18"),
+            Map.entry("resnet34", "ResNet-34"),
+            Map.entry("resnet50", "ResNet-50"),
+            Map.entry("efficientnet-b0", "EfficientNet-B0"),
+            Map.entry("efficientnet-b1", "EfficientNet-B1"),
+            Map.entry("efficientnet-b2", "EfficientNet-B2"),
+            Map.entry("mobilenet_v2", "MobileNet-V2"),
+            Map.entry("resnet50_lunit-swav", "ResNet-50 Lunit SwAV (Histology)"),
+            Map.entry("resnet50_lunit-bt", "ResNet-50 Lunit Barlow Twins (Histology)"),
+            Map.entry("resnet50_kather100k", "ResNet-50 Kather100K (Histology)"),
+            Map.entry("resnet50_tcga-brca", "ResNet-50 TCGA-BRCA (Histology)")
+    );
+
+    /**
+     * Returns a human-readable display name for a backbone encoder.
+     *
+     * @param backbone the backbone identifier string
+     * @return display name, or the backbone string itself if not found
+     */
+    public static String getBackboneDisplayName(String backbone) {
+        return BACKBONE_DISPLAY_NAMES.getOrDefault(backbone, backbone);
+    }
 
     /** Supported tile sizes (must be divisible by 32 for UNet) */
     public static final List<Integer> TILE_SIZES = List.of(
@@ -243,6 +271,22 @@ public class UNetHandler implements ClassifierHandler {
             backboneCombo = new ComboBox<>(FXCollections.observableArrayList(BACKBONES));
             backboneCombo.setValue("resnet34");
             backboneCombo.setMaxWidth(Double.MAX_VALUE);
+
+            // Show human-readable display names in the combo dropdown
+            backboneCombo.setCellFactory(lv -> new ListCell<>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    setText(empty || item == null ? null : getBackboneDisplayName(item));
+                }
+            });
+            backboneCombo.setButtonCell(new ListCell<>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    setText(empty || item == null ? null : getBackboneDisplayName(item));
+                }
+            });
 
             // Freeze layers
             Label freezeLabel = new Label("Freeze Encoder Layers:");

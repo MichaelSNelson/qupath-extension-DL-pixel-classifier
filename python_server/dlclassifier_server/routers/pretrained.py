@@ -121,28 +121,35 @@ async def get_model_layers(request: ModelLayersRequest):
 @router.get("/pretrained/freeze-recommendations/{dataset_size}",
             response_model=FreezeRecommendationResponse)
 async def get_freeze_recommendations(
-    dataset_size: str = Path(..., pattern="^(small|medium|large)$")
+    dataset_size: str = Path(..., pattern="^(small|medium|large)$"),
+    encoder: Optional[str] = Query(
+        None,
+        description="Encoder name. If a histology encoder, returns less aggressive "
+                    "freeze recommendations since features are already tissue-relevant."
+    )
 ):
     """
     Get recommended layer freeze settings for transfer learning.
 
-    The primary factor is what each layer learns and how well it transfers
-    from ImageNet to histopathology (significant domain shift):
-
+    For ImageNet-pretrained encoders:
     - Depth 0-1: Universal features (edges, textures) - always freeze
     - Depth 2: Mid-level patterns - partial transfer, depends on data
     - Depth 3-4: Semantic features - ImageNet concepts don't apply, train
-    - Depth 5+: Decoder - task-specific, always train
+
+    For histology-pretrained encoders (e.g., resnet50_lunit-swav):
+    - Features are already tissue-relevant at all depths
+    - Less freezing needed - only freeze to prevent overfitting on small datasets
 
     Args:
         dataset_size: One of "small" (<500 tiles), "medium" (500-5000), "large" (>5000)
                       This affects overfitting risk when training more layers.
+        encoder: Optional encoder name for encoder-specific recommendations.
 
     Returns:
         Recommendations mapping layer depth to freeze (True) or train (False).
     """
     service = get_pretrained_service()
-    recommendations = service.get_freeze_recommendations(dataset_size)
+    recommendations = service.get_freeze_recommendations(dataset_size, encoder)
 
     return FreezeRecommendationResponse(
         dataset_size=dataset_size,

@@ -209,6 +209,9 @@ public class InferenceDialog {
             classifierTable = new TableView<>();
             classifierTable.setPrefHeight(150);
             classifierTable.setPlaceholder(new Label("No classifiers available. Train a classifier first."));
+            classifierTable.setTooltip(new Tooltip(
+                    "Available trained classifiers.\n" +
+                    "Select one to apply to the current image."));
 
             TableColumn<ClassifierMetadata, String> nameCol = new TableColumn<>("Name");
             nameCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().getName()));
@@ -254,6 +257,7 @@ public class InferenceDialog {
             TitledPane pane = new TitledPane("SELECT CLASSIFIER", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(new Tooltip("Choose a trained classifier to apply"));
             return pane;
         }
 
@@ -262,6 +266,13 @@ public class InferenceDialog {
             grid.setHgap(10);
             grid.setVgap(8);
             grid.setPadding(new Insets(10));
+
+            ColumnConstraints labelCol = new ColumnConstraints();
+            labelCol.setMinWidth(140);
+            labelCol.setPrefWidth(150);
+            ColumnConstraints fieldCol = new ColumnConstraints();
+            fieldCol.setHgrow(Priority.ALWAYS);
+            grid.getColumnConstraints().addAll(labelCol, fieldCol);
 
             int row = 0;
 
@@ -272,7 +283,11 @@ public class InferenceDialog {
             } catch (IllegalArgumentException e) {
                 outputTypeCombo.setValue(InferenceConfig.OutputType.MEASUREMENTS);
             }
-            outputTypeCombo.setTooltip(new Tooltip("How to output classification results"));
+            outputTypeCombo.setTooltip(new Tooltip(
+                    "How classification results are represented:\n" +
+                    "MEASUREMENTS: Add per-class probability measurements to annotations.\n" +
+                    "OBJECTS: Create detection/annotation objects for classified regions.\n" +
+                    "OVERLAY: Display classification as a live color overlay on the viewer."));
             outputTypeCombo.valueProperty().addListener((obs, old, newVal) -> updateOutputOptions(newVal));
 
             grid.add(new Label("Output Type:"), 0, row);
@@ -283,8 +298,10 @@ public class InferenceDialog {
             objectTypeCombo = new ComboBox<>(FXCollections.observableArrayList(OutputObjectType.values()));
             objectTypeCombo.setValue(OutputObjectType.DETECTION);
             objectTypeCombo.setTooltip(new Tooltip(
-                    "DETECTION: Non-editable objects for measurements\n" +
-                    "ANNOTATION: Editable/selectable objects for further analysis"));
+                    "QuPath object type for classified regions:\n" +
+                    "DETECTION: Lightweight, non-editable objects for quantification.\n" +
+                    "ANNOTATION: Editable objects that can be further classified\n" +
+                    "or used as parent objects for nested analysis."));
 
             grid.add(new Label("Object Type:"), 0, row);
             grid.add(objectTypeCombo, 1, row);
@@ -294,7 +311,10 @@ public class InferenceDialog {
             minObjectSizeSpinner = new Spinner<>(0.0, 10000.0, 10.0, 1.0);
             minObjectSizeSpinner.setEditable(true);
             minObjectSizeSpinner.setPrefWidth(100);
-            minObjectSizeSpinner.setTooltip(new Tooltip("Minimum object size in square microns"));
+            minObjectSizeSpinner.setTooltip(new Tooltip(
+                    "Minimum area threshold in um^2 for generated objects.\n" +
+                    "Objects smaller than this are discarded as noise.\n" +
+                    "Set to 0 to keep all objects regardless of size."));
 
             grid.add(new Label("Min Object Size (um2):"), 0, row);
             grid.add(minObjectSizeSpinner, 1, row);
@@ -304,7 +324,10 @@ public class InferenceDialog {
             holeFillingSpinner = new Spinner<>(0.0, 1000.0, 5.0, 1.0);
             holeFillingSpinner.setEditable(true);
             holeFillingSpinner.setPrefWidth(100);
-            holeFillingSpinner.setTooltip(new Tooltip("Fill holes smaller than this size (um2)"));
+            holeFillingSpinner.setTooltip(new Tooltip(
+                    "Fill interior holes in objects smaller than this area (um^2).\n" +
+                    "Removes small gaps caused by misclassified pixels\n" +
+                    "within otherwise solid regions. Set to 0 to disable."));
 
             grid.add(new Label("Hole Filling (um2):"), 0, row);
             grid.add(holeFillingSpinner, 1, row);
@@ -314,7 +337,11 @@ public class InferenceDialog {
             smoothingSpinner = new Spinner<>(0.0, 10.0, DLClassifierPreferences.getSmoothing(), 0.5);
             smoothingSpinner.setEditable(true);
             smoothingSpinner.setPrefWidth(100);
-            smoothingSpinner.setTooltip(new Tooltip("Boundary smoothing amount"));
+            smoothingSpinner.setTooltip(new Tooltip(
+                    "Boundary simplification tolerance in microns.\n" +
+                    "Smooths jagged object boundaries using topology-preserving\n" +
+                    "simplification. Higher values produce simpler boundaries.\n" +
+                    "Set to 0 for pixel-exact boundaries."));
 
             grid.add(new Label("Boundary Smoothing:"), 0, row);
             grid.add(smoothingSpinner, 1, row);
@@ -325,6 +352,7 @@ public class InferenceDialog {
             TitledPane pane = new TitledPane("OUTPUT OPTIONS", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(new Tooltip("Configure how classification results are generated"));
             return pane;
         }
 
@@ -335,6 +363,7 @@ public class InferenceDialog {
             TitledPane pane = new TitledPane("CHANNEL MAPPING", channelPanel);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(new Tooltip("Map image channels to classifier input channels"));
             return pane;
         }
 
@@ -344,13 +373,24 @@ public class InferenceDialog {
             grid.setVgap(8);
             grid.setPadding(new Insets(10));
 
+            ColumnConstraints labelCol = new ColumnConstraints();
+            labelCol.setMinWidth(140);
+            labelCol.setPrefWidth(150);
+            ColumnConstraints fieldCol = new ColumnConstraints();
+            fieldCol.setHgrow(Priority.ALWAYS);
+            grid.getColumnConstraints().addAll(labelCol, fieldCol);
+
             int row = 0;
 
             // Tile size
             tileSizeSpinner = new Spinner<>(64, 1024, DLClassifierPreferences.getTileSize(), 64);
             tileSizeSpinner.setEditable(true);
             tileSizeSpinner.setPrefWidth(100);
-            tileSizeSpinner.setTooltip(new Tooltip("Tile size for inference (must be divisible by 32)"));
+            tileSizeSpinner.setTooltip(new Tooltip(
+                    "Tile size in pixels for inference processing.\n" +
+                    "Auto-set to match the classifier's training tile size.\n" +
+                    "Must be divisible by 32. Larger tiles may improve\n" +
+                    "context but use more GPU memory."));
 
             grid.add(new Label("Tile Size:"), 0, row);
             grid.add(tileSizeSpinner, 1, row);
@@ -388,7 +428,11 @@ public class InferenceDialog {
             } catch (IllegalArgumentException e) {
                 blendModeCombo.setValue(InferenceConfig.BlendMode.LINEAR);
             }
-            blendModeCombo.setTooltip(new Tooltip("How to blend overlapping tiles"));
+            blendModeCombo.setTooltip(new Tooltip(
+                    "Strategy for merging predictions in overlapping tile regions:\n" +
+                    "LINEAR: Weighted average favoring tile centers.\n" +
+                    "GAUSSIAN: Gaussian-weighted blending for smoother transitions.\n" +
+                    "NONE: No blending; last tile wins (fastest, may show seams)."));
 
             grid.add(new Label("Blend Mode:"), 0, row);
             grid.add(blendModeCombo, 1, row);
@@ -397,7 +441,11 @@ public class InferenceDialog {
             // GPU
             useGPUCheck = new CheckBox("Use GPU if available");
             useGPUCheck.setSelected(DLClassifierPreferences.isUseGPU());
-            useGPUCheck.setTooltip(new Tooltip("Use GPU acceleration for faster inference"));
+            useGPUCheck.setTooltip(new Tooltip(
+                    "Run inference on GPU (CUDA) if available.\n" +
+                    "Typically 10-50x faster than CPU.\n" +
+                    "Requires CUDA-enabled PyTorch on the server.\n" +
+                    "Falls back to CPU automatically if GPU is unavailable."));
 
             grid.add(useGPUCheck, 0, row, 2, 1);
 
@@ -407,6 +455,7 @@ public class InferenceDialog {
             TitledPane pane = new TitledPane("PROCESSING OPTIONS", grid);
             pane.setExpanded(false); // Collapsed by default
             pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(new Tooltip("Configure tile processing, blending, and GPU settings"));
             return pane;
         }
 
@@ -440,15 +489,24 @@ public class InferenceDialog {
             applyToSelectedRadio = new RadioButton("Apply to selected annotations only");
             applyToSelectedRadio.setToggleGroup(scopeGroup);
             applyToSelectedRadio.setSelected(DLClassifierPreferences.isApplyToSelected());
+            applyToSelectedRadio.setTooltip(new Tooltip(
+                    "Only classify within the currently selected annotations.\n" +
+                    "Useful for testing on a small region before full-image inference."));
 
             applyToAllRadio = new RadioButton("Apply to all annotations");
             applyToAllRadio.setToggleGroup(scopeGroup);
             applyToAllRadio.setSelected(!DLClassifierPreferences.isApplyToSelected());
+            applyToAllRadio.setTooltip(new Tooltip(
+                    "Classify within all annotations in the image.\n" +
+                    "Processes every annotation regardless of selection state."));
 
             // Backup option - restore from preferences
             createBackupCheck = new CheckBox("Create backup of annotation measurements before applying");
             createBackupCheck.setSelected(DLClassifierPreferences.isCreateBackup());
-            createBackupCheck.setTooltip(new Tooltip("Save existing measurements before overwriting"));
+            createBackupCheck.setTooltip(new Tooltip(
+                    "Save a copy of existing annotation measurements before\n" +
+                    "overwriting with new classification results.\n" +
+                    "Recommended when re-running inference on previously classified images."));
 
             content.getChildren().addAll(
                     new Label("Application scope:"),
@@ -461,6 +519,7 @@ public class InferenceDialog {
             TitledPane pane = new TitledPane("APPLICATION SCOPE", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(new Tooltip("Control which annotations to classify and backup options"));
             return pane;
         }
 

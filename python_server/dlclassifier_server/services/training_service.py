@@ -715,6 +715,7 @@ class TrainingService:
         """Create a segmentation model."""
         try:
             import segmentation_models_pytorch as smp
+            from .pretrained_models import PretrainedModelsService, get_pretrained_service
 
             encoder_name = architecture.get("backbone", "resnet34")
             encoder_weights = "imagenet" if architecture.get("use_pretrained", True) else None
@@ -735,6 +736,27 @@ class TrainingService:
             if model_type not in model_map:
                 raise ValueError(f"Unknown model type: {model_type}. "
                                f"Available: {list(model_map.keys())}")
+
+            # Check if this is a histology-pretrained encoder
+            if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
+                smp_encoder, hub_id = PretrainedModelsService.HISTOLOGY_ENCODERS[encoder_name]
+
+                # Create model with imagenet weights first (correct architecture)
+                model = model_map[model_type](
+                    encoder_name=smp_encoder,
+                    encoder_weights="imagenet",
+                    in_channels=num_channels,
+                    classes=num_classes
+                )
+
+                # Replace encoder weights with histology-pretrained weights
+                pretrained_service = get_pretrained_service()
+                pretrained_service._load_histology_weights(
+                    model, hub_id, smp_encoder, num_channels)
+
+                logger.info(f"Created {model_type} model with histology encoder "
+                           f"{encoder_name} (weights: {hub_id})")
+                return model
 
             model = model_map[model_type](
                 encoder_name=encoder_name,

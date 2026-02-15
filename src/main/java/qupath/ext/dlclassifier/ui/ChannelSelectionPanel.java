@@ -61,12 +61,18 @@ public class ChannelSelectionPanel extends VBox {
         availableList.setCellFactory(lv -> new ChannelListCell());
         availableList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         availableList.setPrefHeight(150);
+        availableList.setTooltip(new Tooltip(
+                "Image channels available for selection.\n" +
+                "Multi-select with Ctrl+click or Shift+click."));
 
         // Selected channels list
         selectedList = new ListView<>();
         selectedList.setCellFactory(lv -> new ChannelListCell());
         selectedList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         selectedList.setPrefHeight(150);
+        selectedList.setTooltip(new Tooltip(
+                "Channels that will be used as model input.\n" +
+                "Order matters: must match the order used during training."));
 
         // Transfer buttons
         Button addButton = new Button(">");
@@ -113,7 +119,12 @@ public class ChannelSelectionPanel extends VBox {
         normalizationCombo = new ComboBox<>(FXCollections.observableArrayList(
                 ChannelConfiguration.NormalizationStrategy.values()));
         normalizationCombo.setValue(ChannelConfiguration.NormalizationStrategy.PERCENTILE_99);
-        normalizationCombo.setTooltip(new Tooltip("Normalization strategy for all channels"));
+        normalizationCombo.setTooltip(new Tooltip(
+                "Per-channel intensity normalization before inference:\n" +
+                "MIN_MAX: Scale to [0,1] using channel min/max values.\n" +
+                "PERCENTILE_99: Scale using 1st/99th percentiles (robust to outliers).\n" +
+                "Z_SCORE: Subtract mean, divide by std deviation.\n" +
+                "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit)."));
 
         HBox normBox = new HBox(10,
                 new Label("Normalization:"),

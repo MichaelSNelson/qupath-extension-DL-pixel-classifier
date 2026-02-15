@@ -75,10 +75,14 @@ public class LayerFreezePanel extends VBox {
         presetCombo.setValue("Medium (500-5000) - Balanced");
         presetCombo.setOnAction(e -> applyPreset());
         presetCombo.setTooltip(new Tooltip(
-                "More training data allows fine-tuning more layers without overfitting"
-        ));
+                "Select a freeze strategy based on your dataset size:\n" +
+                "Small (<500 tiles): Freeze most encoder layers to prevent overfitting.\n" +
+                "Medium (500-5000): Balanced freeze of early layers only.\n" +
+                "Large (>5000): Fine-tune nearly all layers for best adaptation.\n" +
+                "Custom: Manually toggle individual layers below."));
 
         Button applyButton = new Button("Apply");
+        applyButton.setTooltip(new Tooltip("Apply the selected freeze preset to all layers"));
         applyButton.setOnAction(e -> applyPreset());
         presetBox.getChildren().addAll(presetLabel, presetCombo, applyButton);
 
@@ -86,6 +90,10 @@ public class LayerFreezePanel extends VBox {
         layerListView = new ListView<>(layers);
         layerListView.setCellFactory(lv -> new LayerCell());
         layerListView.setPrefHeight(200);
+        layerListView.setTooltip(new Tooltip(
+                "Model layers from early (top) to late (bottom).\n" +
+                "Check a layer to freeze (skip training) it.\n" +
+                "Green = early/general features, Red = late/specific features."));
         VBox.setVgrow(layerListView, Priority.ALWAYS);
 
         // Quick actions
@@ -93,12 +101,23 @@ public class LayerFreezePanel extends VBox {
         actionBox.setAlignment(Pos.CENTER);
 
         Button freezeAllEncoderBtn = new Button("Freeze All Encoder");
+        freezeAllEncoderBtn.setTooltip(new Tooltip(
+                "Freeze all encoder layers.\n" +
+                "Only the decoder will be trained.\n" +
+                "Most conservative option, best for very small datasets."));
         freezeAllEncoderBtn.setOnAction(e -> setAllEncoderLayers(true));
 
         Button unfreezeAllBtn = new Button("Unfreeze All");
+        unfreezeAllBtn.setTooltip(new Tooltip(
+                "Unfreeze all layers for full fine-tuning.\n" +
+                "Most aggressive option, best for large datasets.\n" +
+                "Risk of overfitting with small datasets."));
         unfreezeAllBtn.setOnAction(e -> setAllLayers(false));
 
         Button recommendedBtn = new Button("Use Recommended");
+        recommendedBtn.setTooltip(new Tooltip(
+                "Apply the server's recommended freeze configuration\n" +
+                "based on the selected architecture and backbone."));
         recommendedBtn.setOnAction(e -> applyRecommended());
 
         actionBox.getChildren().addAll(freezeAllEncoderBtn, unfreezeAllBtn, recommendedBtn);
@@ -199,7 +218,8 @@ public class LayerFreezePanel extends VBox {
         }
 
         try {
-            Map<Integer, Boolean> recommendations = client.getFreezeRecommendations(datasetSize);
+            Map<Integer, Boolean> recommendations = client.getFreezeRecommendations(
+                    datasetSize, currentEncoder);
 
             for (LayerItem layer : layers) {
                 Boolean freeze = recommendations.get(layer.getDepth());
@@ -210,8 +230,8 @@ public class LayerFreezePanel extends VBox {
 
             layerListView.refresh();
             updateStatus();
-            logger.info("Applied {} preset: {} layers frozen",
-                    datasetSize, getFrozenLayerNames().size());
+            logger.info("Applied {} preset for encoder {}: {} layers frozen",
+                    datasetSize, currentEncoder, getFrozenLayerNames().size());
 
         } catch (Exception e) {
             logger.error("Failed to get recommendations", e);
