@@ -2,6 +2,7 @@ package qupath.ext.dlclassifier;
 
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
@@ -149,16 +150,36 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         );
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
 
-        // 3) Remove Overlay - remove any active classification overlay
+        // 3) Toggle DL Overlay - show/hide without destroying (independent of C key)
+        CheckMenuItem toggleOverlayOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
+        setMenuItemTooltip(toggleOverlayOption,
+                "Show or hide the DL classification overlay. " +
+                        "Independent of QuPath's built-in pixel classification toggle (C key). " +
+                        "Hiding stops server requests but preserves cached tiles.");
+        OverlayService overlayService = OverlayService.getInstance();
+        // Sync CheckMenuItem state from the property (for programmatic changes)
+        overlayService.overlayVisibleProperty().addListener((obs, wasVisible, isVisible) ->
+                toggleOverlayOption.setSelected(isVisible));
+        // Trigger show/hide when user clicks the CheckMenuItem
+        toggleOverlayOption.setOnAction(e ->
+                overlayService.setOverlayVisible(toggleOverlayOption.isSelected()));
+        toggleOverlayOption.disableProperty().bind(
+                Bindings.createBooleanBinding(
+                        () -> !overlayService.hasOverlay(),
+                        overlayService.overlayVisibleProperty()
+                )
+        );
+
+        // 4) Remove Overlay - fully remove and clean up resources
         MenuItem removeOverlayOption = new MenuItem(res.getString("menu.removeOverlay"));
         setMenuItemTooltip(removeOverlayOption,
-                "Remove the current DL classification overlay from the viewer.");
+                "Permanently remove the DL classification overlay and free resources.");
         removeOverlayOption.setOnAction(e -> {
-            OverlayService.getInstance().removeOverlay();
+            overlayService.removeOverlay();
             Dialogs.showInfoNotification(EXTENSION_NAME, "Classification overlay removed.");
         });
 
-        // 4) Manage Models - browse and manage saved classifiers
+        // 5) Manage Models - browse and manage saved classifiers
         MenuItem modelsOption = new MenuItem(res.getString("menu.manageModels"));
         setMenuItemTooltip(modelsOption,
                 "Browse, import, export, and delete saved classifiers. " +
@@ -181,6 +202,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         extensionMenu.getItems().addAll(
                 trainOption,
                 inferenceOption,
+                new SeparatorMenuItem(),
+                toggleOverlayOption,
                 removeOverlayOption,
                 new SeparatorMenuItem(),
                 modelsOption,
