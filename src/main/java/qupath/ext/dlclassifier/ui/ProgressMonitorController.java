@@ -16,6 +16,8 @@ import javafx.stage.StageStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -47,20 +49,26 @@ public class ProgressMonitorController {
     private final Label detailLabel;
     private final TextArea logArea;
     private final Button cancelButton;
+    private final Button pauseButton;
     private final LineChart<Number, Number> lossChart;
     private final XYChart.Series<Number, Number> trainLossSeries;
     private final XYChart.Series<Number, Number> valLossSeries;
+    private final LineChart<Number, Number> iouChart;
+    private final Map<String, XYChart.Series<Number, Number>> iouSeriesMap = new LinkedHashMap<>();
 
     private final DoubleProperty overallProgress = new SimpleDoubleProperty(0);
     private final DoubleProperty currentProgress = new SimpleDoubleProperty(0);
     private final StringProperty status = new SimpleStringProperty("Initializing...");
     private final StringProperty detail = new SimpleStringProperty("");
     private final BooleanProperty cancelled = new SimpleBooleanProperty(false);
+    private final BooleanProperty paused = new SimpleBooleanProperty(false);
 
     private final AtomicLong startTime = new AtomicLong(0);
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     private Consumer<Void> onCancelCallback;
+    private Consumer<Void> onPauseCallback;
+    private Consumer<Void> onResumeCallback;
 
     /**
      * Creates a new progress monitor for training.
@@ -102,6 +110,9 @@ public class ProgressMonitorController {
         logArea.setWrapText(true);
         logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
 
+        pauseButton = new Button("Pause");
+        pauseButton.setOnAction(e -> handlePause());
+
         cancelButton = new Button("Cancel");
         cancelButton.setOnAction(e -> handleCancel());
 
@@ -128,6 +139,21 @@ public class ProgressMonitorController {
 
         lossChart.getData().addAll(trainLossSeries, valLossSeries);
 
+        // Create per-class IoU chart
+        NumberAxis iouXAxis = new NumberAxis();
+        iouXAxis.setLabel("Epoch");
+        iouXAxis.setAutoRanging(true);
+
+        NumberAxis iouYAxis = new NumberAxis();
+        iouYAxis.setLabel("IoU");
+        iouYAxis.setAutoRanging(true);
+
+        iouChart = new LineChart<>(iouXAxis, iouYAxis);
+        iouChart.setTitle("Per-Class IoU");
+        iouChart.setCreateSymbols(false);
+        iouChart.setAnimated(false);
+        iouChart.setPrefHeight(200);
+
         // Build layout
         VBox root = new VBox(10);
         root.setPadding(new Insets(15));
@@ -150,6 +176,11 @@ public class ProgressMonitorController {
             TitledPane chartPane = new TitledPane("Training Metrics", lossChart);
             chartPane.setExpanded(true);
             root.getChildren().add(chartPane);
+
+            // Per-class IoU chart (collapsed by default)
+            TitledPane iouPane = new TitledPane("Per-Class IoU", iouChart);
+            iouPane.setExpanded(false);
+            root.getChildren().add(iouPane);
         }
 
         // Log section
@@ -161,10 +192,13 @@ public class ProgressMonitorController {
         // Buttons
         HBox buttonBox = new HBox(10);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        if (showLossChart) {
+            buttonBox.getChildren().add(pauseButton);
+        }
         buttonBox.getChildren().add(cancelButton);
         root.getChildren().add(buttonBox);
 
-        Scene scene = new Scene(root, showLossChart ? 500 : 450, showLossChart ? 500 : 300);
+        Scene scene = new Scene(root, showLossChart ? 500 : 450, showLossChart ? 600 : 300);
         stage.setScene(scene);
 
         // Handle window close
@@ -259,17 +293,35 @@ public class ProgressMonitorController {
     }
 
     /**
-     * Updates training metrics.
+     * Updates training metrics including per-class IoU and loss.
      *
      * @param epoch current epoch
      * @param trainLoss training loss
      * @param valLoss validation loss (or NaN if not available)
+     * @param perClassIoU per-class IoU values (class name -> IoU)
+     * @param perClassLoss per-class loss values (class name -> loss)
      */
-    public void updateTrainingMetrics(int epoch, double trainLoss, double valLoss) {
+    public void updateTrainingMetrics(int epoch, double trainLoss, double valLoss,
+                                       Map<String, Double> perClassIoU,
+                                       Map<String, Double> perClassLoss) {
         Platform.runLater(() -> {
             trainLossSeries.getData().add(new XYChart.Data<>(epoch, trainLoss));
             if (!Double.isNaN(valLoss)) {
                 valLossSeries.getData().add(new XYChart.Data<>(epoch, valLoss));
+            }
+
+            // Update per-class IoU chart
+            if (perClassIoU != null) {
+                for (var entry : perClassIoU.entrySet()) {
+                    XYChart.Series<Number, Number> series = iouSeriesMap.computeIfAbsent(
+                            entry.getKey(), className -> {
+                                XYChart.Series<Number, Number> newSeries = new XYChart.Series<>();
+                                newSeries.setName(className);
+                                iouChart.getData().add(newSeries);
+                                return newSeries;
+                            });
+                    series.getData().add(new XYChart.Data<>(epoch, entry.getValue()));
+                }
             }
         });
     }
@@ -284,12 +336,48 @@ public class ProgressMonitorController {
     }
 
     /**
+     * Sets the pause callback.
+     *
+     * @param callback callback to invoke when pause is clicked
+     */
+    public void setOnPause(Consumer<Void> callback) {
+        this.onPauseCallback = callback;
+    }
+
+    /**
+     * Sets the resume callback.
+     *
+     * @param callback callback to invoke when resume is clicked
+     */
+    public void setOnResume(Consumer<Void> callback) {
+        this.onResumeCallback = callback;
+    }
+
+    /**
      * Checks if the operation was cancelled.
      *
      * @return true if cancelled
      */
     public boolean isCancelled() {
         return cancelled.get();
+    }
+
+    /**
+     * Checks if the operation is paused.
+     *
+     * @return true if paused
+     */
+    public boolean isPaused() {
+        return paused.get();
+    }
+
+    /**
+     * Gets the paused property for binding.
+     *
+     * @return paused property
+     */
+    public BooleanProperty pausedProperty() {
+        return paused;
     }
 
     /**
@@ -326,8 +414,79 @@ public class ProgressMonitorController {
         });
     }
 
-    private void handleCancel() {
+    /**
+     * Transitions the UI to the paused state.
+     *
+     * @param epoch       the epoch at which training paused
+     * @param totalEpochs the total number of planned epochs
+     */
+    public void showPausedState(int epoch, int totalEpochs) {
+        Platform.runLater(() -> {
+            paused.set(true);
+            isRunning.set(false);
+            status.set(String.format("Paused at epoch %d/%d", epoch, totalEpochs));
+            statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #CC8800;");
+            pauseButton.setText("Resume");
+            pauseButton.setDisable(false);
+            pauseButton.setOnAction(e -> handleResume());
+            cancelButton.setText("Close");
+            cancelButton.setDisable(false);
+            cancelButton.setOnAction(e -> close());
+            log("Training paused. You can add/modify annotations in QuPath, then click Resume.");
+        });
+    }
+
+    /**
+     * Transitions the UI back to the training state after resume.
+     */
+    public void showResumedState() {
+        Platform.runLater(() -> {
+            paused.set(false);
+            isRunning.set(true);
+            startTime.set(System.currentTimeMillis());
+            status.set("Training model...");
+            statusLabel.setStyle("-fx-font-weight: bold;");
+            pauseButton.setText("Pause");
+            pauseButton.setDisable(false);
+            pauseButton.setOnAction(e -> handlePause());
+            cancelButton.setText("Cancel");
+            cancelButton.setDisable(false);
+            cancelButton.setOnAction(e -> handleCancel());
+            log("Training resumed.");
+        });
+    }
+
+    private void handlePause() {
         if (!isRunning.get()) {
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Pause Training");
+        confirm.setHeaderText("Pause training at the end of the current epoch?");
+        confirm.setContentText("You can add annotations and resume training later.");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                status.set("Pausing...");
+                pauseButton.setDisable(true);
+                log("Pause requested - will pause after current epoch completes");
+
+                if (onPauseCallback != null) {
+                    onPauseCallback.accept(null);
+                }
+            }
+        });
+    }
+
+    private void handleResume() {
+        if (onResumeCallback != null) {
+            onResumeCallback.accept(null);
+        }
+    }
+
+    private void handleCancel() {
+        if (!isRunning.get() && !paused.get()) {
             close();
             return;
         }
@@ -342,6 +501,7 @@ public class ProgressMonitorController {
                 cancelled.set(true);
                 status.set("Cancelling...");
                 cancelButton.setDisable(true);
+                pauseButton.setDisable(true);
 
                 if (onCancelCallback != null) {
                     onCancelCallback.accept(null);

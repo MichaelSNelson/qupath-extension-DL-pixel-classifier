@@ -65,10 +65,22 @@ class TrainStatusResponse(BaseModel):
     loss: Optional[float] = None
     train_loss: Optional[float] = None
     accuracy: Optional[float] = None
+    mean_iou: Optional[float] = None
+    per_class_iou: Optional[Dict[str, float]] = None
+    per_class_loss: Optional[Dict[str, float]] = None
     model_path: Optional[str] = None
     final_loss: Optional[float] = None
     final_accuracy: Optional[float] = None
     error: Optional[str] = None
+    checkpoint_path: Optional[str] = None
+
+
+class ResumeRequest(BaseModel):
+    """Resume training request."""
+    data_path: Optional[str] = None
+    epochs: Optional[int] = None
+    learning_rate: Optional[float] = None
+    batch_size: Optional[int] = None
 
 
 @router.post("/train", response_model=TrainResponse)
@@ -126,3 +138,60 @@ async def cancel_training(job_id: str, request: Request):
 
     job.cancel()
     return {"status": "cancelled", "job_id": job_id}
+
+
+@router.post("/train/{job_id}/pause")
+async def pause_training(job_id: str, request: Request):
+    """Pause a training job at the end of the current epoch."""
+    from ..services.job_manager import JobStatus
+
+    job_manager = request.app.state.job_manager
+    job = job_manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.status != JobStatus.TRAINING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot pause job in state {job.status.value}")
+
+    job.pause()
+    return {"status": "pausing", "job_id": job_id}
+
+
+@router.post("/train/{job_id}/resume")
+async def resume_training(
+    job_id: str,
+    resume_request: ResumeRequest,
+    background_tasks: BackgroundTasks,
+    request: Request
+):
+    """Resume a paused training job."""
+    from ..services.job_manager import JobStatus
+
+    job_manager = request.app.state.job_manager
+    job = job_manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.status != JobStatus.PAUSED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot resume job in state {job.status.value}")
+
+    # Build training param overrides
+    overrides = {}
+    if resume_request.epochs is not None:
+        overrides["epochs"] = resume_request.epochs
+    if resume_request.learning_rate is not None:
+        overrides["learning_rate"] = resume_request.learning_rate
+    if resume_request.batch_size is not None:
+        overrides["batch_size"] = resume_request.batch_size
+
+    background_tasks.add_task(
+        job.resume,
+        data_path=resume_request.data_path,
+        training_params_overrides=overrides if overrides else None
+    )
+
+    return {"status": "resuming", "job_id": job_id}

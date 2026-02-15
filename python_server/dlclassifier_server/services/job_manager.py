@@ -19,6 +19,7 @@ class JobStatus(Enum):
     """Training job status."""
     PENDING = "pending"
     TRAINING = "training"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -43,13 +44,23 @@ class TrainingJob:
     loss: float = 0.0
     train_loss: float = 0.0
     accuracy: float = 0.0
+    per_class_iou: Dict[str, float] = field(default_factory=dict)
+    per_class_loss: Dict[str, float] = field(default_factory=dict)
+    mean_iou: float = 0.0
     model_path: Optional[str] = None
     error: Optional[str] = None
+    checkpoint_path: Optional[str] = None
 
     _cancel_flag: threading.Event = field(default_factory=threading.Event)
+    _pause_flag: threading.Event = field(default_factory=threading.Event)
 
-    def run(self):
-        """Execute the training job."""
+    def run(self, checkpoint_path: Optional[str] = None, start_epoch: int = 0):
+        """Execute the training job.
+
+        Args:
+            checkpoint_path: Optional checkpoint path for resuming training
+            start_epoch: Epoch to start from when resuming (0-based)
+        """
         try:
             logger.info(f"Starting training job {self.job_id}")
             self.status = JobStatus.TRAINING
@@ -61,11 +72,15 @@ class TrainingJob:
             trainer = TrainingService(device=self.device)
 
             # Run training with progress callback
-            def progress_callback(epoch, train_loss, val_loss, accuracy):
+            def progress_callback(epoch, train_loss, val_loss, accuracy,
+                                  per_class_iou, per_class_loss, mean_iou):
                 self.current_epoch = epoch
                 self.train_loss = train_loss
                 self.loss = val_loss
                 self.accuracy = accuracy
+                self.per_class_iou = per_class_iou
+                self.per_class_loss = per_class_loss
+                self.mean_iou = mean_iou
 
             # Extract frozen layers from architecture config
             frozen_layers = self.architecture.get("frozen_layers", None)
@@ -79,12 +94,19 @@ class TrainingJob:
                 data_path=self.data_path,
                 progress_callback=progress_callback,
                 cancel_flag=self._cancel_flag,
-                frozen_layers=frozen_layers
+                frozen_layers=frozen_layers,
+                pause_flag=self._pause_flag,
+                checkpoint_path=checkpoint_path,
+                start_epoch=start_epoch
             )
 
             if self._cancel_flag.is_set():
                 self.status = JobStatus.CANCELLED
                 logger.info(f"Training job {self.job_id} cancelled")
+            elif result.get("status") == "paused":
+                self.status = JobStatus.PAUSED
+                self.checkpoint_path = result["checkpoint_path"]
+                logger.info(f"Training job {self.job_id} paused at epoch {result['epoch']}")
             else:
                 self.status = JobStatus.COMPLETED
                 self.model_path = result["model_path"]
@@ -134,6 +156,40 @@ class TrainingJob:
         """Cancel the training job."""
         self._cancel_flag.set()
 
+    def pause(self):
+        """Request training to pause at the end of the current epoch."""
+        self._pause_flag.set()
+
+    def resume(self, data_path: Optional[str] = None,
+               training_params_overrides: Optional[Dict[str, Any]] = None):
+        """Resume a paused training job.
+
+        Args:
+            data_path: Optional new data path (for re-exported annotations)
+            training_params_overrides: Optional dict of training param overrides
+                (epochs, learning_rate, batch_size)
+        """
+        if self.status != JobStatus.PAUSED:
+            raise ValueError(f"Cannot resume job in state {self.status.value}")
+
+        # Apply overrides
+        if data_path:
+            self.data_path = data_path
+        if training_params_overrides:
+            self.training_params.update(training_params_overrides)
+            self.total_epochs = self.training_params.get("epochs", self.total_epochs)
+
+        # Clear pause flag for next use
+        self._pause_flag.clear()
+        self._cancel_flag = threading.Event()
+
+        start_epoch = self.current_epoch
+        checkpoint = self.checkpoint_path
+        self.checkpoint_path = None
+        self.status = JobStatus.TRAINING
+
+        self.run(checkpoint_path=checkpoint, start_epoch=start_epoch)
+
     def get_status(self) -> Dict[str, Any]:
         """Get job status as dictionary."""
         result = {
@@ -146,6 +202,20 @@ class TrainingJob:
             result["loss"] = self.loss
             result["train_loss"] = self.train_loss
             result["accuracy"] = self.accuracy
+            result["mean_iou"] = self.mean_iou
+            result["per_class_iou"] = self.per_class_iou
+            result["per_class_loss"] = self.per_class_loss
+
+        elif self.status == JobStatus.PAUSED:
+            result["epoch"] = self.current_epoch
+            result["total_epochs"] = self.total_epochs
+            result["loss"] = self.loss
+            result["train_loss"] = self.train_loss
+            result["accuracy"] = self.accuracy
+            result["mean_iou"] = self.mean_iou
+            result["per_class_iou"] = self.per_class_iou
+            result["per_class_loss"] = self.per_class_loss
+            result["checkpoint_path"] = self.checkpoint_path
 
         elif self.status == JobStatus.COMPLETED:
             result["model_path"] = self.model_path

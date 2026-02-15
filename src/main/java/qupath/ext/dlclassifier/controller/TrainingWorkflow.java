@@ -23,12 +23,23 @@ import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.projects.ProjectImageEntry;
 
+import javafx.geometry.Insets;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.GridPane;
+
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -79,6 +90,15 @@ public class TrainingWorkflow {
             boolean success,
             String message
     ) {}
+
+    /**
+     * Parameters for resuming training.
+     *
+     * @param totalEpochs new total epoch count
+     * @param learningRate new learning rate
+     * @param batchSize new batch size
+     */
+    public record ResumeParams(int totalEpochs, double learningRate, int batchSize) {}
 
     // ==================== Builder API ====================
 
@@ -338,15 +358,44 @@ public class TrainingWorkflow {
         progress.setOnCancel(v -> logger.info("Training cancellation requested"));
         progress.show();
 
+        // Shared state for pause/resume
+        final String[] currentJobId = {null};
+
+        // Wire pause callback
+        progress.setOnPause(v -> {
+            if (currentJobId[0] != null) {
+                try {
+                    ClassifierClient client = new ClassifierClient(
+                            DLClassifierPreferences.getServerHost(),
+                            DLClassifierPreferences.getServerPort());
+                    client.pauseTraining(currentJobId[0]);
+                } catch (Exception e) {
+                    logger.error("Failed to pause training", e);
+                    progress.log("ERROR: Failed to pause: " + e.getMessage());
+                }
+            }
+        });
+
+        // Wire resume callback
+        progress.setOnResume(v -> {
+            CompletableFuture.runAsync(() -> handleResume(
+                    currentJobId[0], classifierName, description, handler,
+                    trainingConfig, channelConfig, classNames,
+                    selectedImages, progress, currentJobId));
+        });
+
         CompletableFuture.runAsync(() -> {
             TrainingResult result = trainCore(classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
-                    qupath.getImageData(), selectedImages, progress);
+                    qupath.getImageData(), selectedImages, progress, currentJobId);
 
             if (result.success()) {
                 progress.complete(true, String.format(
                         "Classifier trained successfully!\nFinal loss: %.4f\nAccuracy: %.2f%%",
                         result.finalLoss(), result.finalAccuracy() * 100));
+            } else if (result.message() != null && result.message().contains("paused")) {
+                // Paused state is handled by showPausedState - don't close
+                logger.info("Training paused, waiting for user action");
             } else {
                 progress.complete(false, result.message());
             }
@@ -379,6 +428,35 @@ public class TrainingWorkflow {
                                     ImageData<BufferedImage> imageData,
                                     List<ProjectImageEntry<BufferedImage>> selectedImages,
                                     ProgressMonitorController progress) {
+        return trainCore(classifierName, description, handler, trainingConfig,
+                channelConfig, classNames, imageData, selectedImages, progress, null);
+    }
+
+    /**
+     * Core training logic shared by GUI and headless paths.
+     *
+     * @param classifierName name for the classifier
+     * @param description    classifier description
+     * @param handler        the classifier handler
+     * @param trainingConfig training configuration
+     * @param channelConfig  channel configuration
+     * @param classNames     list of class names
+     * @param imageData      image data for extracting training patches (single-image mode)
+     * @param selectedImages project images for multi-image training, or null for single-image
+     * @param progress       progress monitor (nullable for headless execution)
+     * @param jobIdHolder    optional array to receive the job ID (element 0 is set)
+     * @return the training result
+     */
+    static TrainingResult trainCore(String classifierName,
+                                    String description,
+                                    ClassifierHandler handler,
+                                    TrainingConfig trainingConfig,
+                                    ChannelConfiguration channelConfig,
+                                    List<String> classNames,
+                                    ImageData<BufferedImage> imageData,
+                                    List<ProjectImageEntry<BufferedImage>> selectedImages,
+                                    ProgressMonitorController progress,
+                                    String[] jobIdHolder) {
         try {
             if (progress != null) {
                 progress.setStatus("Exporting training data...");
@@ -450,19 +528,58 @@ public class TrainingWorkflow {
                         if (progress != null) {
                             double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                             progress.setOverallProgress(progressValue);
-                            progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f",
-                                    trainingProgress.epoch(), trainingProgress.totalEpochs(), trainingProgress.loss()));
+                            progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
+                                    trainingProgress.epoch(), trainingProgress.totalEpochs(),
+                                    trainingProgress.loss(), trainingProgress.meanIoU()));
                             progress.updateTrainingMetrics(
                                     trainingProgress.epoch(),
                                     trainingProgress.loss(),
-                                    trainingProgress.valLoss()
+                                    trainingProgress.valLoss(),
+                                    trainingProgress.perClassIoU(),
+                                    trainingProgress.perClassLoss()
                             );
-                            progress.log(String.format("Epoch %d: train_loss=%.4f, val_loss=%.4f",
-                                    trainingProgress.epoch(), trainingProgress.loss(), trainingProgress.valLoss()));
+
+                            // Log with per-class breakdown
+                            StringBuilder logMsg = new StringBuilder();
+                            logMsg.append(String.format(
+                                    "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
+                                    trainingProgress.epoch(), trainingProgress.loss(),
+                                    trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
+                                    trainingProgress.meanIoU()));
+                            progress.log(logMsg.toString());
+
+                            if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
+                                StringBuilder iouLine = new StringBuilder("  IoU:");
+                                for (var entry : trainingProgress.perClassIoU().entrySet()) {
+                                    iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
+                                }
+                                progress.log(iouLine.toString());
+                            }
+                            if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
+                                StringBuilder lossLine = new StringBuilder("  Loss:");
+                                for (var entry : trainingProgress.perClassLoss().entrySet()) {
+                                    lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
+                                }
+                                progress.log(lossLine.toString());
+                            }
                         }
                     },
-                    () -> progress != null && progress.isCancelled()
+                    () -> progress != null && progress.isCancelled(),
+                    jobId -> {
+                        if (jobIdHolder != null && jobIdHolder.length > 0) {
+                            jobIdHolder[0] = jobId;
+                        }
+                    }
             );
+
+            if (serverResult.isPaused()) {
+                if (progress != null) {
+                    progress.log("Training paused at epoch " + serverResult.lastEpoch());
+                    progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
+                }
+                return new TrainingResult(null, classifierName, 0, 0, 0, false,
+                        "Training paused at epoch " + serverResult.lastEpoch());
+            }
 
             if (serverResult.isCancelled()) {
                 if (progress != null) progress.log("Training cancelled");
@@ -539,6 +656,237 @@ public class TrainingWorkflow {
                                 ChannelConfiguration channelConfig,
                                 List<String> classNames) {
         trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null);
+    }
+
+    /**
+     * Handles the resume flow after training has been paused.
+     * <p>
+     * This method runs on a background thread and uses Platform.runLater
+     * for any UI interactions (dialogs, unsaved changes check).
+     */
+    private void handleResume(String jobId,
+                              String classifierName,
+                              String description,
+                              ClassifierHandler handler,
+                              TrainingConfig trainingConfig,
+                              ChannelConfiguration channelConfig,
+                              List<String> classNames,
+                              List<ProjectImageEntry<BufferedImage>> selectedImages,
+                              ProgressMonitorController progress,
+                              String[] currentJobId) {
+        try {
+            // 1. Check for unsaved changes (on FX thread)
+            CompletableFuture<Boolean> unsavedCheck = new CompletableFuture<>();
+            Platform.runLater(() -> {
+                boolean proceed = checkUnsavedChanges(selectedImages);
+                unsavedCheck.complete(proceed);
+            });
+            if (!unsavedCheck.get()) {
+                // User cancelled -- stay in paused state
+                return;
+            }
+
+            // 2. Show resume param dialog (on FX thread)
+            CompletableFuture<Optional<ResumeParams>> paramsFuture = new CompletableFuture<>();
+            Platform.runLater(() -> {
+                Optional<ResumeParams> params = showResumeParamDialog(
+                        trainingConfig.getEpochs(),
+                        trainingConfig.getLearningRate(),
+                        trainingConfig.getBatchSize());
+                paramsFuture.complete(params);
+            });
+            Optional<ResumeParams> paramsOpt = paramsFuture.get();
+            if (paramsOpt.isEmpty()) {
+                // User cancelled dialog -- stay in paused state
+                return;
+            }
+            ResumeParams params = paramsOpt.get();
+
+            // 3. Re-export training data
+            progress.showResumedState();
+            progress.setStatus("Re-exporting training data...");
+            progress.log("Re-exporting annotations (includes any new/modified annotations)...");
+
+            Path tempDir = Files.createTempDirectory("dl-training-resume");
+            int patchCount;
+            if (selectedImages != null && !selectedImages.isEmpty()) {
+                AnnotationExtractor.ExportResult exportResult = AnnotationExtractor.exportFromProject(
+                        selectedImages,
+                        trainingConfig.getTileSize(),
+                        channelConfig,
+                        classNames,
+                        tempDir,
+                        trainingConfig.getValidationSplit()
+                );
+                patchCount = exportResult.totalPatches();
+            } else {
+                ImageData<BufferedImage> imageData = qupath.getImageData();
+                AnnotationExtractor extractor = new AnnotationExtractor(
+                        imageData, trainingConfig.getTileSize(), channelConfig);
+                AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
+                        tempDir, classNames, trainingConfig.getValidationSplit());
+                patchCount = exportResult.totalPatches();
+            }
+            progress.log("Re-exported " + patchCount + " training patches");
+            progress.setStatus("Resuming training...");
+
+            // 4. Call client.resumeTraining
+            ClassifierClient client = new ClassifierClient(
+                    DLClassifierPreferences.getServerHost(),
+                    DLClassifierPreferences.getServerPort());
+
+            ClassifierClient.TrainingResult serverResult = client.resumeTraining(
+                    jobId,
+                    tempDir,
+                    params.totalEpochs(),
+                    params.learningRate(),
+                    params.batchSize(),
+                    trainingProgress -> {
+                        if (progress.isCancelled()) return;
+                        double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
+                        progress.setOverallProgress(progressValue);
+                        progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
+                                trainingProgress.epoch(), trainingProgress.totalEpochs(),
+                                trainingProgress.loss(), trainingProgress.meanIoU()));
+                        progress.updateTrainingMetrics(
+                                trainingProgress.epoch(),
+                                trainingProgress.loss(),
+                                trainingProgress.valLoss(),
+                                trainingProgress.perClassIoU(),
+                                trainingProgress.perClassLoss());
+
+                        StringBuilder logMsg = new StringBuilder();
+                        logMsg.append(String.format(
+                                "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
+                                trainingProgress.epoch(), trainingProgress.loss(),
+                                trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
+                                trainingProgress.meanIoU()));
+                        progress.log(logMsg.toString());
+
+                        if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
+                            StringBuilder iouLine = new StringBuilder("  IoU:");
+                            for (var entry : trainingProgress.perClassIoU().entrySet()) {
+                                iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
+                            }
+                            progress.log(iouLine.toString());
+                        }
+                        if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
+                            StringBuilder lossLine = new StringBuilder("  Loss:");
+                            for (var entry : trainingProgress.perClassLoss().entrySet()) {
+                                lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
+                            }
+                            progress.log(lossLine.toString());
+                        }
+                    },
+                    progress::isCancelled
+            );
+
+            // 5. Handle result -- may be paused again, completed, or cancelled
+            if (serverResult.isPaused()) {
+                progress.log("Training paused again at epoch " + serverResult.lastEpoch());
+                progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
+                currentJobId[0] = serverResult.jobId();
+            } else if (serverResult.isCancelled()) {
+                progress.complete(false, "Training cancelled by user");
+            } else {
+                // Completed -- save the classifier
+                progress.setStatus("Saving classifier...");
+                String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") +
+                        "_" + System.currentTimeMillis();
+
+                List<ClassifierMetadata.ClassInfo> classInfoList = new ArrayList<>();
+                for (int i = 0; i < classNames.size(); i++) {
+                    classInfoList.add(new ClassifierMetadata.ClassInfo(i, classNames.get(i), "#808080"));
+                }
+
+                ClassifierMetadata metadata = ClassifierMetadata.builder()
+                        .id(classifierId)
+                        .name(classifierName)
+                        .description(description)
+                        .modelType(trainingConfig.getModelType())
+                        .backbone(trainingConfig.getBackbone())
+                        .inputChannels(channelConfig.getSelectedChannels().size())
+                        .expectedChannelNames(channelConfig.getChannelNames())
+                        .inputSize(trainingConfig.getTileSize(), trainingConfig.getTileSize())
+                        .classes(classInfoList)
+                        .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                        .bitDepthTrained(channelConfig.getBitDepth())
+                        .trainingEpochs(params.totalEpochs())
+                        .finalLoss(serverResult.finalLoss())
+                        .finalAccuracy(serverResult.finalAccuracy())
+                        .build();
+
+                ModelManager modelManager = new ModelManager();
+                modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()));
+                progress.log("Classifier saved: " + metadata.getId());
+
+                progress.complete(true, String.format(
+                        "Classifier trained successfully!\nFinal loss: %.4f\nAccuracy: %.2f%%",
+                        serverResult.finalLoss(), serverResult.finalAccuracy() * 100));
+            }
+
+        } catch (Exception e) {
+            logger.error("Resume failed", e);
+            progress.log("ERROR: Resume failed: " + e.getMessage());
+            progress.complete(false, "Resume failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Shows a dialog to configure resume parameters.
+     *
+     * @param currentEpochs current total epochs setting
+     * @param currentLR     current learning rate
+     * @param currentBatch  current batch size
+     * @return optional resume params, or empty if user cancelled
+     */
+    private Optional<ResumeParams> showResumeParamDialog(int currentEpochs,
+                                                          double currentLR,
+                                                          int currentBatch) {
+        Dialog<ResumeParams> dialog = new Dialog<>();
+        dialog.setTitle("Resume Training");
+        dialog.setHeaderText("Adjust parameters for resumed training");
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(20));
+
+        Spinner<Integer> epochSpinner = new Spinner<>(
+                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 1000, currentEpochs));
+        epochSpinner.setEditable(true);
+
+        TextField lrField = new TextField(String.valueOf(currentLR));
+        lrField.setPrefWidth(120);
+
+        Spinner<Integer> batchSpinner = new Spinner<>(
+                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 128, currentBatch));
+        batchSpinner.setEditable(true);
+
+        grid.add(new Label("Total Epochs:"), 0, 0);
+        grid.add(epochSpinner, 1, 0);
+        grid.add(new Label("Learning Rate:"), 0, 1);
+        grid.add(lrField, 1, 1);
+        grid.add(new Label("Batch Size:"), 0, 2);
+        grid.add(batchSpinner, 1, 2);
+
+        dialog.getDialogPane().setContent(grid);
+
+        dialog.setResultConverter(buttonType -> {
+            if (buttonType == ButtonType.OK) {
+                try {
+                    double lr = Double.parseDouble(lrField.getText().trim());
+                    return new ResumeParams(epochSpinner.getValue(), lr, batchSpinner.getValue());
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid learning rate value: {}", lrField.getText());
+                    return null;
+                }
+            }
+            return null;
+        });
+
+        return dialog.showAndWait();
     }
 
     /**

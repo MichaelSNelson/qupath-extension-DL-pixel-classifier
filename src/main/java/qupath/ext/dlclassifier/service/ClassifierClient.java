@@ -13,6 +13,7 @@ import qupath.ext.dlclassifier.model.TrainingConfig;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -169,6 +170,30 @@ public class ClassifierClient {
                                         Path trainingDataPath,
                                         Consumer<TrainingProgress> progressCallback,
                                         Supplier<Boolean> cancelledCheck) throws IOException {
+        return startTraining(trainingConfig, channelConfig, classNames,
+                trainingDataPath, progressCallback, cancelledCheck, null);
+    }
+
+    /**
+     * Starts a training job on the server with cancellation support and job ID notification.
+     *
+     * @param trainingConfig    training configuration
+     * @param channelConfig     channel configuration
+     * @param classNames        list of class names
+     * @param trainingDataPath  path to exported training data
+     * @param progressCallback  callback for progress updates
+     * @param cancelledCheck    supplier that returns true when cancelled
+     * @param jobIdCallback     optional callback to receive the job ID once assigned
+     * @return training job result containing model path and metrics
+     * @throws IOException if communication fails
+     */
+    public TrainingResult startTraining(TrainingConfig trainingConfig,
+                                        ChannelConfiguration channelConfig,
+                                        List<String> classNames,
+                                        Path trainingDataPath,
+                                        Consumer<TrainingProgress> progressCallback,
+                                        Supplier<Boolean> cancelledCheck,
+                                        Consumer<String> jobIdCallback) throws IOException {
         // Build request body
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model_type", trainingConfig.getModelType());
@@ -233,13 +258,17 @@ public class ClassifierClient {
             String jobId = result.get("job_id").getAsString();
             logger.info("Training job started: {}", jobId);
 
+            if (jobIdCallback != null) {
+                jobIdCallback.accept(jobId);
+            }
+
             // Poll for progress with cancellation support
             return pollTrainingProgress(jobId, progressCallback, cancelledCheck);
         }
     }
 
     /**
-     * Polls for training progress until completion, failure, or cancellation.
+     * Polls for training progress until completion, failure, cancellation, or pause.
      */
     private TrainingResult pollTrainingProgress(String jobId,
                                                 Consumer<TrainingProgress> progressCallback,
@@ -280,8 +309,14 @@ public class ClassifierClient {
                         double valLoss = status.get("loss").getAsDouble();
                         double trainLoss = status.has("train_loss") ? status.get("train_loss").getAsDouble() : valLoss;
                         double accuracy = status.has("accuracy") ? status.get("accuracy").getAsDouble() : 0;
+                        double meanIoU = status.has("mean_iou") ? status.get("mean_iou").getAsDouble() : 0;
 
-                        TrainingProgress progress = new TrainingProgress(epoch, totalEpochs, trainLoss, valLoss, accuracy);
+                        Map<String, Double> perClassIoU = parseStringDoubleMap(status, "per_class_iou");
+                        Map<String, Double> perClassLoss = parseStringDoubleMap(status, "per_class_loss");
+
+                        TrainingProgress progress = new TrainingProgress(
+                                epoch, totalEpochs, trainLoss, valLoss, accuracy,
+                                meanIoU, perClassIoU, perClassLoss);
                         if (progressCallback != null) {
                             progressCallback.accept(progress);
                         }
@@ -299,6 +334,11 @@ public class ClassifierClient {
                 } else if ("cancelled".equals(state)) {
                     logger.info("Training job {} confirmed cancelled by server", jobId);
                     return new TrainingResult(jobId, null, 0, 0);
+                } else if ("paused".equals(state)) {
+                    int epoch = status.get("epoch").getAsInt();
+                    int totalEpochs = status.get("total_epochs").getAsInt();
+                    logger.info("Training job {} paused at epoch {}/{}", jobId, epoch, totalEpochs);
+                    return new TrainingResult(jobId, null, 0, 0, true, epoch, totalEpochs);
                 }
             }
 
@@ -310,6 +350,20 @@ public class ClassifierClient {
                 throw new IOException("Training interrupted");
             }
         }
+    }
+
+    /**
+     * Parses a JSON object field containing a string-to-double map.
+     */
+    private static Map<String, Double> parseStringDoubleMap(JsonObject parent, String fieldName) {
+        Map<String, Double> result = new LinkedHashMap<>();
+        if (parent.has(fieldName) && !parent.get(fieldName).isJsonNull()) {
+            JsonObject obj = parent.getAsJsonObject(fieldName);
+            for (String key : obj.keySet()) {
+                result.put(key, obj.get(key).getAsDouble());
+            }
+        }
+        return result;
     }
 
     /**
@@ -332,6 +386,79 @@ public class ClassifierClient {
                 logger.info("Cancelled training job: {}", jobId);
             }
         }
+    }
+
+    /**
+     * Pauses a running training job at the end of the current epoch.
+     *
+     * @param jobId the job ID to pause
+     * @throws IOException if communication fails
+     */
+    public void pauseTraining(String jobId) throws IOException {
+        Request request = new Request.Builder()
+                .url(baseUrl + "/train/" + jobId + "/pause")
+                .post(RequestBody.create("", JSON))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String error = response.body() != null ? response.body().string() : "Unknown error";
+                throw new IOException("Failed to pause training job " + jobId + ": " + error);
+            }
+            logger.info("Pause requested for training job: {}", jobId);
+        }
+    }
+
+    /**
+     * Resumes a paused training job.
+     *
+     * @param jobId            the job ID to resume
+     * @param newDataPath      optional new data path for re-exported annotations
+     * @param epochs           optional new total epochs
+     * @param learningRate     optional new learning rate
+     * @param batchSize        optional new batch size
+     * @param progressCallback callback for progress updates
+     * @param cancelledCheck   supplier that returns true when cancelled
+     * @return training result (may be completed, cancelled, or paused again)
+     * @throws IOException if communication fails
+     */
+    public TrainingResult resumeTraining(String jobId,
+                                          Path newDataPath,
+                                          Integer epochs,
+                                          Double learningRate,
+                                          Integer batchSize,
+                                          Consumer<TrainingProgress> progressCallback,
+                                          Supplier<Boolean> cancelledCheck) throws IOException {
+        Map<String, Object> requestBody = new HashMap<>();
+        if (newDataPath != null) {
+            requestBody.put("data_path", newDataPath.toString());
+        }
+        if (epochs != null) {
+            requestBody.put("epochs", epochs);
+        }
+        if (learningRate != null) {
+            requestBody.put("learning_rate", learningRate);
+        }
+        if (batchSize != null) {
+            requestBody.put("batch_size", batchSize);
+        }
+
+        String json = gson.toJson(requestBody);
+        Request request = new Request.Builder()
+                .url(baseUrl + "/train/" + jobId + "/resume")
+                .post(RequestBody.create(json, JSON))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String error = response.body() != null ? response.body().string() : "Unknown error";
+                throw new IOException("Failed to resume training job " + jobId + ": " + error);
+            }
+            logger.info("Resumed training job: {}", jobId);
+        }
+
+        // Poll for progress until next terminal state
+        return pollTrainingProgress(jobId, progressCallback, cancelledCheck);
     }
 
     // ==================== Inference ====================
@@ -728,7 +855,16 @@ public class ClassifierClient {
     /**
      * Training progress information.
      */
-    public record TrainingProgress(int epoch, int totalEpochs, double loss, double valLoss, double accuracy) {
+    public record TrainingProgress(
+            int epoch,
+            int totalEpochs,
+            double loss,
+            double valLoss,
+            double accuracy,
+            double meanIoU,
+            Map<String, Double> perClassIoU,
+            Map<String, Double> perClassLoss
+    ) {
         public double getProgress() {
             return (double) epoch / totalEpochs;
         }
@@ -737,10 +873,28 @@ public class ClassifierClient {
     /**
      * Training result information.
      */
-    public record TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
-        /** Returns true if training was cancelled (no model produced). */
+    public record TrainingResult(
+            String jobId,
+            String modelPath,
+            double finalLoss,
+            double finalAccuracy,
+            boolean paused,
+            int lastEpoch,
+            int totalEpochs
+    ) {
+        /** Compact constructor for non-paused results. */
+        public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
+            this(jobId, modelPath, finalLoss, finalAccuracy, false, 0, 0);
+        }
+
+        /** Returns true if training was cancelled (no model produced and not paused). */
         public boolean isCancelled() {
-            return modelPath == null;
+            return modelPath == null && !paused;
+        }
+
+        /** Returns true if training was paused. */
+        public boolean isPaused() {
+            return paused;
         }
     }
 

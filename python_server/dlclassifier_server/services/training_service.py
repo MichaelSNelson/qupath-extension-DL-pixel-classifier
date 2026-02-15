@@ -18,6 +18,7 @@ from typing import Dict, Any, List, Callable, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, StepLR, OneCycleLR
 from PIL import Image
@@ -354,9 +355,12 @@ class TrainingService:
         training_params: Dict[str, Any],
         classes: List[str],
         data_path: str,
-        progress_callback: Optional[Callable[[int, float, float, float], None]] = None,
+        progress_callback: Optional[Callable] = None,
         cancel_flag: Optional[threading.Event] = None,
-        frozen_layers: Optional[List[str]] = None
+        frozen_layers: Optional[List[str]] = None,
+        pause_flag: Optional[threading.Event] = None,
+        checkpoint_path: Optional[str] = None,
+        start_epoch: int = 0
     ) -> Dict[str, Any]:
         """Train a model.
 
@@ -367,9 +371,14 @@ class TrainingService:
             training_params: Training hyperparameters
             classes: List of class names
             data_path: Path to training data
-            progress_callback: Optional callback for progress updates
+            progress_callback: Optional callback for progress updates.
+                Signature: (epoch, train_loss, val_loss, accuracy,
+                            per_class_iou, per_class_loss, mean_iou)
             cancel_flag: Optional threading event for cancellation
             frozen_layers: Optional list of layer names to freeze for transfer learning
+            pause_flag: Optional threading event for pause requests
+            checkpoint_path: Optional path to checkpoint for resuming training
+            start_epoch: Epoch to start from when resuming (0-based)
 
         Training params can include:
             - epochs: Number of training epochs (default: 50)
@@ -495,14 +504,61 @@ class TrainingService:
             ignore_index=unlabeled_index
         )
 
-        # Training loop
+        # Restore from checkpoint if resuming
         best_loss = float("inf")
         best_model_state = None
-        final_loss = 0.0
-        final_accuracy = 0.0
         training_history = []
 
-        for epoch in range(epochs):
+        if checkpoint_path:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+            # Restore scheduler (recreate OneCycleLR with remaining steps)
+            if scheduler is not None:
+                if isinstance(scheduler, OneCycleLR):
+                    remaining_epochs = epochs - start_epoch
+                    remaining_steps = remaining_epochs * len(train_loader)
+                    if remaining_steps > 0:
+                        scheduler_config = training_params.get("scheduler_config", {})
+                        max_lr = scheduler_config.get(
+                            "max_lr", optimizer.param_groups[0]["lr"] * 10)
+                        scheduler = OneCycleLR(
+                            optimizer,
+                            max_lr=max_lr,
+                            total_steps=remaining_steps,
+                            pct_start=scheduler_config.get("pct_start", 0.3),
+                            anneal_strategy=scheduler_config.get("anneal_strategy", "cos"),
+                            div_factor=scheduler_config.get("div_factor", 25.0),
+                            final_div_factor=scheduler_config.get("final_div_factor", 1e4)
+                        )
+                elif "scheduler_state_dict" in checkpoint:
+                    scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
+            # Restore early stopping state
+            if early_stopping is not None and "early_stopping" in checkpoint:
+                es_state = checkpoint["early_stopping"]
+                early_stopping.best_loss = es_state["best_loss"]
+                early_stopping.best_epoch = es_state["best_epoch"]
+                early_stopping.counter = es_state["counter"]
+                if "best_state" in es_state and es_state["best_state"] is not None:
+                    early_stopping.best_state = es_state["best_state"]
+
+            # Restore training history and best model
+            training_history = checkpoint.get("training_history", [])
+            best_loss = checkpoint.get("best_loss", float("inf"))
+            if "best_model_state" in checkpoint:
+                best_model_state = checkpoint["best_model_state"]
+
+            logger.info(f"Resumed from checkpoint at epoch {start_epoch}, "
+                       f"best_loss={best_loss:.4f}")
+
+        # Training loop
+        num_classes = len(classes)
+        final_loss = 0.0
+        final_accuracy = 0.0
+
+        for epoch in range(start_epoch, epochs):
             # Check for cancellation
             if cancel_flag and cancel_flag.is_set():
                 logger.info("Training cancelled")
@@ -545,6 +601,13 @@ class TrainingService:
             correct = 0
             total = 0
 
+            # Per-class accumulators
+            class_tp = torch.zeros(num_classes, device=self.device)
+            class_fp = torch.zeros(num_classes, device=self.device)
+            class_fn = torch.zeros(num_classes, device=self.device)
+            class_loss_sum = torch.zeros(num_classes, device=self.device)
+            class_pixel_count = torch.zeros(num_classes, device=self.device)
+
             with torch.no_grad():
                 for images, masks in val_loader:
                     images = images.to(self.device)
@@ -560,8 +623,42 @@ class TrainingService:
                     total += labeled_mask.sum().item()
                     correct += ((predicted == masks) & labeled_mask).sum().item()
 
+                    # Per-class TP/FP/FN
+                    for c in range(num_classes):
+                        pred_c = (predicted == c) & labeled_mask
+                        true_c = (masks == c) & labeled_mask
+                        class_tp[c] += (pred_c & true_c).sum()
+                        class_fp[c] += (pred_c & ~true_c).sum()
+                        class_fn[c] += (~pred_c & true_c).sum()
+
+                    # Per-class loss (unreduced)
+                    per_pixel_loss = F.cross_entropy(
+                        outputs, masks, reduction='none')
+                    for c in range(num_classes):
+                        c_mask = (masks == c) & labeled_mask
+                        c_count = c_mask.sum()
+                        if c_count > 0:
+                            class_loss_sum[c] += per_pixel_loss[c_mask].sum()
+                            class_pixel_count[c] += c_count
+
             val_loss /= max(len(val_loader), 1)
             accuracy = correct / max(total, 1)
+
+            # Compute per-class IoU and loss
+            per_class_iou = {}
+            per_class_loss = {}
+            for c in range(num_classes):
+                denom = (class_tp[c] + class_fp[c] + class_fn[c]).item()
+                iou = class_tp[c].item() / denom if denom > 0 else 0.0
+                per_class_iou[classes[c]] = round(iou, 4)
+
+                px_count = class_pixel_count[c].item()
+                c_loss = class_loss_sum[c].item() / px_count if px_count > 0 else 0.0
+                per_class_loss[classes[c]] = round(c_loss, 4)
+
+            iou_values = list(per_class_iou.values())
+            mean_iou = sum(iou_values) / len(iou_values) if iou_values else 0.0
+            mean_iou = round(mean_iou, 4)
 
             final_loss = val_loss
             final_accuracy = accuracy
@@ -572,14 +669,24 @@ class TrainingService:
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "accuracy": accuracy,
-                "learning_rate": current_lr
+                "learning_rate": current_lr,
+                "per_class_iou": per_class_iou,
+                "per_class_loss": per_class_loss,
+                "mean_iou": mean_iou
             })
 
+            # Log with per-class breakdown
             logger.info(f"Epoch {epoch+1}/{epochs}: train_loss={train_loss:.4f}, "
-                       f"val_loss={val_loss:.4f}, acc={accuracy:.4f}, lr={current_lr:.6f}")
+                       f"val_loss={val_loss:.4f}, acc={accuracy:.4f}, "
+                       f"mIoU={mean_iou:.4f}, lr={current_lr:.6f}")
+            iou_parts = " ".join(f"{k}={v:.3f}" for k, v in per_class_iou.items())
+            loss_parts = " ".join(f"{k}={v:.4f}" for k, v in per_class_loss.items())
+            logger.info(f"  IoU: {iou_parts}")
+            logger.info(f"  Loss: {loss_parts}")
 
             if progress_callback:
-                progress_callback(epoch + 1, train_loss, val_loss, accuracy)
+                progress_callback(epoch + 1, train_loss, val_loss, accuracy,
+                                  per_class_iou, per_class_loss, mean_iou)
 
             # Step scheduler (for epoch-based schedulers)
             if scheduler is not None and not isinstance(scheduler, OneCycleLR):
@@ -599,6 +706,44 @@ class TrainingService:
                 if early_stopping(epoch + 1, val_loss, model):
                     logger.info(f"Early stopping triggered at epoch {epoch+1}")
                     break
+
+            # Check for pause request
+            if pause_flag and pause_flag.is_set():
+                logger.info(f"Training paused at epoch {epoch+1}")
+                checkpoint_save_path = self._save_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    early_stopping=early_stopping,
+                    training_history=training_history,
+                    best_loss=best_loss,
+                    best_model_state=best_model_state,
+                    model_type=model_type,
+                    training_config={
+                        "model_type": model_type,
+                        "architecture": architecture,
+                        "input_config": input_config,
+                        "training_params": training_params,
+                        "classes": classes,
+                    }
+                )
+                # Free GPU memory during pause
+                model = model.cpu()
+                self.gpu_manager.clear_cache()
+                self.gpu_manager.log_memory_status(prefix="Paused (GPU freed): ")
+
+                return {
+                    "status": "paused",
+                    "checkpoint_path": checkpoint_save_path,
+                    "epoch": epoch + 1,
+                    "total_epochs": epochs,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "accuracy": accuracy,
+                    "per_class_iou": per_class_iou,
+                    "per_class_loss": per_class_loss,
+                    "mean_iou": mean_iou,
+                }
 
         # Log final memory status
         self.gpu_manager.log_memory_status(prefix="Training complete: ")
@@ -703,6 +848,57 @@ class TrainingService:
         else:
             logger.warning(f"Unknown scheduler type: {scheduler_type}, using none")
             return None
+
+    def _save_checkpoint(
+        self,
+        model,
+        optimizer,
+        scheduler,
+        early_stopping,
+        training_history: List[Dict[str, Any]],
+        best_loss: float,
+        best_model_state: Optional[Dict],
+        model_type: str,
+        training_config: Dict[str, Any]
+    ) -> str:
+        """Save a training checkpoint for pause/resume.
+
+        Returns:
+            Path to the saved checkpoint file.
+        """
+        import time
+
+        checkpoint_dir = Path(os.path.expanduser("~/.dlclassifier/checkpoints"))
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        checkpoint_path = checkpoint_dir / f"checkpoint_{model_type}_{timestamp}.pt"
+
+        checkpoint = {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "training_history": training_history,
+            "best_loss": best_loss,
+            "training_config": training_config,
+        }
+
+        if best_model_state is not None:
+            checkpoint["best_model_state"] = best_model_state
+
+        if scheduler is not None and not isinstance(scheduler, OneCycleLR):
+            checkpoint["scheduler_state_dict"] = scheduler.state_dict()
+
+        if early_stopping is not None:
+            checkpoint["early_stopping"] = {
+                "best_loss": early_stopping.best_loss,
+                "best_epoch": early_stopping.best_epoch,
+                "counter": early_stopping.counter,
+                "best_state": early_stopping.best_state,
+            }
+
+        torch.save(checkpoint, str(checkpoint_path))
+        logger.info(f"Checkpoint saved to {checkpoint_path}")
+        return str(checkpoint_path)
 
     def _create_model(
         self,
