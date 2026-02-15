@@ -196,15 +196,20 @@ public class TrainingDialog {
                 logger.warn("Could not initialize classifier client: {}", e.getMessage());
             }
 
-            // Create collapsible sections
+            // Create channel and class sections first so their fields exist
+            // before the model section's backbone listener fires
+            TitledPane channelSection = createChannelSection();
+            TitledPane classSection = createClassSection();
+
+            // Create collapsible sections (visual order unchanged)
             content.getChildren().addAll(
                     createBasicInfoSection(),
                     createImageSourceSection(),
                     createModelSection(),
                     createTransferLearningSection(),
                     createTrainingSection(),
-                    createChannelSection(),
-                    createClassSection(),
+                    channelSection,
+                    classSection,
                     createAugmentationSection(),
                     createErrorSummaryPanel()
             );
