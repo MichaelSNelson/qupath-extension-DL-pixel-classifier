@@ -56,9 +56,14 @@ public class TrainingDialog {
 
     /**
      * Result of the training dialog.
-     */
-    /**
-     * @param selectedImages project images to train from, or null for current image only
+     *
+     * @param classifierName  name for the classifier
+     * @param description     classifier description
+     * @param trainingConfig  training configuration
+     * @param channelConfig   channel configuration
+     * @param selectedClasses selected class names
+     * @param selectedImages  project images to train from, or null for current image only
+     * @param classColors     map of class name to packed RGB color (from QuPath PathClass)
      */
     public record TrainingDialogResult(
             String classifierName,
@@ -66,7 +71,8 @@ public class TrainingDialog {
             TrainingConfig trainingConfig,
             ChannelConfiguration channelConfig,
             List<String> selectedClasses,
-            List<ProjectImageEntry<BufferedImage>> selectedImages
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            Map<String, Integer> classColors
     ) {
         /** Returns true if training should use multiple project images. */
         public boolean isMultiImage() {
@@ -944,6 +950,21 @@ public class TrainingDialog {
                 frozenLayers = layerFreezePanel.getFrozenLayerNames();
             }
 
+            // Extract weight multipliers and class colors from selected class items
+            Map<String, Double> classWeightMultipliers = new LinkedHashMap<>();
+            Map<String, Integer> classColors = new LinkedHashMap<>();
+            for (ClassItem item : classListView.getItems()) {
+                if (item.selected().get()) {
+                    double multiplier = item.weightMultiplier().get();
+                    if (multiplier != 1.0) {
+                        classWeightMultipliers.put(item.name(), multiplier);
+                    }
+                    if (item.color() != null) {
+                        classColors.put(item.name(), item.color());
+                    }
+                }
+            }
+
             // Build training config
             TrainingConfig trainingConfig = TrainingConfig.builder()
                     .classifierType(architectureCombo.getValue())
@@ -958,6 +979,7 @@ public class TrainingDialog {
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
+                    .classWeightMultipliers(classWeightMultipliers)
                     .build();
 
             // Get channel config
@@ -984,7 +1006,8 @@ public class TrainingDialog {
                     trainingConfig,
                     channelConfig,
                     selectedClasses,
-                    selectedImages
+                    selectedImages,
+                    classColors
             );
         }
 
@@ -1060,19 +1083,25 @@ public class TrainingDialog {
     /**
      * Represents a class item in the list.
      */
-    private record ClassItem(String name, Integer color, javafx.beans.property.BooleanProperty selected) {
+    private record ClassItem(String name, Integer color,
+                              javafx.beans.property.BooleanProperty selected,
+                              javafx.beans.property.DoubleProperty weightMultiplier) {
         public ClassItem(String name, Integer color, boolean selected) {
-            this(name, color, new javafx.beans.property.SimpleBooleanProperty(selected));
+            this(name, color,
+                    new javafx.beans.property.SimpleBooleanProperty(selected),
+                    new javafx.beans.property.SimpleDoubleProperty(1.0));
         }
     }
 
     /**
-     * Custom cell renderer for class items.
+     * Custom cell renderer for class items with weight multiplier spinner.
      */
     private static class ClassListCell extends ListCell<ClassItem> {
         private final HBox content;
         private final CheckBox checkBox;
         private final javafx.scene.shape.Rectangle colorBox;
+        private final Label weightLabel;
+        private final Spinner<Double> weightSpinner;
 
         public ClassListCell() {
             checkBox = new CheckBox();
@@ -1080,7 +1109,21 @@ public class TrainingDialog {
             colorBox.setStroke(javafx.scene.paint.Color.BLACK);
             colorBox.setStrokeWidth(1);
 
-            content = new HBox(8, checkBox, colorBox);
+            weightLabel = new Label("Weight:");
+            weightLabel.setStyle("-fx-text-fill: #666;");
+
+            weightSpinner = new Spinner<>(0.1, 10.0, 1.0, 0.1);
+            weightSpinner.setPrefWidth(80);
+            weightSpinner.setEditable(true);
+            weightSpinner.setTooltip(new Tooltip(
+                    "Multiplier applied to auto-computed class weight.\n" +
+                    "1.0 = no change. >1.0 emphasizes this class.\n" +
+                    "Use to boost underperforming classes."));
+
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+
+            content = new HBox(8, checkBox, colorBox, spacer, weightLabel, weightSpinner);
             content.setAlignment(Pos.CENTER_LEFT);
         }
 
@@ -1102,6 +1145,14 @@ public class TrainingDialog {
                 } else {
                     colorBox.setFill(javafx.scene.paint.Color.GRAY);
                 }
+
+                // Bind weight spinner to item's weight multiplier
+                weightSpinner.getValueFactory().setValue(item.weightMultiplier().get());
+                weightSpinner.valueProperty().addListener((obs, oldVal, newVal) -> {
+                    if (newVal != null) {
+                        item.weightMultiplier().set(newVal);
+                    }
+                });
 
                 setGraphic(content);
             }

@@ -16,6 +16,7 @@ import javafx.stage.StageStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +57,7 @@ public class ProgressMonitorController {
     private final XYChart.Series<Number, Number> valLossSeries;
     private final LineChart<Number, Number> iouChart;
     private final Map<String, XYChart.Series<Number, Number>> iouSeriesMap = new LinkedHashMap<>();
+    private Map<String, Integer> classColors = new LinkedHashMap<>();
 
     private final DoubleProperty overallProgress = new SimpleDoubleProperty(0);
     private final DoubleProperty currentProgress = new SimpleDoubleProperty(0);
@@ -153,6 +155,7 @@ public class ProgressMonitorController {
         iouChart.setTitle("Per-Class IoU");
         iouChart.setCreateSymbols(false);
         iouChart.setAnimated(false);
+        iouChart.setLegendVisible(true);
         iouChart.setPrefHeight(200);
 
         // Build layout
@@ -176,6 +179,7 @@ public class ProgressMonitorController {
         if (showLossChart) {
             TitledPane chartPane = new TitledPane("Training Metrics", lossChart);
             chartPane.setExpanded(true);
+            VBox.setVgrow(chartPane, Priority.ALWAYS);
             root.getChildren().add(chartPane);
 
             // Per-class IoU chart (collapsed by default)
@@ -187,7 +191,6 @@ public class ProgressMonitorController {
         // Log section
         TitledPane logPane = new TitledPane("Log", logArea);
         logPane.setExpanded(false);
-        VBox.setVgrow(logPane, Priority.ALWAYS);
         root.getChildren().add(logPane);
 
         // Buttons
@@ -319,6 +322,28 @@ public class ProgressMonitorController {
                                 XYChart.Series<Number, Number> newSeries = new XYChart.Series<>();
                                 newSeries.setName(className);
                                 iouChart.getData().add(newSeries);
+
+                                // Apply QuPath class color to series line
+                                Integer packedColor = classColors.get(className);
+                                if (packedColor != null) {
+                                    int r = (packedColor >> 16) & 0xFF;
+                                    int g = (packedColor >> 8) & 0xFF;
+                                    int b = packedColor & 0xFF;
+                                    String colorCss = String.format("rgb(%d,%d,%d)", r, g, b);
+                                    // Style the series node (line) once it is attached to the scene
+                                    if (newSeries.getNode() != null) {
+                                        newSeries.getNode().setStyle("-fx-stroke: " + colorCss + ";");
+                                    } else {
+                                        // Defer styling until the node is created
+                                        newSeries.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                                            if (newNode != null) {
+                                                newNode.setStyle("-fx-stroke: " + colorCss + ";");
+                                            }
+                                        });
+                                    }
+                                    // Also style legend after chart is rendered
+                                    applyLegendColors();
+                                }
                                 return newSeries;
                             });
                     series.getData().add(new XYChart.Data<>(epoch, entry.getValue()));
@@ -352,6 +377,15 @@ public class ProgressMonitorController {
      */
     public void setOnResume(Consumer<Void> callback) {
         this.onResumeCallback = callback;
+    }
+
+    /**
+     * Sets the QuPath class colors for IoU chart series styling.
+     *
+     * @param classColors map of class name to packed RGB color integer
+     */
+    public void setClassColors(Map<String, Integer> classColors) {
+        this.classColors = classColors != null ? new LinkedHashMap<>(classColors) : new LinkedHashMap<>();
     }
 
     /**
@@ -509,6 +543,36 @@ public class ProgressMonitorController {
                 }
 
                 log("Cancellation requested by user");
+            }
+        });
+    }
+
+    /**
+     * Applies QuPath class colors to IoU chart legend symbols.
+     * Must be called on the FX application thread after series are added to the chart.
+     */
+    private void applyLegendColors() {
+        // Use runLater to ensure legend nodes exist after chart layout
+        Platform.runLater(() -> {
+            javafx.scene.Node legend = iouChart.lookup(".chart-legend");
+            if (legend == null) return;
+
+            for (var entry : iouSeriesMap.entrySet()) {
+                String className = entry.getKey();
+                Integer packedColor = classColors.get(className);
+                if (packedColor == null) continue;
+
+                int r = (packedColor >> 16) & 0xFF;
+                int g = (packedColor >> 8) & 0xFF;
+                int b = packedColor & 0xFF;
+
+                // Find the legend item for this series by index
+                int seriesIndex = new ArrayList<>(iouSeriesMap.keySet()).indexOf(className);
+                String selector = ".chart-legend-item-symbol.series" + seriesIndex;
+                javafx.scene.Node symbol = iouChart.lookup(selector);
+                if (symbol != null) {
+                    symbol.setStyle(String.format("-fx-background-color: rgb(%d,%d,%d);", r, g, b));
+                }
             }
         });
     }

@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Workflow for training a new deep learning pixel classifier.
@@ -319,7 +320,8 @@ public class TrainingWorkflow {
                                 result.trainingConfig(),
                                 result.channelConfig(),
                                 result.selectedClasses(),
-                                result.selectedImages()
+                                result.selectedImages(),
+                                result.classColors()
                         );
                     }
                 })
@@ -340,6 +342,7 @@ public class TrainingWorkflow {
      * @param channelConfig  channel configuration
      * @param classNames     list of class names
      * @param selectedImages project images to train from, or null for current image only
+     * @param classColors    map of class name to packed RGB color for chart styling, or null
      */
     public void trainClassifierWithProgress(String classifierName,
                                             String description,
@@ -347,7 +350,8 @@ public class TrainingWorkflow {
                                             TrainingConfig trainingConfig,
                                             ChannelConfiguration channelConfig,
                                             List<String> classNames,
-                                            List<ProjectImageEntry<BufferedImage>> selectedImages) {
+                                            List<ProjectImageEntry<BufferedImage>> selectedImages,
+                                            Map<String, Integer> classColors) {
         // Check for unsaved changes before training
         if (!checkUnsavedChanges(selectedImages)) {
             return;
@@ -355,6 +359,9 @@ public class TrainingWorkflow {
 
         // Create progress monitor
         ProgressMonitorController progress = ProgressMonitorController.forTraining();
+        if (classColors != null && !classColors.isEmpty()) {
+            progress.setClassColors(classColors);
+        }
         progress.setOnCancel(v -> logger.info("Training cancellation requested"));
         progress.show();
 
@@ -470,6 +477,8 @@ public class TrainingWorkflow {
             logger.info("Exporting training data to: {}", tempDir);
             if (progress != null) progress.log("Export directory: " + tempDir);
 
+            Map<String, Double> weightMultipliers = trainingConfig.getClassWeightMultipliers();
+
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
                 // Multi-image project export
@@ -483,7 +492,8 @@ public class TrainingWorkflow {
                         classNames,
                         tempDir,
                         trainingConfig.getValidationSplit(),
-                        trainingConfig.getLineStrokeWidth()
+                        trainingConfig.getLineStrokeWidth(),
+                        weightMultipliers
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -495,7 +505,7 @@ public class TrainingWorkflow {
                         trainingConfig.getLineStrokeWidth()
                 );
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
-                        tempDir, classNames, trainingConfig.getValidationSplit());
+                        tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
                 patchCount = exportResult.totalPatches();
             }
             if (progress != null) progress.log("Exported " + patchCount + " training patches");
@@ -527,6 +537,8 @@ public class TrainingWorkflow {
                 }
             }
 
+            final AtomicInteger lastLoggedEpoch = new AtomicInteger(-1);
+
             ClassifierClient.TrainingResult serverResult = client.startTraining(
                     trainingConfig,
                     channelConfig,
@@ -537,41 +549,47 @@ public class TrainingWorkflow {
                             return;
                         }
                         if (progress != null) {
+                            // Always update progress bar and detail text (lightweight, keeps UI responsive)
                             double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                             progress.setOverallProgress(progressValue);
                             progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
                                     trainingProgress.epoch(), trainingProgress.totalEpochs(),
                                     trainingProgress.loss(), trainingProgress.meanIoU()));
-                            progress.updateTrainingMetrics(
-                                    trainingProgress.epoch(),
-                                    trainingProgress.loss(),
-                                    trainingProgress.valLoss(),
-                                    trainingProgress.perClassIoU(),
-                                    trainingProgress.perClassLoss()
-                            );
 
-                            // Log with per-class breakdown
-                            StringBuilder logMsg = new StringBuilder();
-                            logMsg.append(String.format(
-                                    "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
-                                    trainingProgress.epoch(), trainingProgress.loss(),
-                                    trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
-                                    trainingProgress.meanIoU()));
-                            progress.log(logMsg.toString());
+                            // Only log and update charts once per epoch
+                            int currentEpoch = trainingProgress.epoch();
+                            if (lastLoggedEpoch.getAndSet(currentEpoch) < currentEpoch) {
+                                progress.updateTrainingMetrics(
+                                        trainingProgress.epoch(),
+                                        trainingProgress.loss(),
+                                        trainingProgress.valLoss(),
+                                        trainingProgress.perClassIoU(),
+                                        trainingProgress.perClassLoss()
+                                );
 
-                            if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
-                                StringBuilder iouLine = new StringBuilder("  IoU:");
-                                for (var entry : trainingProgress.perClassIoU().entrySet()) {
-                                    iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
+                                // Log with per-class breakdown
+                                StringBuilder logMsg = new StringBuilder();
+                                logMsg.append(String.format(
+                                        "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
+                                        trainingProgress.epoch(), trainingProgress.loss(),
+                                        trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
+                                        trainingProgress.meanIoU()));
+                                progress.log(logMsg.toString());
+
+                                if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
+                                    StringBuilder iouLine = new StringBuilder("  IoU:");
+                                    for (var entry : trainingProgress.perClassIoU().entrySet()) {
+                                        iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
+                                    }
+                                    progress.log(iouLine.toString());
                                 }
-                                progress.log(iouLine.toString());
-                            }
-                            if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
-                                StringBuilder lossLine = new StringBuilder("  Loss:");
-                                for (var entry : trainingProgress.perClassLoss().entrySet()) {
-                                    lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
+                                if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
+                                    StringBuilder lossLine = new StringBuilder("  Loss:");
+                                    for (var entry : trainingProgress.perClassLoss().entrySet()) {
+                                        lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
+                                    }
+                                    progress.log(lossLine.toString());
                                 }
-                                progress.log(lossLine.toString());
                             }
                         }
                     },
@@ -666,7 +684,7 @@ public class TrainingWorkflow {
                                 TrainingConfig trainingConfig,
                                 ChannelConfiguration channelConfig,
                                 List<String> classNames) {
-        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null);
+        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null, null);
     }
 
     /**
@@ -719,6 +737,7 @@ public class TrainingWorkflow {
             progress.log("Re-exporting annotations (includes any new/modified annotations)...");
 
             Path tempDir = Files.createTempDirectory("dl-training-resume");
+            Map<String, Double> resumeMultipliers = trainingConfig.getClassWeightMultipliers();
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
                 AnnotationExtractor.ExportResult exportResult = AnnotationExtractor.exportFromProject(
@@ -728,7 +747,8 @@ public class TrainingWorkflow {
                         classNames,
                         tempDir,
                         trainingConfig.getValidationSplit(),
-                        trainingConfig.getLineStrokeWidth()
+                        trainingConfig.getLineStrokeWidth(),
+                        resumeMultipliers
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -737,7 +757,7 @@ public class TrainingWorkflow {
                         imageData, trainingConfig.getTileSize(), channelConfig,
                         trainingConfig.getLineStrokeWidth());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
-                        tempDir, classNames, trainingConfig.getValidationSplit());
+                        tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();
             }
             progress.log("Re-exported " + patchCount + " training patches");
@@ -757,6 +777,8 @@ public class TrainingWorkflow {
                     DLClassifierPreferences.getServerHost(),
                     DLClassifierPreferences.getServerPort());
 
+            final AtomicInteger lastLoggedEpochResume = new AtomicInteger(-1);
+
             ClassifierClient.TrainingResult serverResult = client.resumeTraining(
                     jobId,
                     tempDir,
@@ -765,39 +787,46 @@ public class TrainingWorkflow {
                     params.batchSize(),
                     trainingProgress -> {
                         if (progress.isCancelled()) return;
+
+                        // Always update progress bar and detail text (lightweight, keeps UI responsive)
                         double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                         progress.setOverallProgress(progressValue);
                         progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
                                 trainingProgress.epoch(), trainingProgress.totalEpochs(),
                                 trainingProgress.loss(), trainingProgress.meanIoU()));
-                        progress.updateTrainingMetrics(
-                                trainingProgress.epoch(),
-                                trainingProgress.loss(),
-                                trainingProgress.valLoss(),
-                                trainingProgress.perClassIoU(),
-                                trainingProgress.perClassLoss());
 
-                        StringBuilder logMsg = new StringBuilder();
-                        logMsg.append(String.format(
-                                "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
-                                trainingProgress.epoch(), trainingProgress.loss(),
-                                trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
-                                trainingProgress.meanIoU()));
-                        progress.log(logMsg.toString());
+                        // Only log and update charts once per epoch
+                        int currentEpoch = trainingProgress.epoch();
+                        if (lastLoggedEpochResume.getAndSet(currentEpoch) < currentEpoch) {
+                            progress.updateTrainingMetrics(
+                                    trainingProgress.epoch(),
+                                    trainingProgress.loss(),
+                                    trainingProgress.valLoss(),
+                                    trainingProgress.perClassIoU(),
+                                    trainingProgress.perClassLoss());
 
-                        if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
-                            StringBuilder iouLine = new StringBuilder("  IoU:");
-                            for (var entry : trainingProgress.perClassIoU().entrySet()) {
-                                iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
+                            StringBuilder logMsg = new StringBuilder();
+                            logMsg.append(String.format(
+                                    "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
+                                    trainingProgress.epoch(), trainingProgress.loss(),
+                                    trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
+                                    trainingProgress.meanIoU()));
+                            progress.log(logMsg.toString());
+
+                            if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
+                                StringBuilder iouLine = new StringBuilder("  IoU:");
+                                for (var entry : trainingProgress.perClassIoU().entrySet()) {
+                                    iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
+                                }
+                                progress.log(iouLine.toString());
                             }
-                            progress.log(iouLine.toString());
-                        }
-                        if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
-                            StringBuilder lossLine = new StringBuilder("  Loss:");
-                            for (var entry : trainingProgress.perClassLoss().entrySet()) {
-                                lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
+                            if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
+                                StringBuilder lossLine = new StringBuilder("  Loss:");
+                                for (var entry : trainingProgress.perClassLoss().entrySet()) {
+                                    lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
+                                }
+                                progress.log(lossLine.toString());
                             }
-                            progress.log(lossLine.toString());
                         }
                     },
                     progress::isCancelled

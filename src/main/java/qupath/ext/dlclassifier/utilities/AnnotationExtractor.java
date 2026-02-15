@@ -111,9 +111,6 @@ public class AnnotationExtractor {
 
     /**
      * Exports training data from annotations.
-     * <p>
-     * This method handles both sparse (line/brush) and dense (polygon/area)
-     * annotations. For sparse annotations, masks use 255 for unlabeled pixels.
      *
      * @param outputDir      output directory
      * @param classNames     list of class names to export
@@ -123,6 +120,25 @@ public class AnnotationExtractor {
      */
     public ExportResult exportTrainingData(Path outputDir, List<String> classNames,
                                            double validationSplit) throws IOException {
+        return exportTrainingData(outputDir, classNames, validationSplit, Collections.emptyMap());
+    }
+
+    /**
+     * Exports training data from annotations with class weight multipliers.
+     * <p>
+     * This method handles both sparse (line/brush) and dense (polygon/area)
+     * annotations. For sparse annotations, masks use 255 for unlabeled pixels.
+     *
+     * @param outputDir              output directory
+     * @param classNames             list of class names to export
+     * @param validationSplit        fraction of data for validation (0.0-1.0)
+     * @param classWeightMultipliers user multipliers on auto-computed weights (empty = no modification)
+     * @return export statistics including per-class pixel counts
+     * @throws IOException if export fails
+     */
+    public ExportResult exportTrainingData(Path outputDir, List<String> classNames,
+                                           double validationSplit,
+                                           Map<String, Double> classWeightMultipliers) throws IOException {
         logger.info("Exporting training data to: {}", outputDir);
 
         // Create directories
@@ -226,7 +242,7 @@ public class AnnotationExtractor {
 
         // Save configuration with class distribution and metadata
         saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels,
-                trainCount, valCount, allAnnotations.size());
+                trainCount, valCount, allAnnotations.size(), classWeightMultipliers);
 
         return new ExportResult(patchIndex, trainCount, valCount,
                 pixelCounts, totalLabeledPixels);
@@ -332,9 +348,6 @@ public class AnnotationExtractor {
 
     /**
      * Exports training data from multiple project images into a single training directory.
-     * <p>
-     * Each image's annotations are exported with sequential patch numbering across all images.
-     * A combined config.json with aggregated class statistics is written at the end.
      *
      * @param entries         project image entries to export from
      * @param patchSize       the patch size to extract
@@ -353,14 +366,11 @@ public class AnnotationExtractor {
             Path outputDir,
             double validationSplit) throws IOException {
         return exportFromProject(entries, patchSize, channelConfig, classNames,
-                outputDir, validationSplit, DEFAULT_LINE_STROKE_WIDTH);
+                outputDir, validationSplit, DEFAULT_LINE_STROKE_WIDTH, Collections.emptyMap());
     }
 
     /**
      * Exports training data from multiple project images into a single training directory.
-     * <p>
-     * Each image's annotations are exported with sequential patch numbering across all images.
-     * A combined config.json with aggregated class statistics is written at the end.
      *
      * @param entries         project image entries to export from
      * @param patchSize       the patch size to extract
@@ -380,6 +390,36 @@ public class AnnotationExtractor {
             Path outputDir,
             double validationSplit,
             int lineStrokeWidth) throws IOException {
+        return exportFromProject(entries, patchSize, channelConfig, classNames,
+                outputDir, validationSplit, lineStrokeWidth, Collections.emptyMap());
+    }
+
+    /**
+     * Exports training data from multiple project images into a single training directory.
+     * <p>
+     * Each image's annotations are exported with sequential patch numbering across all images.
+     * A combined config.json with aggregated class statistics is written at the end.
+     *
+     * @param entries                project image entries to export from
+     * @param patchSize              the patch size to extract
+     * @param channelConfig          channel configuration
+     * @param classNames             list of class names to export
+     * @param outputDir              output directory for combined training data
+     * @param validationSplit        fraction of data for validation (0.0-1.0)
+     * @param lineStrokeWidth        stroke width for rendering line annotations (pixels)
+     * @param classWeightMultipliers user multipliers on auto-computed weights (empty = no modification)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth,
+            Map<String, Double> classWeightMultipliers) throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
 
@@ -446,11 +486,9 @@ public class AnnotationExtractor {
         }
 
         // Save combined config.json
-        // Use a temporary extractor just for config saving (needs channelConfig and server reference)
-        // Instead, write config directly here
         saveProjectConfig(outputDir, classNames, totalClassPixelCounts, totalLabeledPixels,
                 channelConfig, patchSize, totalTrainCount, totalValCount,
-                totalAnnotationCount, sourceImages);
+                totalAnnotationCount, sourceImages, classWeightMultipliers);
 
         logger.info("Multi-image export complete: {} patches ({} train, {} val) from {} images",
                 totalPatchIndex, totalTrainCount, totalValCount, entries.size());
@@ -466,7 +504,8 @@ public class AnnotationExtractor {
                                            long[] classPixelCounts, long totalLabeledPixels,
                                            ChannelConfiguration channelConfig, int patchSize,
                                            int trainCount, int valCount,
-                                           int annotationCount, List<String> sourceImages)
+                                           int annotationCount, List<String> sourceImages,
+                                           Map<String, Double> classWeightMultipliers)
             throws IOException {
         Path configPath = outputDir.resolve("config.json");
         List<String> channelNames = channelConfig.getChannelNames();
@@ -490,6 +529,8 @@ public class AnnotationExtractor {
         for (int i = 0; i < classNames.size(); i++) {
             double weight = classPixelCounts[i] > 0 ?
                     (double) totalLabeledPixels / (classNames.size() * classPixelCounts[i]) : 1.0;
+            double multiplier = classWeightMultipliers.getOrDefault(classNames.get(i), 1.0);
+            weight *= multiplier;
             json.append("    ").append(String.format("%.6f", weight));
             if (i < classNames.size() - 1) json.append(",");
             json.append("\n");
@@ -756,23 +797,25 @@ public class AnnotationExtractor {
      */
     private void saveConfig(Path outputDir, List<String> classNames,
                             long[] classPixelCounts, long totalLabeledPixels) throws IOException {
-        saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels, 0, 0, 0);
+        saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels, 0, 0, 0, Collections.emptyMap());
     }
 
     /**
      * Saves configuration files including class distribution, channel info, and metadata.
      *
-     * @param outputDir          output directory
-     * @param classNames         list of class names
-     * @param classPixelCounts   per-class pixel counts
-     * @param totalLabeledPixels total labeled pixel count
-     * @param trainCount         number of training patches
-     * @param valCount           number of validation patches
-     * @param annotationCount    number of annotations processed
+     * @param outputDir              output directory
+     * @param classNames             list of class names
+     * @param classPixelCounts       per-class pixel counts
+     * @param totalLabeledPixels     total labeled pixel count
+     * @param trainCount             number of training patches
+     * @param valCount               number of validation patches
+     * @param annotationCount        number of annotations processed
+     * @param classWeightMultipliers user-supplied multipliers on auto-computed weights (empty = no modification)
      */
     private void saveConfig(Path outputDir, List<String> classNames,
                             long[] classPixelCounts, long totalLabeledPixels,
-                            int trainCount, int valCount, int annotationCount) throws IOException {
+                            int trainCount, int valCount, int annotationCount,
+                            Map<String, Double> classWeightMultipliers) throws IOException {
         Path configPath = outputDir.resolve("config.json");
 
         List<String> channelNames = channelConfig.getChannelNames();
@@ -794,10 +837,12 @@ public class AnnotationExtractor {
         }
         json.append("  ],\n");
         json.append("  \"class_weights\": [\n");
-        // Calculate inverse frequency weights
+        // Calculate inverse frequency weights, then apply user multipliers
         for (int i = 0; i < classNames.size(); i++) {
             double weight = classPixelCounts[i] > 0 ?
                     (double) totalLabeledPixels / (classNames.size() * classPixelCounts[i]) : 1.0;
+            double multiplier = classWeightMultipliers.getOrDefault(classNames.get(i), 1.0);
+            weight *= multiplier;
             json.append("    ").append(String.format("%.6f", weight));
             if (i < classNames.size() - 1) json.append(",");
             json.append("\n");

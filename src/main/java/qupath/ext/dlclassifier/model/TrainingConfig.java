@@ -41,6 +41,9 @@ public class TrainingConfig {
     // Annotation rendering
     private final int lineStrokeWidth;
 
+    // Class weight multipliers (user-supplied multipliers on auto-computed inverse-frequency weights)
+    private final Map<String, Double> classWeightMultipliers;
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -56,6 +59,7 @@ public class TrainingConfig {
         this.freezeEncoderLayers = builder.freezeEncoderLayers;
         this.frozenLayers = Collections.unmodifiableList(new ArrayList<>(builder.frozenLayers));
         this.lineStrokeWidth = builder.lineStrokeWidth;
+        this.classWeightMultipliers = Collections.unmodifiableMap(new LinkedHashMap<>(builder.classWeightMultipliers));
     }
 
     // Getters
@@ -141,6 +145,18 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the user-supplied class weight multipliers.
+     * <p>
+     * These multipliers are applied on top of auto-computed inverse-frequency weights.
+     * A multiplier of 1.0 means no change; values &gt; 1.0 emphasize a class.
+     *
+     * @return map of class name to weight multiplier (empty map means no modification)
+     */
+    public Map<String, Double> getClassWeightMultipliers() {
+        return classWeightMultipliers;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -165,14 +181,16 @@ public class TrainingConfig {
                 Objects.equals(modelType, that.modelType) &&
                 Objects.equals(backbone, that.backbone) &&
                 Objects.equals(augmentationConfig, that.augmentationConfig) &&
-                Objects.equals(frozenLayers, that.frozenLayers);
+                Objects.equals(frozenLayers, that.frozenLayers) &&
+                Objects.equals(classWeightMultipliers, that.classWeightMultipliers);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(modelType, backbone, epochs, batchSize, learningRate,
                 weightDecay, tileSize, overlap, validationSplit, augmentationConfig,
-                usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth);
+                usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
+                classWeightMultipliers);
     }
 
     @Override
@@ -203,6 +221,7 @@ public class TrainingConfig {
         private int freezeEncoderLayers = 0;
         private List<String> frozenLayers = new ArrayList<>();
         private int lineStrokeWidth = 5;
+        private Map<String, Double> classWeightMultipliers = new LinkedHashMap<>();
 
         public Builder() {
             // Default augmentation configuration
@@ -329,6 +348,16 @@ public class TrainingConfig {
          */
         public Builder lineStrokeWidth(int lineStrokeWidth) {
             this.lineStrokeWidth = lineStrokeWidth;
+            return this;
+        }
+
+        /**
+         * Sets class weight multipliers applied on top of auto-computed inverse-frequency weights.
+         *
+         * @param classWeightMultipliers map of class name to multiplier (default 1.0)
+         */
+        public Builder classWeightMultipliers(Map<String, Double> classWeightMultipliers) {
+            this.classWeightMultipliers = new LinkedHashMap<>(classWeightMultipliers);
             return this;
         }
 
