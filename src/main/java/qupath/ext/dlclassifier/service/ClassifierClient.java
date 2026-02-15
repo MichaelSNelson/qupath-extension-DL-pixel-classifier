@@ -273,13 +273,18 @@ public class ClassifierClient {
                 if ("training".equals(state)) {
                     int epoch = status.get("epoch").getAsInt();
                     int totalEpochs = status.get("total_epochs").getAsInt();
-                    double valLoss = status.get("loss").getAsDouble();
-                    double trainLoss = status.has("train_loss") ? status.get("train_loss").getAsDouble() : valLoss;
-                    double accuracy = status.has("accuracy") ? status.get("accuracy").getAsDouble() : 0;
 
-                    TrainingProgress progress = new TrainingProgress(epoch, totalEpochs, trainLoss, valLoss, accuracy);
-                    if (progressCallback != null) {
-                        progressCallback.accept(progress);
+                    // Skip epoch 0 -- the server reports this during model setup/download
+                    // before any actual training has occurred
+                    if (epoch > 0) {
+                        double valLoss = status.get("loss").getAsDouble();
+                        double trainLoss = status.has("train_loss") ? status.get("train_loss").getAsDouble() : valLoss;
+                        double accuracy = status.has("accuracy") ? status.get("accuracy").getAsDouble() : 0;
+
+                        TrainingProgress progress = new TrainingProgress(epoch, totalEpochs, trainLoss, valLoss, accuracy);
+                        if (progressCallback != null) {
+                            progressCallback.accept(progress);
+                        }
                     }
                 } else if ("completed".equals(state)) {
                     String modelPath = status.get("model_path").getAsString();

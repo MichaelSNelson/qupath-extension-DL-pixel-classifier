@@ -78,7 +78,6 @@ def get_training_augmentation(
         A.ElasticTransform(
             alpha=120,
             sigma=120 * 0.05,
-            alpha_affine=120 * 0.03,
             p=p_elastic
         ),
 
@@ -105,8 +104,8 @@ def get_training_augmentation(
             A.MedianBlur(blur_limit=3, p=1.0),
         ], p=0.1),
 
-        # Noise
-        A.GaussNoise(var_limit=(10.0, 50.0), p=p_noise),
+        # Noise - std_range is fraction of image max value
+        A.GaussNoise(std_range=(0.04, 0.2), p=p_noise),
 
     ], additional_targets={})
 
