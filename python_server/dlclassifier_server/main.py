@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DL Pixel Classifier Server",
     description="Deep learning pixel classification service for QuPath",
-    version="0.1.0",
+    version="0.1.1",
     lifespan=lifespan
 )
 
@@ -56,12 +56,22 @@ app.include_router(pretrained.router, prefix="/api/v1", tags=["pretrained"])
 
 
 def run():
-    """Run the server."""
+    """Run the server.
+
+    Passes the app object directly to uvicorn instead of an import string.
+    Using a string causes uvicorn to spawn a subprocess on Windows, which
+    breaks Ctrl+C signal handling.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(description="DL Pixel Classifier Server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8765, help="Port to bind to")
+    args = parser.parse_args()
+
     uvicorn.run(
-        "dlclassifier_server.main:app",
-        host="0.0.0.0",
-        port=8765,
-        reload=False,
+        app,
+        host=args.host,
+        port=args.port,
         log_level="info"
     )
 
