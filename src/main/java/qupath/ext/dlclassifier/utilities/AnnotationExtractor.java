@@ -352,6 +352,34 @@ public class AnnotationExtractor {
             List<String> classNames,
             Path outputDir,
             double validationSplit) throws IOException {
+        return exportFromProject(entries, patchSize, channelConfig, classNames,
+                outputDir, validationSplit, DEFAULT_LINE_STROKE_WIDTH);
+    }
+
+    /**
+     * Exports training data from multiple project images into a single training directory.
+     * <p>
+     * Each image's annotations are exported with sequential patch numbering across all images.
+     * A combined config.json with aggregated class statistics is written at the end.
+     *
+     * @param entries         project image entries to export from
+     * @param patchSize       the patch size to extract
+     * @param channelConfig   channel configuration
+     * @param classNames      list of class names to export
+     * @param outputDir       output directory for combined training data
+     * @param validationSplit fraction of data for validation (0.0-1.0)
+     * @param lineStrokeWidth stroke width for rendering line annotations (pixels)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth) throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
 
@@ -378,7 +406,7 @@ public class AnnotationExtractor {
             logger.info("Processing image: {}", entry.getImageName());
             try {
                 ImageData<BufferedImage> imageData = entry.readImageData();
-                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig);
+                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth);
 
                 ExportResult result = extractor.exportTrainingDataWithOffset(
                         outputDir, classNames, validationSplit, totalPatchIndex);

@@ -22,6 +22,7 @@ import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.scripting.ScriptGenerator;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
@@ -128,6 +129,7 @@ public class TrainingDialog {
         // Tiling parameters
         private Spinner<Integer> tileSizeSpinner;
         private Spinner<Integer> overlapSpinner;
+        private Spinner<Integer> lineStrokeWidthSpinner;
 
         // Channel selection
         private ChannelSelectionPanel channelPanel;
@@ -223,6 +225,9 @@ public class TrainingDialog {
 
             // Initialize with current image
             initializeFromCurrentImage();
+
+            // Trigger initial layer load now that all UI components exist
+            updateLayerFreezePanel();
 
             // Set result converter
             dialog.setResultConverter(button -> {
@@ -485,6 +490,7 @@ public class TrainingDialog {
                     updateLayerFreezePanel();
                 }
             });
+            backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
 
             content.getChildren().addAll(usePretrainedCheck, infoLabel, layerFreezePanel);
 
@@ -632,6 +638,26 @@ public class TrainingDialog {
 
             grid.add(new Label("Tile Overlap (%):"), 0, row);
             grid.add(overlapSpinner, 1, row);
+            row++;
+
+            // Line stroke width - pre-fill from QuPath's annotation stroke thickness
+            int defaultStroke = 5;
+            try {
+                defaultStroke = (int) Math.max(1, PathPrefs.annotationStrokeThicknessProperty().get());
+            } catch (Exception e) {
+                logger.debug("Could not read QuPath annotation stroke thickness, using default");
+            }
+            lineStrokeWidthSpinner = new Spinner<>(1, 50, defaultStroke, 1);
+            lineStrokeWidthSpinner.setEditable(true);
+            lineStrokeWidthSpinner.setPrefWidth(100);
+            lineStrokeWidthSpinner.setTooltip(new Tooltip(
+                    "Width in pixels for rendering line/polyline annotations as training masks.\n" +
+                    "Pre-filled from QuPath's annotation stroke thickness.\n" +
+                    "Thin strokes (< 5px) produce sparse training signal from polyline\n" +
+                    "annotations - consider increasing for better training."));
+
+            grid.add(new Label("Line Stroke Width:"), 0, row);
+            grid.add(lineStrokeWidthSpinner, 1, row);
 
             TitledPane pane = new TitledPane("TRAINING PARAMETERS", grid);
             pane.setExpanded(true);
@@ -848,9 +874,6 @@ public class TrainingDialog {
             } else if (!backboneList.isEmpty()) {
                 backboneCombo.setValue(backboneList.get(0));
             }
-
-            // Update layer freeze panel when backbone changes
-            backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
         }
 
         private void validateClassifierName(String name) {
@@ -934,6 +957,7 @@ public class TrainingDialog {
                     .augmentation(buildAugmentationConfig())
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
+                    .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
                     .build();
 
             // Get channel config
@@ -999,6 +1023,7 @@ public class TrainingDialog {
                     .augmentation(buildAugmentationConfig())
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
+                    .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();

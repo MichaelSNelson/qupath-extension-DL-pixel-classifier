@@ -1,6 +1,7 @@
 """Pretrained models service for listing available architectures and layer structures."""
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -543,17 +544,56 @@ class PretrainedModelsService:
 
         return layers
 
+    def _resolve_slice_modules(self, parent_module, part_with_brackets: str):
+        """Parse 'attr[start:end]' and return list of sub-modules in the slice range.
+
+        Handles patterns like:
+            _blocks[0:4]   -> modules at indices 0, 1, 2, 3
+            features[7:14] -> modules at indices 7 through 13
+            _blocks[18:]   -> modules at indices 18 to end
+            features[0:2]  -> modules at indices 0, 1
+
+        Args:
+            parent_module: the parent module containing the attribute
+            part_with_brackets: string like "_blocks[0:4]" or "features[18:]"
+
+        Returns:
+            list of sub-modules matching the slice, or empty list on failure
+        """
+        match = re.match(r'^(\w+)\[(\d*):(\d*)\]$', part_with_brackets)
+        if not match:
+            return []
+
+        attr_name = match.group(1)
+        start_str = match.group(2)
+        end_str = match.group(3)
+
+        if not hasattr(parent_module, attr_name):
+            return []
+
+        container = getattr(parent_module, attr_name)
+        children = list(container)
+
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else len(children)
+
+        return children[start:end]
+
     def _count_params_for_layer(self, module, layer_name: str) -> int:
         """Count parameters in a layer group."""
         try:
-            # Try to get the actual module
-            if "[" in layer_name:
-                # Handle slice notation like "features[0:7]"
-                return 0  # Can't easily count for slices
-
             parts = layer_name.replace("encoder.", "").split(".")
             current = module
+
             for part in parts:
+                if "[" in part:
+                    # Handle slice notation like "features[0:7]" or "_blocks[0:4]"
+                    sub_modules = self._resolve_slice_modules(current, part)
+                    return sum(
+                        p.numel()
+                        for m in sub_modules
+                        for p in m.parameters()
+                    )
                 if hasattr(current, part):
                     current = getattr(current, part)
                 else:
@@ -696,12 +736,23 @@ class PretrainedModelsService:
                 parts = layer_name.split(".")
                 current = model
 
-            # Navigate to the layer
+            # Navigate to the layer, handling slice notation
             for part in parts:
                 if "[" in part:
-                    # Handle indexed access like "features[0:7]"
-                    # This is complex - skip for now
-                    continue
+                    # Handle slice notation like "_blocks[0:4]" or "features[7:14]"
+                    sub_modules = self._resolve_slice_modules(current, part)
+                    if not sub_modules:
+                        logger.warning("Could not resolve slice '%s' in layer %s",
+                                       part, layer_name)
+                        return
+                    frozen_count = 0
+                    for sub_module in sub_modules:
+                        for param in sub_module.parameters():
+                            param.requires_grad = False
+                            frozen_count += 1
+                    logger.debug("Frozen layer: %s (%d params across %d sub-modules)",
+                                 layer_name, frozen_count, len(sub_modules))
+                    return
                 if hasattr(current, part):
                     current = getattr(current, part)
 
@@ -709,10 +760,10 @@ class PretrainedModelsService:
             for param in current.parameters():
                 param.requires_grad = False
 
-            logger.debug(f"Frozen layer: {layer_name}")
+            logger.debug("Frozen layer: %s", layer_name)
 
         except Exception as e:
-            logger.warning(f"Could not freeze layer {layer_name}: {e}")
+            logger.warning("Could not freeze layer %s: %s", layer_name, e)
 
 
     # =========================================================================

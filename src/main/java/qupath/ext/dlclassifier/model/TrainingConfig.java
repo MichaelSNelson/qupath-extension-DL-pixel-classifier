@@ -38,6 +38,9 @@ public class TrainingConfig {
     private final int freezeEncoderLayers;
     private final List<String> frozenLayers;
 
+    // Annotation rendering
+    private final int lineStrokeWidth;
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -52,6 +55,7 @@ public class TrainingConfig {
         this.usePretrainedWeights = builder.usePretrainedWeights;
         this.freezeEncoderLayers = builder.freezeEncoderLayers;
         this.frozenLayers = Collections.unmodifiableList(new ArrayList<>(builder.frozenLayers));
+        this.lineStrokeWidth = builder.lineStrokeWidth;
     }
 
     // Getters
@@ -128,6 +132,15 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the stroke width for rendering line/polyline annotations as training masks.
+     *
+     * @return stroke width in pixels
+     */
+    public int getLineStrokeWidth() {
+        return lineStrokeWidth;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -148,6 +161,7 @@ public class TrainingConfig {
                 Double.compare(that.validationSplit, validationSplit) == 0 &&
                 usePretrainedWeights == that.usePretrainedWeights &&
                 freezeEncoderLayers == that.freezeEncoderLayers &&
+                lineStrokeWidth == that.lineStrokeWidth &&
                 Objects.equals(modelType, that.modelType) &&
                 Objects.equals(backbone, that.backbone) &&
                 Objects.equals(augmentationConfig, that.augmentationConfig) &&
@@ -158,13 +172,13 @@ public class TrainingConfig {
     public int hashCode() {
         return Objects.hash(modelType, backbone, epochs, batchSize, learningRate,
                 weightDecay, tileSize, overlap, validationSplit, augmentationConfig,
-                usePretrainedWeights, freezeEncoderLayers, frozenLayers);
+                usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d}",
-                modelType, backbone, epochs, learningRate, tileSize);
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, lineStroke=%d}",
+                modelType, backbone, epochs, learningRate, tileSize, lineStrokeWidth);
     }
 
     public static Builder builder() {
@@ -188,6 +202,7 @@ public class TrainingConfig {
         private boolean usePretrainedWeights = true;
         private int freezeEncoderLayers = 0;
         private List<String> frozenLayers = new ArrayList<>();
+        private int lineStrokeWidth = 5;
 
         public Builder() {
             // Default augmentation configuration
@@ -304,6 +319,16 @@ public class TrainingConfig {
          */
         public Builder freezeLayer(String layerName) {
             this.frozenLayers.add(layerName);
+            return this;
+        }
+
+        /**
+         * Sets the stroke width for rendering line/polyline annotations as training masks.
+         *
+         * @param lineStrokeWidth stroke width in pixels (1-50)
+         */
+        public Builder lineStrokeWidth(int lineStrokeWidth) {
+            this.lineStrokeWidth = lineStrokeWidth;
             return this;
         }
 

@@ -670,9 +670,11 @@ class TrainingService:
                         class_fp[c] += (pred_c & ~true_c).sum()
                         class_fn[c] += (~pred_c & true_c).sum()
 
-                    # Per-class loss (unreduced)
+                    # Per-class loss (unreduced, must include ignore_index
+                    # to avoid CUDA assertion on unlabeled pixels)
                     per_pixel_loss = F.cross_entropy(
-                        outputs, masks, reduction='none')
+                        outputs, masks, reduction='none',
+                        ignore_index=unlabeled_index)
                     for c in range(num_classes):
                         c_mask = (masks == c) & labeled_mask
                         c_count = c_mask.sum()

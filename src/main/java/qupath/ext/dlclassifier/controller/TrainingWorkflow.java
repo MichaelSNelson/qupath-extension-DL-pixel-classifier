@@ -482,7 +482,8 @@ public class TrainingWorkflow {
                         channelConfig,
                         classNames,
                         tempDir,
-                        trainingConfig.getValidationSplit()
+                        trainingConfig.getValidationSplit(),
+                        trainingConfig.getLineStrokeWidth()
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -490,7 +491,8 @@ public class TrainingWorkflow {
                 AnnotationExtractor extractor = new AnnotationExtractor(
                         imageData,
                         trainingConfig.getTileSize(),
-                        channelConfig
+                        channelConfig,
+                        trainingConfig.getLineStrokeWidth()
                 );
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit());
@@ -514,6 +516,15 @@ public class TrainingWorkflow {
                         ":" + DLClassifierPreferences.getServerPort());
                 progress.setStatus("Training model...");
                 progress.setOverallProgress(0);
+
+                // Log frozen layer configuration
+                List<String> frozen = trainingConfig.getFrozenLayers();
+                if (frozen != null && !frozen.isEmpty()) {
+                    progress.log("Transfer learning: " + frozen.size() + " layer groups frozen: "
+                            + String.join(", ", frozen));
+                } else if (trainingConfig.isUsePretrainedWeights()) {
+                    progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
+                }
             }
 
             ClassifierClient.TrainingResult serverResult = client.startTraining(
@@ -716,19 +727,30 @@ public class TrainingWorkflow {
                         channelConfig,
                         classNames,
                         tempDir,
-                        trainingConfig.getValidationSplit()
+                        trainingConfig.getValidationSplit(),
+                        trainingConfig.getLineStrokeWidth()
                 );
                 patchCount = exportResult.totalPatches();
             } else {
                 ImageData<BufferedImage> imageData = qupath.getImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(
-                        imageData, trainingConfig.getTileSize(), channelConfig);
+                        imageData, trainingConfig.getTileSize(), channelConfig,
+                        trainingConfig.getLineStrokeWidth());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit());
                 patchCount = exportResult.totalPatches();
             }
             progress.log("Re-exported " + patchCount + " training patches");
             progress.setStatus("Resuming training...");
+
+            // Log frozen layer configuration
+            List<String> frozen = trainingConfig.getFrozenLayers();
+            if (frozen != null && !frozen.isEmpty()) {
+                progress.log("Transfer learning: " + frozen.size() + " layer groups frozen: "
+                        + String.join(", ", frozen));
+            } else if (trainingConfig.isUsePretrainedWeights()) {
+                progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
+            }
 
             // 4. Call client.resumeTraining
             ClassifierClient client = new ClassifierClient(
