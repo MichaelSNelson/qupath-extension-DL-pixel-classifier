@@ -47,10 +47,10 @@ class PretrainedModelsService:
     # These use ResNet-50 architecture but with weights pretrained on histopathology data
     # instead of ImageNet, providing much better feature extraction for tissue classification.
     HISTOLOGY_ENCODERS = {
-        "resnet50_lunit-swav": ("resnet50", "1aurent/resnet50.lunit_swav"),
-        "resnet50_lunit-bt": ("resnet50", "1aurent/resnet50.lunit_bt"),
-        "resnet50_kather100k": ("resnet50", "1aurent/resnet50.tiatoolbox-kather100k"),
-        "resnet50_tcga-brca": ("resnet50", "1aurent/resnet50.tcga_brca_simclr"),
+        "resnet50_lunit-swav": ("resnet50", "hf_hub:1aurent/resnet50.lunit_swav"),
+        "resnet50_lunit-bt": ("resnet50", "hf_hub:1aurent/resnet50.lunit_bt"),
+        "resnet50_kather100k": ("resnet50", "hf_hub:1aurent/resnet50.tiatoolbox-kather100k"),
+        "resnet50_tcga-brca": ("resnet50", "hf_hub:1aurent/resnet50.tcga_brca_simclr"),
     }
 
     def __init__(self):
