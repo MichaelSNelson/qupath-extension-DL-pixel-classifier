@@ -415,6 +415,7 @@ Response:
 |--------|----------|-------------|
 | GET | `/api/v1/health` | Server health check |
 | GET | `/api/v1/gpu` | GPU availability and info |
+| POST | `/api/v1/gpu/clear` | Force-clear all GPU memory |
 | GET | `/api/v1/models` | List available models |
 | POST | `/api/v1/train` | Start training job |
 | GET | `/api/v1/train/{job_id}/status` | Training progress |
@@ -442,12 +443,24 @@ The server includes automatic GPU memory management:
 - **Cache clearing**: Automatically clears GPU cache between epochs
 - **Memory monitoring**: Logs memory usage during training (CUDA)
 - **Memory estimation**: Reports model memory requirements
+- **Training cleanup**: `try/finally` guarantees GPU memory is freed after training completes, fails, or is cancelled
+- **Force clear**: `POST /api/v1/gpu/clear` cancels running jobs, clears model caches, and frees all GPU memory
 
 ### Checking GPU Status
 
 ```bash
 curl http://localhost:8765/api/v1/gpu
 ```
+
+### Force-Clearing GPU Memory
+
+If GPU memory is not released after a crash or failed training, force-clear it:
+
+```bash
+curl -X POST http://localhost:8765/api/v1/gpu/clear
+```
+
+This cancels running training jobs, clears cached models, runs garbage collection, and frees GPU memory. Returns before/after memory stats. Also available via the "Free GPU Memory" button in QuPath (Extensions > DL Pixel Classifier > Utilities).
 
 Example response (CUDA):
 ```json
@@ -521,7 +534,7 @@ python_server/
   dlclassifier_server/
     main.py                    # FastAPI application
     routers/
-      health.py                # /health, /gpu endpoints
+      health.py                # /health, /gpu, /gpu/clear endpoints
       training.py              # /train endpoints
       inference.py             # /inference endpoints
       pretrained.py            # /pretrained/* endpoints
@@ -564,6 +577,7 @@ When the server is running, visit:
 | `ModuleNotFoundError: No module named 'torch'` | Install PyTorch first (see PyTorch with Specific CUDA Versions) |
 | `python: command not found` | Use `python3` on Linux/macOS |
 | CUDA out of memory | Reduce batch size in training params, or use a smaller encoder (e.g., `mobilenet_v2`) |
+| GPU memory not freed after crash | Use `POST /api/v1/gpu/clear` or "Free GPU Memory" button in QuPath Utilities menu |
 | MPS not detected on Mac | Requires macOS 12.3+ and PyTorch 2.0+ |
 | Server won't start on port 8765 | Check if another process is using the port, or specify a different port with `--port` |
 
