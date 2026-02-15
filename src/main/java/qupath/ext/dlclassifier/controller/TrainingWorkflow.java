@@ -236,6 +236,16 @@ public class TrainingWorkflow {
      * Validates that all prerequisites for training are met.
      */
     private boolean validatePrerequisites() {
+        // Check project is open (required for saving classifiers and accessing image data)
+        if (qupath.getProject() == null) {
+            showError("No Project",
+                    "A QuPath project must be open to train a classifier.\n\n" +
+                    "Classifiers are saved within the project, and training data\n" +
+                    "is exported from project images.\n\n" +
+                    "Please create or open a project first.");
+            return false;
+        }
+
         // Check image is open
         ImageData<BufferedImage> imageData = qupath.getImageData();
         if (imageData == null) {
@@ -318,6 +328,11 @@ public class TrainingWorkflow {
                                             ChannelConfiguration channelConfig,
                                             List<String> classNames,
                                             List<ProjectImageEntry<BufferedImage>> selectedImages) {
+        // Check for unsaved changes before training
+        if (!checkUnsavedChanges(selectedImages)) {
+            return;
+        }
+
         // Create progress monitor
         ProgressMonitorController progress = ProgressMonitorController.forTraining();
         progress.setOnCancel(v -> logger.info("Training cancellation requested"));
@@ -524,6 +539,49 @@ public class TrainingWorkflow {
                                 ChannelConfiguration channelConfig,
                                 List<String> classNames) {
         trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null);
+    }
+
+    /**
+     * Checks for unsaved changes in the current image and warns the user.
+     * <p>
+     * In single-image mode, training uses the live in-memory ImageData, so
+     * unsaved annotations are included. In multi-image mode, training reads
+     * from saved .qpdata files on disk, so unsaved changes would be missed.
+     * <p>
+     * This method must be called on the JavaFX Application Thread.
+     *
+     * @param selectedImages the selected project images, or null for single-image mode
+     * @return true if training should proceed, false if user cancelled
+     */
+    private boolean checkUnsavedChanges(List<ProjectImageEntry<BufferedImage>> selectedImages) {
+        ImageData<BufferedImage> currentImageData = qupath.getImageData();
+        if (currentImageData == null) {
+            return true;
+        }
+
+        boolean isMultiImage = selectedImages != null && !selectedImages.isEmpty();
+        boolean hasUnsavedChanges = currentImageData.isChanged();
+
+        if (!hasUnsavedChanges) {
+            return true;
+        }
+
+        if (isMultiImage) {
+            // Multi-image mode reads from saved .qpdata files -- unsaved changes are missed
+            return Dialogs.showConfirmDialog(
+                    "Unsaved Changes",
+                    "The current image has unsaved annotation changes.\n\n" +
+                    "Multi-image training reads from saved project data.\n" +
+                    "Unsaved changes in the current image will NOT be\n" +
+                    "included in training.\n\n" +
+                    "Save your changes first (File -> Save) or click OK\n" +
+                    "to continue without the unsaved changes."
+            );
+        } else {
+            // Single-image mode uses live in-memory data -- unsaved annotations are included
+            logger.info("Current image has unsaved changes - these will be included in single-image training");
+            return true;
+        }
     }
 
     /**
