@@ -287,14 +287,14 @@ if "%USE_CUDA%"=="1" (
 echo.
 
 rem Check conda is available
-conda --version >nul 2>&1
+call conda --version >nul 2>&1
 if errorlevel 1 (
     echo  ERROR: conda not found.
     echo  Run this from an Anaconda Prompt, or add conda to PATH.
     exit /b 1
 )
 
-for /f "tokens=*" %%i in ('conda --version 2^>^&1') do set "CONDA_VER=%%i"
+for /f "tokens=*" %%i in ('call conda --version 2^>^&1') do set "CONDA_VER=%%i"
 echo  Found: %CONDA_VER%
 echo.
 
@@ -308,20 +308,20 @@ echo  Conda environment already exists at %ENV_PATH%
 set /p RECREATE="  Recreate it? [y/N]: "
 if /i "!RECREATE!"=="y" (
     echo  Removing old environment...
-    conda env remove --prefix "%ENV_PATH%" -y >nul 2>&1
+    call conda env remove --prefix "%ENV_PATH%" -y >nul 2>&1
     goto conda_create
 )
 echo  Reusing existing environment.
 goto conda_install
 
 :conda_check_name
-conda env list 2>nul | findstr /c:"%ENV_PATH%" >nul 2>&1
+call conda env list 2>nul | findstr /c:"%ENV_PATH%" >nul 2>&1
 if errorlevel 1 goto conda_create
 echo  Conda environment "%ENV_PATH%" already exists.
 set /p RECREATE="  Recreate it? [y/N]: "
 if /i "!RECREATE!"=="y" (
     echo  Removing old environment...
-    conda env remove --name "%ENV_PATH%" -y >nul 2>&1
+    call conda env remove --name "%ENV_PATH%" -y >nul 2>&1
     goto conda_create
 )
 echo  Reusing existing environment.
@@ -330,10 +330,10 @@ goto conda_install
 :conda_create
 if "%CONDA_USE_PREFIX%"=="1" (
     echo  Creating conda environment at %ENV_PATH% ...
-    conda create --prefix "%ENV_PATH%" python=3.11 -y
+    call conda create --prefix "%ENV_PATH%" python=3.11 -y
 ) else (
     echo  Creating conda environment "%ENV_PATH%" ...
-    conda create --name "%ENV_PATH%" python=3.11 -y
+    call conda create --name "%ENV_PATH%" python=3.11 -y
 )
 if errorlevel 1 (
     echo  ERROR: Failed to create conda environment.
@@ -361,25 +361,25 @@ goto conda_pytorch_cu12_default
 
 :conda_pytorch_cu12
 echo  Installing PyTorch with CUDA 12.4 via conda...
-conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
+call conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
 if errorlevel 1 goto conda_pytorch_pip_fallback
 goto conda_pytorch_done
 
 :conda_pytorch_cu11
 echo  Installing PyTorch with CUDA 11.8 via conda...
-conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia -y
+call conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia -y
 if errorlevel 1 goto conda_pytorch_pip_fallback
 goto conda_pytorch_done
 
 :conda_pytorch_cu12_default
 echo  Installing PyTorch with CUDA 12.4 via conda [default]...
-conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
+call conda install pytorch torchvision pytorch-cuda=12.4 -c pytorch -c nvidia -y
 if errorlevel 1 goto conda_pytorch_pip_fallback
 goto conda_pytorch_done
 
 :conda_pytorch_cpu
 echo  Installing PyTorch CPU via conda...
-conda install pytorch torchvision cpuonly -c pytorch -y
+call conda install pytorch torchvision cpuonly -c pytorch -y
 if errorlevel 1 goto conda_pytorch_pip_fallback
 goto conda_pytorch_done
 
