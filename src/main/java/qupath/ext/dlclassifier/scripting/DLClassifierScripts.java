@@ -433,7 +433,7 @@ public class DLClassifierScripts {
      */
     public static boolean hasClassificationMeasurements(Collection<PathObject> annotations) {
         return annotations.stream()
-                .anyMatch(ann -> ann.getMeasurementList().getMeasurementNames().stream()
+                .anyMatch(ann -> ann.getMeasurementList().getNames().stream()
                         .anyMatch(name -> name.startsWith("DL:")));
     }
 
@@ -449,7 +449,7 @@ public class DLClassifierScripts {
         int cleared = 0;
         for (PathObject ann : annotations) {
             var ml = ann.getMeasurementList();
-            List<String> toRemove = ml.getMeasurementNames().stream()
+            List<String> toRemove = ml.getNames().stream()
                     .filter(name -> name.startsWith("DL:"))
                     .toList();
 
@@ -501,7 +501,7 @@ public class DLClassifierScripts {
 
         for (PathObject ann : annotations) {
             var ml = ann.getMeasurementList();
-            for (String name : ml.getMeasurementNames()) {
+            for (String name : ml.getNames()) {
                 if (name.startsWith("DL:") && name.contains("area")) {
                     double value = ml.get(name);
                     summary.merge(name, value, Double::sum);

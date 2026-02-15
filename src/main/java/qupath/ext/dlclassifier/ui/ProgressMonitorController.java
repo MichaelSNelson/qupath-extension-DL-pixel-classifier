@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -137,7 +138,7 @@ public class ProgressMonitorController {
         valLossSeries = new XYChart.Series<>();
         valLossSeries.setName("Val Loss");
 
-        lossChart.getData().addAll(trainLossSeries, valLossSeries);
+        lossChart.getData().addAll(List.of(trainLossSeries, valLossSeries));
 
         // Create per-class IoU chart
         NumberAxis iouXAxis = new NumberAxis();

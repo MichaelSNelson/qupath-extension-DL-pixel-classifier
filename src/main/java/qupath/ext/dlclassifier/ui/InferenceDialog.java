@@ -245,7 +245,7 @@ public class InferenceDialog {
             });
             dateCol.setPrefWidth(90);
 
-            classifierTable.getColumns().addAll(nameCol, typeCol, channelsCol, classesCol, dateCol);
+            classifierTable.getColumns().addAll(List.of(nameCol, typeCol, channelsCol, classesCol, dateCol));
 
             // Selection listener
             classifierTable.getSelectionModel().selectedItemProperty().addListener(
