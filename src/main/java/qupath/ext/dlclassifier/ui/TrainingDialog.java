@@ -566,6 +566,22 @@ public class TrainingDialog {
             learningRateSpinner = new Spinner<>(0.00001, 1.0, DLClassifierPreferences.getDefaultLearningRate(), 0.0001);
             learningRateSpinner.setEditable(true);
             learningRateSpinner.setPrefWidth(100);
+            // Default StringConverter rounds 0.001 to "0.0" - use enough decimal places
+            var lrFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) learningRateSpinner.getValueFactory();
+            lrFactory.setConverter(new javafx.util.StringConverter<Double>() {
+                @Override
+                public String toString(Double value) {
+                    return value == null ? "" : String.format("%.5f", value);
+                }
+                @Override
+                public Double fromString(String string) {
+                    try {
+                        return Double.parseDouble(string.trim());
+                    } catch (NumberFormatException e) {
+                        return lrFactory.getValue();
+                    }
+                }
+            });
             learningRateSpinner.setTooltip(new Tooltip(
                     "Controls the step size during gradient descent.\n" +
                     "Too high: training diverges. Too low: training stalls.\n" +
