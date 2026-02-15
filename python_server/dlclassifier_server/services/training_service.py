@@ -394,6 +394,45 @@ class TrainingService:
         """
         logger.info(f"Starting training: {model_type}")
 
+        try:
+            return self._run_training(
+                model_type=model_type,
+                architecture=architecture,
+                input_config=input_config,
+                training_params=training_params,
+                classes=classes,
+                data_path=data_path,
+                progress_callback=progress_callback,
+                cancel_flag=cancel_flag,
+                frozen_layers=frozen_layers,
+                pause_flag=pause_flag,
+                checkpoint_path=checkpoint_path,
+                start_epoch=start_epoch
+            )
+        finally:
+            # Always free GPU memory, even on crash/error/cancellation
+            import gc
+            gc.collect()
+            self.gpu_manager.clear_cache()
+            self.gpu_manager.log_memory_status(prefix="Training cleanup: ")
+
+    def _run_training(
+        self,
+        model_type: str,
+        architecture: Dict[str, Any],
+        input_config: Dict[str, Any],
+        training_params: Dict[str, Any],
+        classes: List[str],
+        data_path: str,
+        progress_callback: Optional[Callable] = None,
+        cancel_flag: Optional[threading.Event] = None,
+        frozen_layers: Optional[List[str]] = None,
+        pause_flag: Optional[threading.Event] = None,
+        checkpoint_path: Optional[str] = None,
+        start_epoch: int = 0
+    ) -> Dict[str, Any]:
+        """Internal training implementation. Called by train() with cleanup guarantee."""
+
         # Create model with optional frozen layers
         if frozen_layers:
             from .pretrained_models import get_pretrained_service

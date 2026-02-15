@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.controller.DLClassifierController;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
@@ -196,7 +197,43 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         "Test connectivity and view GPU availability.");
         serverOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("serverSettings"));
 
-        utilitiesMenu.getItems().addAll(serverOption);
+        // Free GPU Memory
+        MenuItem freeGpuOption = new MenuItem("Free GPU Memory");
+        setMenuItemTooltip(freeGpuOption,
+                "Force-clear all GPU memory held by the classification server. " +
+                        "Cancels running training jobs, clears cached models, and " +
+                        "frees GPU VRAM. Use after a crash or failed training.");
+        freeGpuOption.setOnAction(e -> {
+            freeGpuOption.setDisable(true);
+            Thread clearThread = new Thread(() -> {
+                try {
+                    ClassifierClient client = new ClassifierClient(
+                            DLClassifierPreferences.getServerHost(),
+                            DLClassifierPreferences.getServerPort());
+                    String result = client.clearGPUMemory();
+                    Platform.runLater(() -> {
+                        freeGpuOption.setDisable(false);
+                        if (result != null) {
+                            Dialogs.showInfoNotification(EXTENSION_NAME, result);
+                        } else {
+                            Dialogs.showErrorNotification(EXTENSION_NAME,
+                                    "Failed to clear GPU memory. Is the server running?");
+                        }
+                    });
+                } catch (Exception ex) {
+                    logger.error("GPU memory clear failed", ex);
+                    Platform.runLater(() -> {
+                        freeGpuOption.setDisable(false);
+                        Dialogs.showErrorNotification(EXTENSION_NAME,
+                                "Error clearing GPU memory: " + ex.getMessage());
+                    });
+                }
+            }, "DLClassifier-FreeGPU");
+            clearThread.setDaemon(true);
+            clearThread.start();
+        });
+
+        utilitiesMenu.getItems().addAll(serverOption, freeGpuOption);
 
         // === BUILD FINAL MENU ===
         extensionMenu.getItems().addAll(

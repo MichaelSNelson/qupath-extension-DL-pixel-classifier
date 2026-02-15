@@ -130,6 +130,60 @@ public class ClassifierClient {
         return "Unknown";
     }
 
+    /**
+     * Forces the server to clear all GPU memory.
+     * <p>
+     * This cancels any running training jobs, clears the inference model cache,
+     * runs garbage collection, and clears the GPU memory cache. Useful after a
+     * crash or when GPU memory needs to be reclaimed.
+     *
+     * @return a summary string describing what was freed, or null on failure
+     */
+    public String clearGPUMemory() {
+        try {
+            Request request = new Request.Builder()
+                    .url(baseUrl + "/gpu/clear")
+                    .post(RequestBody.create("", JSON))
+                    .build();
+
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (response.isSuccessful() && response.body() != null) {
+                    JsonObject json = JsonParser.parseString(response.body().string()).getAsJsonObject();
+
+                    StringBuilder summary = new StringBuilder("GPU memory cleared.");
+
+                    // Report cancelled jobs
+                    if (json.has("cancelled_jobs") && json.getAsJsonArray("cancelled_jobs").size() > 0) {
+                        int count = json.getAsJsonArray("cancelled_jobs").size();
+                        summary.append(String.format(" Cancelled %d training job(s).", count));
+                    }
+
+                    // Report freed memory
+                    if (json.has("freed_mb")) {
+                        double freedMb = json.get("freed_mb").getAsDouble();
+                        summary.append(String.format(" Freed %.1f MB.", freedMb));
+                    }
+
+                    // Report current memory state
+                    if (json.has("memory_after")) {
+                        JsonObject memAfter = json.getAsJsonObject("memory_after");
+                        if (memAfter.has("allocated_mb") && memAfter.has("total_mb")) {
+                            double allocated = memAfter.get("allocated_mb").getAsDouble();
+                            double total = memAfter.get("total_mb").getAsDouble();
+                            summary.append(String.format(" Now using %.0f / %.0f MB.", allocated, total));
+                        }
+                    }
+
+                    logger.info("GPU memory cleared: {}", summary);
+                    return summary.toString();
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Failed to clear GPU memory: {}", e.getMessage());
+        }
+        return null;
+    }
+
     // ==================== Training ====================
 
     /**
