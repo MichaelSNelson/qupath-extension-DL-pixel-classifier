@@ -497,13 +497,20 @@ public class TrainingDialog {
             String encoder = backboneCombo.getValue();
 
             if (architecture != null && encoder != null && channelPanel != null) {
-                int numChannels = channelPanel.getChannelConfiguration().getNumChannels();
-                int numClasses = (int) classListView.getItems().stream()
-                        .filter(item -> item.selected().get())
-                        .count();
-                if (numClasses < 2) numClasses = 2;
+                // Guard: channel panel may not have channels selected yet during init
+                if (!channelPanel.isValid()) return;
 
-                layerFreezePanel.loadLayers(architecture, encoder, numChannels, numClasses);
+                try {
+                    int numChannels = channelPanel.getChannelConfiguration().getNumChannels();
+                    int numClasses = (int) classListView.getItems().stream()
+                            .filter(item -> item.selected().get())
+                            .count();
+                    if (numClasses < 2) numClasses = 2;
+
+                    layerFreezePanel.loadLayers(architecture, encoder, numChannels, numClasses);
+                } catch (Exception e) {
+                    logger.debug("Could not update layer freeze panel: {}", e.getMessage());
+                }
             }
         }
 
