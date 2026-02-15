@@ -150,23 +150,23 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         );
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
 
-        // 3) Toggle DL Overlay - show/hide without destroying (independent of C key)
-        CheckMenuItem toggleOverlayOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
-        setMenuItemTooltip(toggleOverlayOption,
-                "Show or hide the DL classification overlay. " +
-                        "Independent of QuPath's built-in pixel classification toggle (C key). " +
-                        "Hiding stops server requests but preserves cached tiles.");
+        // 3) Live DL Prediction - toggle live tile classification on/off
+        CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
+        setMenuItemTooltip(livePredictionOption,
+                "Toggle live DL classification. When off, cached tiles remain " +
+                        "visible but no new server requests are made. " +
+                        "Works like QuPath's own 'Live prediction' toggle.");
         OverlayService overlayService = OverlayService.getInstance();
         // Sync CheckMenuItem state from the property (for programmatic changes)
-        overlayService.overlayVisibleProperty().addListener((obs, wasVisible, isVisible) ->
-                toggleOverlayOption.setSelected(isVisible));
-        // Trigger show/hide when user clicks the CheckMenuItem
-        toggleOverlayOption.setOnAction(e ->
-                overlayService.setOverlayVisible(toggleOverlayOption.isSelected()));
-        toggleOverlayOption.disableProperty().bind(
+        overlayService.livePredictionProperty().addListener((obs, wasLive, isLive) ->
+                livePredictionOption.setSelected(isLive));
+        // Trigger live prediction toggle when user clicks the CheckMenuItem
+        livePredictionOption.setOnAction(e ->
+                overlayService.setLivePrediction(livePredictionOption.isSelected()));
+        livePredictionOption.disableProperty().bind(
                 Bindings.createBooleanBinding(
                         () -> !overlayService.hasOverlay(),
-                        overlayService.overlayVisibleProperty()
+                        overlayService.livePredictionProperty()
                 )
         );
 
@@ -203,7 +203,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 trainOption,
                 inferenceOption,
                 new SeparatorMenuItem(),
-                toggleOverlayOption,
+                livePredictionOption,
                 removeOverlayOption,
                 new SeparatorMenuItem(),
                 modelsOption,
