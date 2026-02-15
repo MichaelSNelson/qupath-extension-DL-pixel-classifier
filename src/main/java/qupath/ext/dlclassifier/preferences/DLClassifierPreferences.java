@@ -107,8 +107,8 @@ public final class DLClassifierPreferences {
     private static final DoubleProperty smoothing = PathPrefs.createPersistentPreference(
             "dlclassifier.smoothing", 1.0);
 
-    private static final BooleanProperty applyToSelected = PathPrefs.createPersistentPreference(
-            "dlclassifier.applyToSelected", true);
+    private static final StringProperty applicationScope = PathPrefs.createPersistentPreference(
+            "dlclassifier.applicationScope", "ALL_ANNOTATIONS");
 
     private static final BooleanProperty createBackup = PathPrefs.createPersistentPreference(
             "dlclassifier.createBackup", false);
@@ -457,16 +457,16 @@ public final class DLClassifierPreferences {
         return smoothing;
     }
 
-    public static boolean isApplyToSelected() {
-        return applyToSelected.get();
+    public static String getApplicationScope() {
+        return applicationScope.get();
     }
 
-    public static void setApplyToSelected(boolean selected) {
-        applyToSelected.set(selected);
+    public static void setApplicationScope(String scope) {
+        applicationScope.set(scope);
     }
 
-    public static BooleanProperty applyToSelectedProperty() {
-        return applyToSelected;
+    public static StringProperty applicationScopeProperty() {
+        return applicationScope;
     }
 
     public static boolean isCreateBackup() {

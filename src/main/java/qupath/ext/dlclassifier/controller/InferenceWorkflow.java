@@ -11,6 +11,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.DLPixelClassifier;
+import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
@@ -24,6 +25,9 @@ import qupath.lib.scripting.QP;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjects;
+import qupath.lib.regions.ImagePlane;
+import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
 
 import java.awt.image.BufferedImage;
@@ -295,29 +299,45 @@ public class InferenceWorkflow {
                         logger.info("Inference dialog completed. Classifier: {}",
                                 result.classifier().getName());
 
-                        // Get target objects
+                        // Get target objects based on application scope
                         ImageData<BufferedImage> imageData = qupath.getImageData();
                         List<PathObject> targetObjects;
 
-                        if (result.applyToSelected()) {
-                            Collection<PathObject> selected = imageData.getHierarchy().getSelectionModel()
-                                    .getSelectedObjects();
-                            targetObjects = selected.stream()
-                                    .filter(o -> o.isAnnotation() || o.isTMACore())
-                                    .toList();
+                        switch (result.applicationScope()) {
+                            case WHOLE_IMAGE:
+                                // Create a temporary annotation covering the entire image
+                                ImageServer<BufferedImage> server = imageData.getServer();
+                                ROI fullImageROI = ROIs.createRectangleROI(
+                                        0, 0, server.getWidth(), server.getHeight(),
+                                        ImagePlane.getDefaultPlane());
+                                PathObject fullImageAnnotation = PathObjects.createAnnotationObject(fullImageROI);
+                                fullImageAnnotation.setName("Full Image");
+                                targetObjects = List.of(fullImageAnnotation);
+                                break;
 
-                            if (targetObjects.isEmpty()) {
-                                showError("No Selection",
-                                        "No annotations selected. Please select annotations to classify.");
-                                return;
-                            }
-                        } else {
-                            targetObjects = new ArrayList<>(imageData.getHierarchy().getAnnotationObjects());
-                            if (targetObjects.isEmpty()) {
-                                showError("No Annotations",
-                                        "No annotations found. Please create annotations to classify.");
-                                return;
-                            }
+                            case SELECTED_ANNOTATIONS:
+                                Collection<PathObject> selected = imageData.getHierarchy().getSelectionModel()
+                                        .getSelectedObjects();
+                                targetObjects = selected.stream()
+                                        .filter(o -> o.isAnnotation() || o.isTMACore())
+                                        .toList();
+
+                                if (targetObjects.isEmpty()) {
+                                    showError("No Selection",
+                                            "No annotations selected. Please select annotations to classify.");
+                                    return;
+                                }
+                                break;
+
+                            case ALL_ANNOTATIONS:
+                            default:
+                                targetObjects = new ArrayList<>(imageData.getHierarchy().getAnnotationObjects());
+                                if (targetObjects.isEmpty()) {
+                                    showError("No Annotations",
+                                            "No annotations found. Please create annotations to classify.");
+                                    return;
+                                }
+                                break;
                         }
 
                         // Run inference with progress
@@ -501,6 +521,13 @@ public class InferenceWorkflow {
                                  ImageServer<BufferedImage> server,
                                  ImageData<BufferedImage> imageData,
                                  ProgressMonitorController progress) throws IOException {
+        // Resolve classifier ID to filesystem path for the Python server
+        ModelManager modelManager = new ModelManager();
+        String modelDirPath = modelManager.getModelPath(metadata.getId())
+                .map(p -> p.getParent().toString())
+                .orElse(metadata.getId());
+        logger.info("Resolved model path: {}", modelDirPath);
+
         // Generate tiles
         List<TileProcessor.TileSpec> tileSpecs = tileProcessor.generateTiles(region, server);
         logger.info("Generated {} tiles for region", tileSpecs.size());
@@ -562,7 +589,7 @@ public class InferenceWorkflow {
                 if (usePixelInference) {
                     // Pixel-level inference: get full probability maps for each tile
                     ClassifierClient.PixelInferenceResult pixelResult = client.runPixelInference(
-                            metadata.getId(),
+                            modelDirPath,
                             tileDataList,
                             channelConfig,
                             inferenceConfig,
@@ -587,7 +614,7 @@ public class InferenceWorkflow {
                 } else {
                     // Aggregated tile-level inference for MEASUREMENTS output
                     ClassifierClient.InferenceResult result = client.runInference(
-                            metadata.getId(),
+                            modelDirPath,
                             tileDataList,
                             channelConfig,
                             inferenceConfig

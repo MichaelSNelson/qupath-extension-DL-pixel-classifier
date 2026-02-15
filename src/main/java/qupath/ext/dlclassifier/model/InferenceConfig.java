@@ -11,6 +11,18 @@ import java.util.Objects;
 public class InferenceConfig {
 
     /**
+     * Application scope for inference.
+     */
+    public enum ApplicationScope {
+        /** Apply only to selected annotations */
+        SELECTED_ANNOTATIONS,
+        /** Apply to all annotations in the image */
+        ALL_ANNOTATIONS,
+        /** Apply to the entire image (no annotation required) */
+        WHOLE_IMAGE
+    }
+
+    /**
      * Output types for classification results.
      */
     public enum OutputType {

@@ -74,20 +74,26 @@ public class ChannelSelectionPanel extends VBox {
                 "Channels that will be used as model input.\n" +
                 "Order matters: must match the order used during training."));
 
-        // Transfer buttons
+        // Transfer buttons - fixed width to prevent text truncation
+        double buttonWidth = 40;
+
         Button addButton = new Button(">");
+        addButton.setMinWidth(buttonWidth);
         addButton.setTooltip(new Tooltip("Add selected channels"));
         addButton.setOnAction(e -> addSelectedChannels());
 
         Button removeButton = new Button("<");
+        removeButton.setMinWidth(buttonWidth);
         removeButton.setTooltip(new Tooltip("Remove selected channels"));
         removeButton.setOnAction(e -> removeSelectedChannels());
 
         Button addAllButton = new Button(">>");
+        addAllButton.setMinWidth(buttonWidth);
         addAllButton.setTooltip(new Tooltip("Add all channels"));
         addAllButton.setOnAction(e -> addAllChannels());
 
         Button removeAllButton = new Button("<<");
+        removeAllButton.setMinWidth(buttonWidth);
         removeAllButton.setTooltip(new Tooltip("Remove all channels"));
         removeAllButton.setOnAction(e -> removeAllChannels());
 
@@ -228,6 +234,23 @@ public class ChannelSelectionPanel extends VBox {
 
         setRequiredChannelCount(channelNames.size());
         updateValidity();
+    }
+
+    /**
+     * Auto-selects all available channels. Useful for brightfield images
+     * where channel selection is not meaningful.
+     */
+    public void selectAllChannels() {
+        addAllChannels();
+    }
+
+    /**
+     * Gets the number of available channels.
+     *
+     * @return number of channels in the available list
+     */
+    public int getAvailableChannelCount() {
+        return availableList.getItems().size();
     }
 
     /**

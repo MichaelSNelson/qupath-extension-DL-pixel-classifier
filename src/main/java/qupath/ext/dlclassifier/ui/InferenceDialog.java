@@ -55,7 +55,7 @@ public class InferenceDialog {
             ClassifierMetadata classifier,
             InferenceConfig inferenceConfig,
             ChannelConfiguration channelConfig,
-            boolean applyToSelected,
+            InferenceConfig.ApplicationScope applicationScope,
             boolean createBackup
     ) {}
 
@@ -78,7 +78,7 @@ public class InferenceDialog {
                 if (result.isPresent()) {
                     future.complete(result.get());
                 } else {
-                    future.cancel(true);
+                    future.complete(null);
                 }
             } catch (Exception e) {
                 logger.error("Error showing inference dialog", e);
@@ -119,9 +119,13 @@ public class InferenceDialog {
         private ComboBox<InferenceConfig.BlendMode> blendModeCombo;
         private CheckBox useGPUCheck;
 
+        // Channel section (for brightfield auto-configuration)
+        private TitledPane channelSectionPane;
+
         // Scope options
         private RadioButton applyToSelectedRadio;
         private RadioButton applyToAllRadio;
+        private RadioButton applyToWholeImageRadio;
         private CheckBox createBackupCheck;
 
         private Button okButton;
@@ -360,11 +364,11 @@ public class InferenceDialog {
             channelPanel = new ChannelSelectionPanel();
             channelPanel.validProperty().addListener((obs, old, valid) -> updateValidation());
 
-            TitledPane pane = new TitledPane("CHANNEL MAPPING", channelPanel);
-            pane.setExpanded(true);
-            pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(new Tooltip("Map image channels to classifier input channels"));
-            return pane;
+            channelSectionPane = new TitledPane("CHANNEL MAPPING", channelPanel);
+            channelSectionPane.setExpanded(true);
+            channelSectionPane.setStyle("-fx-font-weight: bold;");
+            channelSectionPane.setTooltip(new Tooltip("Map image channels to classifier input channels"));
+            return channelSectionPane;
         }
 
         private TitledPane createProcessingSection() {
@@ -486,19 +490,35 @@ public class InferenceDialog {
             // Application scope
             ToggleGroup scopeGroup = new ToggleGroup();
 
-            applyToSelectedRadio = new RadioButton("Apply to selected annotations only");
-            applyToSelectedRadio.setToggleGroup(scopeGroup);
-            applyToSelectedRadio.setSelected(DLClassifierPreferences.isApplyToSelected());
-            applyToSelectedRadio.setTooltip(new Tooltip(
-                    "Only classify within the currently selected annotations.\n" +
-                    "Useful for testing on a small region before full-image inference."));
+            // Restore saved scope from preferences
+            InferenceConfig.ApplicationScope savedScope;
+            try {
+                savedScope = InferenceConfig.ApplicationScope.valueOf(
+                        DLClassifierPreferences.getApplicationScope());
+            } catch (IllegalArgumentException e) {
+                savedScope = InferenceConfig.ApplicationScope.ALL_ANNOTATIONS;
+            }
+
+            applyToWholeImageRadio = new RadioButton("Apply to whole image");
+            applyToWholeImageRadio.setToggleGroup(scopeGroup);
+            applyToWholeImageRadio.setSelected(savedScope == InferenceConfig.ApplicationScope.WHOLE_IMAGE);
+            applyToWholeImageRadio.setTooltip(new Tooltip(
+                    "Classify the entire image without requiring annotations.\n" +
+                    "Recommended for overlay output or full-image classification."));
 
             applyToAllRadio = new RadioButton("Apply to all annotations");
             applyToAllRadio.setToggleGroup(scopeGroup);
-            applyToAllRadio.setSelected(!DLClassifierPreferences.isApplyToSelected());
+            applyToAllRadio.setSelected(savedScope == InferenceConfig.ApplicationScope.ALL_ANNOTATIONS);
             applyToAllRadio.setTooltip(new Tooltip(
                     "Classify within all annotations in the image.\n" +
                     "Processes every annotation regardless of selection state."));
+
+            applyToSelectedRadio = new RadioButton("Apply to selected annotations only");
+            applyToSelectedRadio.setToggleGroup(scopeGroup);
+            applyToSelectedRadio.setSelected(savedScope == InferenceConfig.ApplicationScope.SELECTED_ANNOTATIONS);
+            applyToSelectedRadio.setTooltip(new Tooltip(
+                    "Only classify within the currently selected annotations.\n" +
+                    "Useful for testing on a small region before full-image inference."));
 
             // Backup option - restore from preferences
             createBackupCheck = new CheckBox("Create backup of annotation measurements before applying");
@@ -510,8 +530,9 @@ public class InferenceDialog {
 
             content.getChildren().addAll(
                     new Label("Application scope:"),
-                    applyToSelectedRadio,
+                    applyToWholeImageRadio,
                     applyToAllRadio,
+                    applyToSelectedRadio,
                     new Separator(),
                     createBackupCheck
             );
@@ -519,7 +540,7 @@ public class InferenceDialog {
             TitledPane pane = new TitledPane("APPLICATION SCOPE", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(new Tooltip("Control which annotations to classify and backup options"));
+            pane.setTooltip(new Tooltip("Control which region to classify and backup options"));
             return pane;
         }
 
@@ -536,7 +557,20 @@ public class InferenceDialog {
             ImageData<BufferedImage> imageData = QP.getCurrentImageData();
             if (imageData != null) {
                 channelPanel.setImageData(imageData);
+
+                // Auto-select all channels and collapse section for brightfield images
+                if (isBrightfield(imageData)) {
+                    channelPanel.selectAllChannels();
+                    channelSectionPane.setExpanded(false);
+                }
             }
+        }
+
+        private boolean isBrightfield(ImageData<BufferedImage> imageData) {
+            ImageData.ImageType type = imageData.getImageType();
+            return type == ImageData.ImageType.BRIGHTFIELD_H_E
+                    || type == ImageData.ImageType.BRIGHTFIELD_H_DAB
+                    || type == ImageData.ImageType.BRIGHTFIELD_OTHER;
         }
 
         private void onClassifierSelected(ClassifierMetadata classifier) {
@@ -578,6 +612,12 @@ public class InferenceDialog {
             minObjectSizeSpinner.setDisable(!enableObjectOptions);
             holeFillingSpinner.setDisable(!enableObjectOptions);
             smoothingSpinner.setDisable(!enableObjectOptions);
+
+            // Auto-select "Apply to whole image" when overlay is chosen
+            if (outputType == InferenceConfig.OutputType.OVERLAY
+                    && applyToWholeImageRadio != null) {
+                applyToWholeImageRadio.setSelected(true);
+            }
         }
 
         private void updateValidation() {
@@ -587,11 +627,21 @@ public class InferenceDialog {
         }
 
         private InferenceDialogResult buildResult() {
+            // Determine selected scope
+            InferenceConfig.ApplicationScope scope;
+            if (applyToWholeImageRadio.isSelected()) {
+                scope = InferenceConfig.ApplicationScope.WHOLE_IMAGE;
+            } else if (applyToSelectedRadio.isSelected()) {
+                scope = InferenceConfig.ApplicationScope.SELECTED_ANNOTATIONS;
+            } else {
+                scope = InferenceConfig.ApplicationScope.ALL_ANNOTATIONS;
+            }
+
             // Save dialog settings to preferences for next session
             DLClassifierPreferences.setLastOutputType(outputTypeCombo.getValue().name());
             DLClassifierPreferences.setLastBlendMode(blendModeCombo.getValue().name());
             DLClassifierPreferences.setSmoothing(smoothingSpinner.getValue());
-            DLClassifierPreferences.setApplyToSelected(applyToSelectedRadio.isSelected());
+            DLClassifierPreferences.setApplicationScope(scope.name());
             DLClassifierPreferences.setCreateBackup(createBackupCheck.isSelected());
 
             ClassifierMetadata classifier = classifierTable.getSelectionModel().getSelectedItem();
@@ -619,7 +669,7 @@ public class InferenceDialog {
                     classifier,
                     inferenceConfig,
                     channelConfig,
-                    applyToSelectedRadio.isSelected(),
+                    scope,
                     createBackupCheck.isSelected()
             );
         }
@@ -649,9 +699,17 @@ public class InferenceDialog {
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
 
+            InferenceConfig.ApplicationScope scope;
+            if (applyToWholeImageRadio.isSelected()) {
+                scope = InferenceConfig.ApplicationScope.WHOLE_IMAGE;
+            } else if (applyToSelectedRadio.isSelected()) {
+                scope = InferenceConfig.ApplicationScope.SELECTED_ANNOTATIONS;
+            } else {
+                scope = InferenceConfig.ApplicationScope.ALL_ANNOTATIONS;
+            }
+
             String script = ScriptGenerator.generateInferenceScript(
-                    classifier.getId(), config, channelConfig,
-                    applyToSelectedRadio.isSelected());
+                    classifier.getId(), config, channelConfig, scope);
 
             Clipboard clipboard = Clipboard.getSystemClipboard();
             ClipboardContent content = new ClipboardContent();

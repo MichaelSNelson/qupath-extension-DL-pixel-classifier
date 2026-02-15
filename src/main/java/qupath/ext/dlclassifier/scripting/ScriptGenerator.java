@@ -2,6 +2,7 @@ package qupath.ext.dlclassifier.scripting;
 
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.InferenceConfig.ApplicationScope;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 
 import java.util.List;
@@ -29,13 +30,13 @@ public class ScriptGenerator {
      * @param classifierId  the classifier ID to load
      * @param config        the inference configuration
      * @param channelConfig the channel configuration
-     * @param applyToSelected whether to apply to selected annotations only
+     * @param scope         the application scope
      * @return a runnable Groovy script string
      */
     public static String generateInferenceScript(String classifierId,
                                                   InferenceConfig config,
                                                   ChannelConfiguration channelConfig,
-                                                  boolean applyToSelected) {
+                                                  ApplicationScope scope) {
         StringBuilder sb = new StringBuilder();
 
         appendLine(sb, "/**");
@@ -74,16 +75,27 @@ public class ScriptGenerator {
         appendChannelConfig(sb, channelConfig);
 
         // Get annotations
-        appendLine(sb, "// Get annotations");
-        if (applyToSelected) {
-            appendLine(sb, "def annotations = getSelectedObjects().findAll { it.isAnnotation() }");
-            appendLine(sb, "if (annotations.isEmpty()) {");
-            appendLine(sb, "    annotations = getAnnotationObjects()");
-            appendLine(sb, "}");
-        } else {
-            appendLine(sb, "def annotations = getAnnotationObjects()");
+        appendLine(sb, "// Get target regions");
+        switch (scope) {
+            case WHOLE_IMAGE:
+                appendLine(sb, "import qupath.lib.objects.PathObjects");
+                appendLine(sb, "import qupath.lib.roi.ROIs");
+                appendLine(sb, "def server = getCurrentServer()");
+                appendLine(sb, "def fullROI = ROIs.createRectangleROI(0, 0, server.getWidth(), server.getHeight(), server.getMetadata().getPlanes().get(0))");
+                appendLine(sb, "def annotations = [PathObjects.createAnnotationObject(fullROI)]");
+                break;
+            case SELECTED_ANNOTATIONS:
+                appendLine(sb, "def annotations = getSelectedObjects().findAll { it.isAnnotation() }");
+                appendLine(sb, "if (annotations.isEmpty()) {");
+                appendLine(sb, "    annotations = getAnnotationObjects()");
+                appendLine(sb, "}");
+                break;
+            case ALL_ANNOTATIONS:
+            default:
+                appendLine(sb, "def annotations = getAnnotationObjects()");
+                break;
         }
-        appendLine(sb, "println \"Classifying ${annotations.size()} annotations...\"");
+        appendLine(sb, "println \"Classifying ${annotations.size()} region(s)...\"");
         appendLine(sb, "");
 
         // Run inference

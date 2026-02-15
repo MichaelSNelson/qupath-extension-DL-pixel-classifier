@@ -55,6 +55,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private final IndexColorModel colorModel;
     private final ClassifierClient client;
     private final Path sharedTempDir;
+    private final String modelDirPath;
 
     /**
      * Creates a new DL pixel classifier.
@@ -76,6 +77,13 @@ public class DLPixelClassifier implements PixelClassifier {
         this.client = new ClassifierClient(
                 DLClassifierPreferences.getServerHost(),
                 DLClassifierPreferences.getServerPort());
+
+        // Resolve classifier ID to filesystem path for the Python server
+        ModelManager modelManager = new ModelManager();
+        this.modelDirPath = modelManager.getModelPath(metadata.getId())
+                .map(p -> p.getParent().toString())
+                .orElse(metadata.getId());
+
         try {
             this.sharedTempDir = Files.createTempDirectory("dl-overlay-");
         } catch (IOException e) {
@@ -115,7 +123,7 @@ public class DLPixelClassifier implements PixelClassifier {
 
         // Use pixel inference to get per-pixel probability maps (shared temp dir + cached client)
         ClassifierClient.PixelInferenceResult result = client.runPixelInference(
-                metadata.getId(), tiles, channelConfig, inferenceConfig, sharedTempDir);
+                modelDirPath, tiles, channelConfig, inferenceConfig, sharedTempDir);
 
         if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
             throw new IOException("No inference result returned for tile");
