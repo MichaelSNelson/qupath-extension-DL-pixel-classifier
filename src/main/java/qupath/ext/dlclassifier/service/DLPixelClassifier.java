@@ -18,6 +18,8 @@ import qupath.lib.images.servers.PixelType;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.regions.RegionRequest;
 
+import javafx.application.Platform;
+
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
@@ -31,6 +33,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Implements QuPath's {@link PixelClassifier} interface to integrate with
@@ -56,6 +60,12 @@ public class DLPixelClassifier implements PixelClassifier {
     private final ClassifierClient client;
     private final Path sharedTempDir;
     private final String modelDirPath;
+
+    /** Circuit breaker: stops retrying server requests after persistent failures. */
+    private static final int MAX_CONSECUTIVE_ERRORS = 3;
+    private final AtomicInteger consecutiveErrors = new AtomicInteger(0);
+    private final AtomicBoolean errorNotified = new AtomicBoolean(false);
+    private volatile String lastErrorMessage;
 
     /**
      * Creates a new DL pixel classifier.
@@ -101,6 +111,12 @@ public class DLPixelClassifier implements PixelClassifier {
     @Override
     public BufferedImage applyClassification(ImageData<BufferedImage> imageData,
                                               RegionRequest request) throws IOException {
+        // Circuit breaker: stop retrying after persistent server errors
+        if (consecutiveErrors.get() >= MAX_CONSECUTIVE_ERRORS) {
+            throw new IOException("Classification disabled after " + MAX_CONSECUTIVE_ERRORS +
+                    " consecutive server errors: " + lastErrorMessage);
+        }
+
         ImageServer<BufferedImage> server = imageData.getServer();
 
         // Read the tile from the image server
@@ -121,33 +137,57 @@ public class DLPixelClassifier implements PixelClassifier {
                 new ClassifierClient.TileData(tileId, encoded, request.getX(), request.getY())
         );
 
-        // Use pixel inference to get per-pixel probability maps (shared temp dir + cached client)
-        ClassifierClient.PixelInferenceResult result = client.runPixelInference(
-                modelDirPath, tiles, channelConfig, inferenceConfig, sharedTempDir);
-
-        if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
-            throw new IOException("No inference result returned for tile");
-        }
-
-        String outputPath = result.outputPaths().get(tileId);
-        if (outputPath == null) {
-            throw new IOException("No output path for tile " + tileId);
-        }
-
-        // Read probability map and convert to class index image
-        int tileWidth = tileImage.getWidth();
-        int tileHeight = tileImage.getHeight();
-        float[][][] probMap = ClassifierClient.readProbabilityMap(
-                Path.of(outputPath), result.numClasses(), tileHeight, tileWidth);
-
-        // Clean up this tile's prob map file (shared dir persists)
         try {
-            Files.deleteIfExists(Path.of(outputPath));
-        } catch (IOException e) {
-            logger.debug("Failed to delete tile output: {}", outputPath);
-        }
+            // Use pixel inference to get per-pixel probability maps (shared temp dir + cached client)
+            ClassifierClient.PixelInferenceResult result = client.runPixelInference(
+                    modelDirPath, tiles, channelConfig, inferenceConfig, sharedTempDir);
 
-        return createClassIndexImage(probMap, tileWidth, tileHeight);
+            if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
+                throw new IOException("No inference result returned for tile");
+            }
+
+            String outputPath = result.outputPaths().get(tileId);
+            if (outputPath == null) {
+                throw new IOException("No output path for tile " + tileId);
+            }
+
+            // Read probability map and convert to class index image
+            int tileWidth = tileImage.getWidth();
+            int tileHeight = tileImage.getHeight();
+            float[][][] probMap = ClassifierClient.readProbabilityMap(
+                    Path.of(outputPath), result.numClasses(), tileHeight, tileWidth);
+
+            // Clean up this tile's prob map file (shared dir persists)
+            try {
+                Files.deleteIfExists(Path.of(outputPath));
+            } catch (IOException e) {
+                logger.debug("Failed to delete tile output: {}", outputPath);
+            }
+
+            // Success -- reset error counter
+            consecutiveErrors.set(0);
+            return createClassIndexImage(probMap, tileWidth, tileHeight);
+
+        } catch (IOException e) {
+            int errorCount = consecutiveErrors.incrementAndGet();
+            lastErrorMessage = e.getMessage();
+
+            if (errorCount >= MAX_CONSECUTIVE_ERRORS && errorNotified.compareAndSet(false, true)) {
+                logger.error("Classification overlay disabled after {} consecutive errors: {}",
+                        errorCount, e.getMessage());
+                Platform.runLater(() -> {
+                    var alert = new javafx.scene.control.Alert(
+                            javafx.scene.control.Alert.AlertType.ERROR);
+                    alert.setTitle("Classification Error");
+                    alert.setHeaderText("Classification overlay has been disabled");
+                    alert.setContentText("The server returned repeated errors:\n" +
+                            lastErrorMessage + "\n\n" +
+                            "Remove the overlay and check the server connection.");
+                    alert.show();
+                });
+            }
+            throw e;
+        }
     }
 
     /**

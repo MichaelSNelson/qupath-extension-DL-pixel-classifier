@@ -108,12 +108,7 @@ class InferenceService:
             tile_data = tile["data"]
 
             # Decode tile data
-            if tile_data.startswith("data:") or "/" not in tile_data:
-                # Base64 encoded
-                img_array = self._decode_base64(tile_data)
-            else:
-                # File path
-                img_array = self._load_image(tile_data)
+            img_array = self._load_tile_data(tile_data)
 
             # Normalize
             img_array = self._normalize(img_array, input_config)
@@ -160,10 +155,7 @@ class InferenceService:
             tile_data = tile["data"]
 
             # Load tile image
-            if tile_data.startswith("data:") or "/" not in tile_data:
-                img_array = self._decode_base64(tile_data)
-            else:
-                img_array = self._load_image(tile_data)
+            img_array = self._load_tile_data(tile_data)
 
             # Normalize
             img_array = self._normalize(img_array, input_config)
@@ -373,6 +365,29 @@ class InferenceService:
         """
         e_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
         return e_x / e_x.sum(axis=axis, keepdims=True)
+
+    def _load_tile_data(self, tile_data: str) -> np.ndarray:
+        """Load tile image from base64 string or file path.
+
+        Determines whether the data is base64-encoded or a filesystem path
+        by checking if the string points to an existing file.
+
+        Args:
+            tile_data: Base64-encoded image data or path to an image file
+
+        Returns:
+            Image as numpy array
+        """
+        # Check for data URL prefix first
+        if tile_data.startswith("data:"):
+            return self._decode_base64(tile_data)
+
+        # Check if it's a valid file path
+        if os.path.isfile(tile_data):
+            return self._load_image(tile_data)
+
+        # Otherwise treat as raw base64
+        return self._decode_base64(tile_data)
 
     def _decode_base64(self, data: str) -> np.ndarray:
         """Decode base64 image data.
