@@ -35,6 +35,7 @@ public class ClassifierMetadata {
     private final int inputWidth;
     private final int inputHeight;
     private final int inputChannels;
+    private final double downsample;
 
     // Channel configuration
     private final List<String> expectedChannelNames;
@@ -60,6 +61,7 @@ public class ClassifierMetadata {
         this.inputWidth = builder.inputWidth;
         this.inputHeight = builder.inputHeight;
         this.inputChannels = builder.inputChannels;
+        this.downsample = builder.downsample;
         this.expectedChannelNames = Collections.unmodifiableList(new ArrayList<>(builder.expectedChannelNames));
         this.normalizationStrategy = builder.normalizationStrategy;
         this.bitDepthTrained = builder.bitDepthTrained;
@@ -106,6 +108,17 @@ public class ClassifierMetadata {
 
     public int getInputChannels() {
         return inputChannels;
+    }
+
+    /**
+     * Gets the downsample factor used during training.
+     * <p>
+     * Inference must use the same downsample to match training resolution.
+     *
+     * @return downsample factor (1.0 = full resolution)
+     */
+    public double getDownsample() {
+        return downsample;
     }
 
     public List<String> getExpectedChannelNames() {
@@ -168,6 +181,7 @@ public class ClassifierMetadata {
         architecture.put("input_width", inputWidth);
         architecture.put("input_height", inputHeight);
         architecture.put("input_channels", inputChannels);
+        architecture.put("downsample", downsample);
         map.put("architecture", architecture);
 
         Map<String, Object> channelConfig = new HashMap<>();
@@ -243,6 +257,7 @@ public class ClassifierMetadata {
         private int inputWidth = 512;
         private int inputHeight = 512;
         private int inputChannels = 3;
+        private double downsample = 1.0;
         private List<String> expectedChannelNames = new ArrayList<>();
         private ChannelConfiguration.NormalizationStrategy normalizationStrategy =
                 ChannelConfiguration.NormalizationStrategy.PERCENTILE_99;
@@ -291,6 +306,16 @@ public class ClassifierMetadata {
 
         public Builder inputChannels(int channels) {
             this.inputChannels = channels;
+            return this;
+        }
+
+        /**
+         * Sets the downsample factor used during training.
+         *
+         * @param downsample downsample factor (1.0 = full resolution)
+         */
+        public Builder downsample(double downsample) {
+            this.downsample = downsample;
             return this;
         }
 

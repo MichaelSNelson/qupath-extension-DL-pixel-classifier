@@ -166,10 +166,14 @@ public class ProgressMonitorController {
         // Status section
         VBox statusBox = new VBox(5);
         statusBox.setAlignment(Pos.CENTER_LEFT);
+        Label overallLabel = new Label("Overall:");
+        overallLabel.setMinWidth(Region.USE_PREF_SIZE);
+        Label currentLabel = new Label("Current:");
+        currentLabel.setMinWidth(Region.USE_PREF_SIZE);
         statusBox.getChildren().addAll(
                 statusLabel,
-                new HBox(10, new Label("Overall:"), overallProgressBar),
-                new HBox(10, new Label("Current:"), currentProgressBar),
+                new HBox(10, overallLabel, overallProgressBar),
+                new HBox(10, currentLabel, currentProgressBar),
                 new HBox(20, timeLabel, detailLabel)
         );
 

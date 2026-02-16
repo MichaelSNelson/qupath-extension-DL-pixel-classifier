@@ -256,6 +256,7 @@ public class ClassifierClient {
         Map<String, Object> architecture = new HashMap<>();
         architecture.put("backbone", trainingConfig.getBackbone());
         architecture.put("input_size", List.of(trainingConfig.getTileSize(), trainingConfig.getTileSize()));
+        architecture.put("downsample", trainingConfig.getDownsample());
         architecture.put("use_pretrained", trainingConfig.isUsePretrainedWeights());
         // Pass frozen layer names for transfer learning
         List<String> frozenLayers = trainingConfig.getFrozenLayers();

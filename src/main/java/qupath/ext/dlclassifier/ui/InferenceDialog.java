@@ -591,6 +591,10 @@ public class InferenceDialog {
             info.append("\n");
             info.append("Input: ").append(classifier.getInputChannels()).append(" channels, ");
             info.append(classifier.getInputWidth()).append("x").append(classifier.getInputHeight()).append(" tiles\n");
+            double ds = classifier.getDownsample();
+            if (ds > 1.0) {
+                info.append("Trained at: ").append(String.format("%.0fx downsample", ds)).append("\n");
+            }
             info.append("Classes: ").append(String.join(", ", classifier.getClassNames()));
 
             classifierInfoLabel.setText(info.toString());

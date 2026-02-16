@@ -76,6 +76,7 @@ public class AnnotationExtractor {
     private final int patchSize;
     private final ChannelConfiguration channelConfig;
     private final int lineStrokeWidth;
+    private final double downsample;
 
     /**
      * Creates a new annotation extractor.
@@ -87,7 +88,7 @@ public class AnnotationExtractor {
     public AnnotationExtractor(ImageData<BufferedImage> imageData,
                                int patchSize,
                                ChannelConfiguration channelConfig) {
-        this(imageData, patchSize, channelConfig, DEFAULT_LINE_STROKE_WIDTH);
+        this(imageData, patchSize, channelConfig, DEFAULT_LINE_STROKE_WIDTH, 1.0);
     }
 
     /**
@@ -102,11 +103,29 @@ public class AnnotationExtractor {
                                int patchSize,
                                ChannelConfiguration channelConfig,
                                int lineStrokeWidth) {
+        this(imageData, patchSize, channelConfig, lineStrokeWidth, 1.0);
+    }
+
+    /**
+     * Creates a new annotation extractor with custom line stroke width and downsample.
+     *
+     * @param imageData       the image data
+     * @param patchSize       the patch size to extract (output size in pixels)
+     * @param channelConfig   channel configuration
+     * @param lineStrokeWidth stroke width for rendering line annotations (pixels)
+     * @param downsample      downsample factor (1.0 = full resolution, 4.0 = quarter resolution)
+     */
+    public AnnotationExtractor(ImageData<BufferedImage> imageData,
+                               int patchSize,
+                               ChannelConfiguration channelConfig,
+                               int lineStrokeWidth,
+                               double downsample) {
         this.imageData = imageData;
         this.server = imageData.getServer();
         this.patchSize = patchSize;
         this.channelConfig = channelConfig;
         this.lineStrokeWidth = lineStrokeWidth;
+        this.downsample = downsample;
     }
 
     /**
@@ -200,10 +219,12 @@ public class AnnotationExtractor {
             // Skip patches with no labeled pixels
             if (maskResult.labeledPixelCount == 0) continue;
 
-            // Read image patch
+            // Read image patch (region covers patchSize*downsample in full-res coords,
+            // returned image is patchSize x patchSize pixels)
+            int regionSize = (int) (patchSize * downsample);
             RegionRequest request = RegionRequest.createInstance(
-                    server.getPath(), 1.0,
-                    loc.x, loc.y, patchSize, patchSize,
+                    server.getPath(), downsample,
+                    loc.x, loc.y, regionSize, regionSize,
                     0, 0);
             BufferedImage image = server.readRegion(request);
 
@@ -312,9 +333,10 @@ public class AnnotationExtractor {
             MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
             if (maskResult.labeledPixelCount == 0) continue;
 
+            int regionSize = (int) (patchSize * downsample);
             RegionRequest request = RegionRequest.createInstance(
-                    server.getPath(), 1.0,
-                    loc.x, loc.y, patchSize, patchSize, 0, 0);
+                    server.getPath(), downsample,
+                    loc.x, loc.y, regionSize, regionSize, 0, 0);
             BufferedImage image = server.readRegion(request);
 
             boolean isValidation = random.nextDouble() < validationSplit;
@@ -366,7 +388,7 @@ public class AnnotationExtractor {
             Path outputDir,
             double validationSplit) throws IOException {
         return exportFromProject(entries, patchSize, channelConfig, classNames,
-                outputDir, validationSplit, DEFAULT_LINE_STROKE_WIDTH, Collections.emptyMap());
+                outputDir, validationSplit, DEFAULT_LINE_STROKE_WIDTH, Collections.emptyMap(), 1.0);
     }
 
     /**
@@ -391,14 +413,11 @@ public class AnnotationExtractor {
             double validationSplit,
             int lineStrokeWidth) throws IOException {
         return exportFromProject(entries, patchSize, channelConfig, classNames,
-                outputDir, validationSplit, lineStrokeWidth, Collections.emptyMap());
+                outputDir, validationSplit, lineStrokeWidth, Collections.emptyMap(), 1.0);
     }
 
     /**
      * Exports training data from multiple project images into a single training directory.
-     * <p>
-     * Each image's annotations are exported with sequential patch numbering across all images.
-     * A combined config.json with aggregated class statistics is written at the end.
      *
      * @param entries                project image entries to export from
      * @param patchSize              the patch size to extract
@@ -420,6 +439,38 @@ public class AnnotationExtractor {
             double validationSplit,
             int lineStrokeWidth,
             Map<String, Double> classWeightMultipliers) throws IOException {
+        return exportFromProject(entries, patchSize, channelConfig, classNames,
+                outputDir, validationSplit, lineStrokeWidth, classWeightMultipliers, 1.0);
+    }
+
+    /**
+     * Exports training data from multiple project images into a single training directory.
+     * <p>
+     * Each image's annotations are exported with sequential patch numbering across all images.
+     * A combined config.json with aggregated class statistics is written at the end.
+     *
+     * @param entries                project image entries to export from
+     * @param patchSize              the patch size to extract
+     * @param channelConfig          channel configuration
+     * @param classNames             list of class names to export
+     * @param outputDir              output directory for combined training data
+     * @param validationSplit        fraction of data for validation (0.0-1.0)
+     * @param lineStrokeWidth        stroke width for rendering line annotations (pixels)
+     * @param classWeightMultipliers user multipliers on auto-computed weights (empty = no modification)
+     * @param downsample             downsample factor (1.0 = full resolution)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth,
+            Map<String, Double> classWeightMultipliers,
+            double downsample) throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
 
@@ -446,7 +497,7 @@ public class AnnotationExtractor {
             logger.info("Processing image: {}", entry.getImageName());
             try {
                 ImageData<BufferedImage> imageData = entry.readImageData();
-                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth);
+                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample);
 
                 ExportResult result = extractor.exportTrainingDataWithOffset(
                         outputDir, classNames, validationSplit, totalPatchIndex);
@@ -488,7 +539,7 @@ public class AnnotationExtractor {
         // Save combined config.json
         saveProjectConfig(outputDir, classNames, totalClassPixelCounts, totalLabeledPixels,
                 channelConfig, patchSize, totalTrainCount, totalValCount,
-                totalAnnotationCount, sourceImages, classWeightMultipliers);
+                totalAnnotationCount, sourceImages, classWeightMultipliers, downsample);
 
         logger.info("Multi-image export complete: {} patches ({} train, {} val) from {} images",
                 totalPatchIndex, totalTrainCount, totalValCount, entries.size());
@@ -505,7 +556,8 @@ public class AnnotationExtractor {
                                            ChannelConfiguration channelConfig, int patchSize,
                                            int trainCount, int valCount,
                                            int annotationCount, List<String> sourceImages,
-                                           Map<String, Double> classWeightMultipliers)
+                                           Map<String, Double> classWeightMultipliers,
+                                           double downsample)
             throws IOException {
         Path configPath = outputDir.resolve("config.json");
         List<String> channelNames = channelConfig.getChannelNames();
@@ -514,6 +566,7 @@ public class AnnotationExtractor {
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"patch_size\": ").append(patchSize).append(",\n");
+        json.append("  \"downsample\": ").append(downsample).append(",\n");
         json.append("  \"unlabeled_index\": ").append(UNLABELED_INDEX).append(",\n");
         json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");
         json.append("  \"classes\": [\n");
@@ -598,7 +651,9 @@ public class AnnotationExtractor {
         Set<String> locationKeys = new HashSet<>();
         List<PatchLocation> locations = new ArrayList<>();
 
-        int step = patchSize / 2; // 50% overlap between patches
+        // Coverage per patch in full-res coordinates
+        int coverage = (int) (patchSize * downsample);
+        int step = coverage / 2; // 50% overlap between patches
 
         for (AnnotationInfo ann : annotations) {
             ROI roi = ann.roi;
@@ -612,16 +667,17 @@ public class AnnotationExtractor {
                 List<double[]> points = samplePointsAlongROI(roi);
                 for (double[] pt : points) {
                     // Center patch on the sampled point
-                    int px = (int) pt[0] - patchSize / 2;
-                    int py = (int) pt[1] - patchSize / 2;
+                    int px = (int) pt[0] - coverage / 2;
+                    int py = (int) pt[1] - coverage / 2;
 
                     // Clip to image bounds
-                    px = Math.max(0, Math.min(px, server.getWidth() - patchSize));
-                    py = Math.max(0, Math.min(py, server.getHeight() - patchSize));
+                    px = Math.max(0, Math.min(px, server.getWidth() - coverage));
+                    py = Math.max(0, Math.min(py, server.getHeight() - coverage));
 
                     // Snap to grid to avoid too many overlapping patches
-                    px = (px / (step / 2)) * (step / 2);
-                    py = (py / (step / 2)) * (step / 2);
+                    int snapStep = Math.max(1, step / 2);
+                    px = (px / snapStep) * snapStep;
+                    py = (py / snapStep) * snapStep;
 
                     String key = px + "," + py;
                     if (!locationKeys.contains(key)) {
@@ -631,10 +687,10 @@ public class AnnotationExtractor {
                 }
             } else {
                 // For area annotations, tile the bounding box
-                for (int py = y0 - patchSize / 4; py < y0 + h; py += step) {
-                    for (int px = x0 - patchSize / 4; px < x0 + w; px += step) {
-                        int clippedX = Math.max(0, Math.min(px, server.getWidth() - patchSize));
-                        int clippedY = Math.max(0, Math.min(py, server.getHeight() - patchSize));
+                for (int py = y0 - coverage / 4; py < y0 + h; py += step) {
+                    for (int px = x0 - coverage / 4; px < x0 + w; px += step) {
+                        int clippedX = Math.max(0, Math.min(px, server.getWidth() - coverage));
+                        int clippedY = Math.max(0, Math.min(py, server.getHeight() - coverage));
 
                         String key = clippedX + "," + clippedY;
                         if (!locationKeys.contains(key)) {
@@ -668,8 +724,8 @@ public class AnnotationExtractor {
             return points;
         }
 
-        // Sample at intervals along the ROI path
-        double sampleInterval = patchSize / 4.0; // Sample every quarter-patch
+        // Sample at intervals along the ROI path (in full-res coords)
+        double sampleInterval = patchSize * downsample / 4.0; // Sample every quarter-patch
 
         for (int i = 0; i < roiPoints.size() - 1; i++) {
             double x1 = roiPoints.get(i).getX();
@@ -706,6 +762,7 @@ public class AnnotationExtractor {
     private MaskResult createCombinedMask(int offsetX, int offsetY,
                                           List<AnnotationInfo> annotations,
                                           int numClasses) {
+        // The mask is always patchSize x patchSize (output resolution)
         BufferedImage mask = new BufferedImage(patchSize, patchSize, BufferedImage.TYPE_BYTE_GRAY);
         Graphics2D g2d = mask.createGraphics();
 
@@ -720,17 +777,20 @@ public class AnnotationExtractor {
         // Translate to patch coordinates
         AffineTransform originalTransform = g2d.getTransform();
 
-        // Render all annotations that overlap this patch
-        Rectangle patchBounds = new Rectangle(offsetX, offsetY, patchSize, patchSize);
+        // Patch bounds in full-res coordinates
+        int coverage = (int) (patchSize * downsample);
+        Rectangle patchBounds = new Rectangle(offsetX, offsetY, coverage, coverage);
 
         for (AnnotationInfo ann : annotations) {
             ROI roi = ann.roi;
 
             // Quick check: does this annotation's bounding box overlap the patch?
+            // Use scaled stroke width for bounding box expansion
+            int expandedStroke = (int) Math.ceil(lineStrokeWidth * downsample);
             Rectangle annBounds = new Rectangle(
                     (int) roi.getBoundsX(), (int) roi.getBoundsY(),
-                    (int) roi.getBoundsWidth() + lineStrokeWidth,
-                    (int) roi.getBoundsHeight() + lineStrokeWidth
+                    (int) roi.getBoundsWidth() + expandedStroke,
+                    (int) roi.getBoundsHeight() + expandedStroke
             );
 
             if (!patchBounds.intersects(annBounds)) continue;
@@ -739,16 +799,20 @@ public class AnnotationExtractor {
             int classIdx = ann.classIndex;
             g2d.setColor(new Color(classIdx, classIdx, classIdx));
 
-            // Translate to patch-local coordinates
+            // Transform from full-res coords to mask pixel coords:
+            // 1. Translate to patch origin in full-res space
+            // 2. Scale down by downsample factor to get mask pixels
             g2d.setTransform(originalTransform);
+            g2d.scale(1.0 / downsample, 1.0 / downsample);
             g2d.translate(-offsetX, -offsetY);
 
             Shape shape = roi.getShape();
 
             if (ann.isSparse || roi.isLine()) {
                 // For sparse/line annotations: DRAW with stroke width
+                // Scale stroke to maintain consistent visual width in mask space
                 g2d.setStroke(new BasicStroke(
-                        lineStrokeWidth,
+                        (float) (lineStrokeWidth * downsample),
                         BasicStroke.CAP_ROUND,
                         BasicStroke.JOIN_ROUND
                 ));
@@ -824,6 +888,7 @@ public class AnnotationExtractor {
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"patch_size\": ").append(patchSize).append(",\n");
+        json.append("  \"downsample\": ").append(downsample).append(",\n");
         json.append("  \"unlabeled_index\": ").append(UNLABELED_INDEX).append(",\n");
         json.append("  \"line_stroke_width\": ").append(lineStrokeWidth).append(",\n");
         json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");

@@ -55,6 +55,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private final ClassifierMetadata metadata;
     private final ChannelConfiguration channelConfig;
     private final InferenceConfig inferenceConfig;
+    private final double downsample;
     private final PixelClassifierMetadata pixelMetadata;
     private final IndexColorModel colorModel;
     private final ClassifierClient client;
@@ -82,6 +83,7 @@ public class DLPixelClassifier implements PixelClassifier {
         this.metadata = metadata;
         this.channelConfig = channelConfig;
         this.inferenceConfig = inferenceConfig;
+        this.downsample = metadata.getDownsample();
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
         this.client = new ClassifierClient(
@@ -247,6 +249,11 @@ public class DLPixelClassifier implements PixelClassifier {
      */
     private PixelClassifierMetadata buildPixelMetadata(ImageData<BufferedImage> imageData) {
         PixelCalibration cal = imageData.getServer().getPixelCalibration();
+
+        // Scale calibration by downsample factor so QuPath requests tiles at the correct resolution
+        if (downsample > 1.0) {
+            cal = cal.createScaledInstance(downsample, downsample);
+        }
 
         // Build classification labels map
         Map<Integer, PathClass> labels = new LinkedHashMap<>();

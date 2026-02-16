@@ -135,6 +135,7 @@ public class TrainingDialog {
         // Tiling parameters
         private Spinner<Integer> tileSizeSpinner;
         private Spinner<Integer> overlapSpinner;
+        private ComboBox<String> downsampleCombo;
         private Spinner<Integer> lineStrokeWidthSpinner;
 
         // Channel selection
@@ -637,6 +638,24 @@ public class TrainingDialog {
             grid.add(tileSizeSpinner, 1, row);
             row++;
 
+            // Downsample
+            downsampleCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "1x (Full resolution)",
+                    "2x (Half resolution)",
+                    "4x (Quarter resolution)",
+                    "8x (1/8 resolution)"
+            ));
+            downsampleCombo.setValue("1x (Full resolution)");
+            downsampleCombo.setTooltip(new Tooltip(
+                    "Controls image resolution for training.\n" +
+                    "Higher downsample = more spatial context per tile but less detail.\n" +
+                    "At 4x, each 512px tile covers 2048px of tissue.\n" +
+                    "Recommended: 2-4x for tissue-level classification, 1x for cell-level."));
+
+            grid.add(new Label("Resolution:"), 0, row);
+            grid.add(downsampleCombo, 1, row);
+            row++;
+
             // Overlap
             overlapSpinner = new Spinner<>(0, 50, DLClassifierPreferences.getTileOverlap(), 5);
             overlapSpinner.setEditable(true);
@@ -986,6 +1005,7 @@ public class TrainingDialog {
                     .validationSplit(validationSplitSpinner.getValue() / 100.0)
                     .tileSize(tileSizeSpinner.getValue())
                     .overlap(overlapSpinner.getValue())
+                    .downsample(parseDownsample(downsampleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
@@ -1032,6 +1052,17 @@ public class TrainingDialog {
             return config;
         }
 
+        /**
+         * Parses downsample value from ComboBox display string.
+         */
+        private static double parseDownsample(String displayValue) {
+            if (displayValue == null) return 1.0;
+            if (displayValue.startsWith("8x")) return 8.0;
+            if (displayValue.startsWith("4x")) return 4.0;
+            if (displayValue.startsWith("2x")) return 2.0;
+            return 1.0;
+        }
+
         private void copyTrainingScript(Button sourceButton) {
             String name = classifierNameField.getText().trim();
             if (name.isEmpty()) {
@@ -1054,6 +1085,7 @@ public class TrainingDialog {
                     .validationSplit(validationSplitSpinner.getValue() / 100.0)
                     .tileSize(tileSizeSpinner.getValue())
                     .overlap(overlapSpinner.getValue())
+                    .downsample(parseDownsample(downsampleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)

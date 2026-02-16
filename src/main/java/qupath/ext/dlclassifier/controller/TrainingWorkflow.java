@@ -499,7 +499,8 @@ public class TrainingWorkflow {
                         tempDir,
                         trainingConfig.getValidationSplit(),
                         trainingConfig.getLineStrokeWidth(),
-                        weightMultipliers
+                        weightMultipliers,
+                        trainingConfig.getDownsample()
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -508,7 +509,8 @@ public class TrainingWorkflow {
                         imageData,
                         trainingConfig.getTileSize(),
                         channelConfig,
-                        trainingConfig.getLineStrokeWidth()
+                        trainingConfig.getLineStrokeWidth(),
+                        trainingConfig.getDownsample()
                 );
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
@@ -643,6 +645,7 @@ public class TrainingWorkflow {
                     .modelType(trainingConfig.getModelType())
                     .backbone(trainingConfig.getBackbone())
                     .inputChannels(channelConfig.getSelectedChannels().size())
+                    .downsample(trainingConfig.getDownsample())
                     .expectedChannelNames(channelConfig.getChannelNames())
                     .inputSize(trainingConfig.getTileSize(), trainingConfig.getTileSize())
                     .classes(classInfoList)
@@ -754,14 +757,15 @@ public class TrainingWorkflow {
                         tempDir,
                         trainingConfig.getValidationSplit(),
                         trainingConfig.getLineStrokeWidth(),
-                        resumeMultipliers
+                        resumeMultipliers,
+                        trainingConfig.getDownsample()
                 );
                 patchCount = exportResult.totalPatches();
             } else {
                 ImageData<BufferedImage> imageData = qupath.getImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(
                         imageData, trainingConfig.getTileSize(), channelConfig,
-                        trainingConfig.getLineStrokeWidth());
+                        trainingConfig.getLineStrokeWidth(), trainingConfig.getDownsample());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -863,6 +867,7 @@ public class TrainingWorkflow {
                         .modelType(trainingConfig.getModelType())
                         .backbone(trainingConfig.getBackbone())
                         .inputChannels(channelConfig.getSelectedChannels().size())
+                        .downsample(trainingConfig.getDownsample())
                         .expectedChannelNames(channelConfig.getChannelNames())
                         .inputSize(trainingConfig.getTileSize(), trainingConfig.getTileSize())
                         .classes(classInfoList)

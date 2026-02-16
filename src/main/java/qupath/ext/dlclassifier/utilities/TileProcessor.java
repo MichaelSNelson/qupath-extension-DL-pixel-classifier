@@ -35,6 +35,7 @@ public class TileProcessor {
 
     private final int tileSize;
     private final int overlap;
+    private final double downsample;
     private final InferenceConfig.BlendMode blendMode;
     private final int maxTilesInMemory;
 
@@ -44,13 +45,24 @@ public class TileProcessor {
      * @param config inference configuration
      */
     public TileProcessor(InferenceConfig config) {
+        this(config, 1.0);
+    }
+
+    /**
+     * Creates a new tile processor with a specific downsample factor.
+     *
+     * @param config     inference configuration
+     * @param downsample downsample factor (1.0 = full resolution)
+     */
+    public TileProcessor(InferenceConfig config, double downsample) {
         this.tileSize = config.getTileSize();
         this.overlap = config.getOverlap();
+        this.downsample = downsample;
         this.blendMode = config.getBlendMode();
         this.maxTilesInMemory = config.getMaxTilesInMemory();
 
-        logger.info("TileProcessor initialized: size={}, overlap={}, blend={}",
-                tileSize, overlap, blendMode);
+        logger.info("TileProcessor initialized: size={}, overlap={}, downsample={}, blend={}",
+                tileSize, overlap, downsample, blendMode);
     }
 
     /**
@@ -65,6 +77,7 @@ public class TileProcessor {
                          InferenceConfig.BlendMode blendMode, int maxTilesInMemory) {
         this.tileSize = tileSize;
         this.overlap = overlap;
+        this.downsample = 1.0;
         this.blendMode = blendMode;
         this.maxTilesInMemory = maxTilesInMemory;
     }
@@ -114,8 +127,9 @@ public class TileProcessor {
         if (nCols == 0) nCols = 1;
         if (nRows == 0) nRows = 1;
 
-        int serverWidth = server.getWidth();
-        int serverHeight = server.getHeight();
+        // Effective image dimensions in the downsampled coordinate space
+        int serverWidth = (int) (server.getWidth() / downsample);
+        int serverHeight = (int) (server.getHeight() / downsample);
 
         logger.debug("Generating tiles: grid {}x{}, step={}, image={}x{}",
                 nCols, nRows, stepSize, serverWidth, serverHeight);
@@ -227,11 +241,17 @@ public class TileProcessor {
      * @throws IOException if reading fails
      */
     public BufferedImage readTile(TileSpec spec, ImageServer<BufferedImage> server) throws IOException {
+        // Convert tile coordinates (in downsampled space) to full-res region
+        int fullResX = (int) (spec.x() * downsample);
+        int fullResY = (int) (spec.y() * downsample);
+        int fullResW = (int) (spec.width() * downsample);
+        int fullResH = (int) (spec.height() * downsample);
+
         RegionRequest request = RegionRequest.createInstance(
                 server.getPath(),
-                1.0, // Full resolution
-                spec.x(), spec.y(),
-                spec.width(), spec.height()
+                downsample,
+                fullResX, fullResY,
+                fullResW, fullResH
         );
 
         return server.readRegion(request);
@@ -576,6 +596,10 @@ public class TileProcessor {
 
     public int getMaxTilesInMemory() {
         return maxTilesInMemory;
+    }
+
+    public double getDownsample() {
+        return downsample;
     }
 
     /**

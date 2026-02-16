@@ -28,6 +28,7 @@ public class TrainingConfig {
     // Tile parameters
     private final int tileSize;
     private final int overlap;
+    private final double downsample;
 
     // Data configuration
     private final double validationSplit;
@@ -53,6 +54,7 @@ public class TrainingConfig {
         this.weightDecay = builder.weightDecay;
         this.tileSize = builder.tileSize;
         this.overlap = builder.overlap;
+        this.downsample = builder.downsample;
         this.validationSplit = builder.validationSplit;
         this.augmentationConfig = Collections.unmodifiableMap(new LinkedHashMap<>(builder.augmentationConfig));
         this.usePretrainedWeights = builder.usePretrainedWeights;
@@ -94,6 +96,19 @@ public class TrainingConfig {
 
     public int getOverlap() {
         return overlap;
+    }
+
+    /**
+     * Gets the downsample factor for tile extraction.
+     * <p>
+     * At downsample 1.0, tiles are extracted at full resolution.
+     * At downsample 4.0, each tile covers 4x the spatial area,
+     * providing more context for tissue-level classification.
+     *
+     * @return downsample factor (1.0 = full resolution)
+     */
+    public double getDownsample() {
+        return downsample;
     }
 
     public double getValidationSplit() {
@@ -174,6 +189,7 @@ public class TrainingConfig {
                 Double.compare(that.weightDecay, weightDecay) == 0 &&
                 tileSize == that.tileSize &&
                 overlap == that.overlap &&
+                Double.compare(that.downsample, downsample) == 0 &&
                 Double.compare(that.validationSplit, validationSplit) == 0 &&
                 usePretrainedWeights == that.usePretrainedWeights &&
                 freezeEncoderLayers == that.freezeEncoderLayers &&
@@ -188,15 +204,15 @@ public class TrainingConfig {
     @Override
     public int hashCode() {
         return Objects.hash(modelType, backbone, epochs, batchSize, learningRate,
-                weightDecay, tileSize, overlap, validationSplit, augmentationConfig,
+                weightDecay, tileSize, overlap, downsample, validationSplit, augmentationConfig,
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, lineStroke=%d}",
-                modelType, backbone, epochs, learningRate, tileSize, lineStrokeWidth);
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, lineStroke=%d}",
+                modelType, backbone, epochs, learningRate, tileSize, downsample, lineStrokeWidth);
     }
 
     public static Builder builder() {
@@ -215,6 +231,7 @@ public class TrainingConfig {
         private double weightDecay = 1e-4;
         private int tileSize = 512;
         private int overlap = 64;
+        private double downsample = 1.0;
         private double validationSplit = 0.2;
         private Map<String, Boolean> augmentationConfig = new LinkedHashMap<>();
         private boolean usePretrainedWeights = true;
@@ -276,6 +293,19 @@ public class TrainingConfig {
 
         public Builder overlap(int overlap) {
             this.overlap = overlap;
+            return this;
+        }
+
+        /**
+         * Sets the downsample factor for tile extraction.
+         * <p>
+         * Higher downsample = more spatial context per tile but less detail.
+         * Recommended: 2-4x for tissue-level classification, 1x for cell-level.
+         *
+         * @param downsample downsample factor (1.0-32.0)
+         */
+        public Builder downsample(double downsample) {
+            this.downsample = downsample;
             return this;
         }
 
@@ -370,6 +400,9 @@ public class TrainingConfig {
             }
             if (overlap < 0 || overlap >= tileSize / 2) {
                 throw new IllegalStateException("Overlap must be between 0 and half of tile size");
+            }
+            if (downsample < 1.0 || downsample > 32.0) {
+                throw new IllegalStateException("Downsample must be between 1.0 and 32.0");
             }
             if (epochs < 1) {
                 throw new IllegalStateException("Epochs must be at least 1");
