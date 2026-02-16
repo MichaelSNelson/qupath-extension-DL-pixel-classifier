@@ -326,8 +326,14 @@ public class TrainingWorkflow {
                     }
                 })
                 .exceptionally(ex -> {
-                    logger.error("Training dialog failed", ex);
-                    showError("Error", "Failed to show training dialog: " + ex.getMessage());
+                    // User cancelling the dialog produces a CancellationException - not an error
+                    Throwable cause = ex instanceof java.util.concurrent.CompletionException ? ex.getCause() : ex;
+                    if (cause instanceof java.util.concurrent.CancellationException) {
+                        logger.info("Training dialog cancelled by user");
+                    } else {
+                        logger.error("Training dialog failed", ex);
+                        showError("Error", "Failed to show training dialog: " + ex.getMessage());
+                    }
                     return null;
                 });
     }
