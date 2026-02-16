@@ -615,7 +615,8 @@ public class ClassifierClient {
                                                    List<TileData> tiles,
                                                    ChannelConfiguration channelConfig,
                                                    InferenceConfig inferenceConfig,
-                                                   Path outputDir) throws IOException {
+                                                   Path outputDir,
+                                                   int reflectionPadding) throws IOException {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model_path", modelPath);
         requestBody.put("output_dir", outputDir.toString());
@@ -649,6 +650,7 @@ public class ClassifierClient {
         Map<String, Object> options = new HashMap<>();
         options.put("use_gpu", inferenceConfig.isUseGPU());
         options.put("blend_mode", inferenceConfig.getBlendMode().name().toLowerCase());
+        options.put("reflection_padding", reflectionPadding);
         requestBody.put("options", options);
 
         String json = gson.toJson(requestBody);

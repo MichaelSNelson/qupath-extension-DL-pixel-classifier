@@ -33,6 +33,7 @@ class InferenceOptions(BaseModel):
     """Inference options."""
     use_gpu: bool = True
     blend_mode: str = "linear"
+    reflection_padding: int = 0
 
 
 class InferenceRequest(BaseModel):
@@ -122,7 +123,8 @@ async def run_pixel_inference(
             model_path=pixel_request.model_path,
             tiles=[t.model_dump() for t in pixel_request.tiles],
             input_config=pixel_request.input_config.model_dump(),
-            output_dir=pixel_request.output_dir
+            output_dir=pixel_request.output_dir,
+            reflection_padding=pixel_request.options.reflection_padding
         )
 
         # Determine num_classes from model metadata

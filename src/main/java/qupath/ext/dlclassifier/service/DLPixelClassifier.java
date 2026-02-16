@@ -62,11 +62,17 @@ public class DLPixelClassifier implements PixelClassifier {
     private final Path sharedTempDir;
     private final String modelDirPath;
 
+    /** Colors resolved from PathClass cache, keyed by class index. Used by buildColorModel(). */
+    private final Map<Integer, Integer> resolvedClassColors = new LinkedHashMap<>();
+
     /** Circuit breaker: stops retrying server requests after persistent failures. */
     private static final int MAX_CONSECUTIVE_ERRORS = 3;
     private final AtomicInteger consecutiveErrors = new AtomicInteger(0);
     private final AtomicBoolean errorNotified = new AtomicBoolean(false);
     private volatile String lastErrorMessage;
+
+    /** Set to true when the overlay is being removed, to suppress error counting on interrupted threads. */
+    private volatile boolean shuttingDown = false;
 
     /**
      * Creates a new DL pixel classifier.
@@ -113,6 +119,11 @@ public class DLPixelClassifier implements PixelClassifier {
     @Override
     public BufferedImage applyClassification(ImageData<BufferedImage> imageData,
                                               RegionRequest request) throws IOException {
+        // If shutting down (overlay being removed), bail out immediately
+        if (shuttingDown || Thread.currentThread().isInterrupted()) {
+            throw new IOException("Classifier is shutting down");
+        }
+
         // Circuit breaker: stop retrying after persistent server errors
         if (consecutiveErrors.get() >= MAX_CONSECUTIVE_ERRORS) {
             throw new IOException("Classification disabled after " + MAX_CONSECUTIVE_ERRORS +
@@ -142,8 +153,10 @@ public class DLPixelClassifier implements PixelClassifier {
 
         try {
             // Use pixel inference to get per-pixel probability maps (shared temp dir + cached client)
+            int reflectionPadding = DLClassifierPreferences.getOverlayReflectionPadding();
             ClassifierClient.PixelInferenceResult result = client.runPixelInference(
-                    modelDirPath, tiles, channelConfig, inferenceConfig, sharedTempDir);
+                    modelDirPath, tiles, channelConfig, inferenceConfig, sharedTempDir,
+                    reflectionPadding);
 
             if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
                 throw new IOException("No inference result returned for tile");
@@ -172,6 +185,13 @@ public class DLPixelClassifier implements PixelClassifier {
             return createClassIndexImage(probMap, tileWidth, tileHeight);
 
         } catch (IOException e) {
+            // During shutdown, interrupted threads and missing temp files are expected - don't count as errors
+            if (shuttingDown || Thread.currentThread().isInterrupted()
+                    || e instanceof java.io.InterruptedIOException) {
+                logger.debug("Classification interrupted during shutdown");
+                throw new IOException("Classification interrupted during shutdown", e);
+            }
+
             int errorCount = consecutiveErrors.incrementAndGet();
             lastErrorMessage = e.getMessage();
 
@@ -194,10 +214,20 @@ public class DLPixelClassifier implements PixelClassifier {
     }
 
     /**
+     * Signals that this classifier is shutting down. In-flight tile requests
+     * will detect this and exit without counting errors or showing dialogs.
+     * Called by {@link OverlayService} before stopping the overlay.
+     */
+    public void shutdown() {
+        shuttingDown = true;
+    }
+
+    /**
      * Cleans up resources used by this classifier (shared temp directory).
      * Called by {@link OverlayService} when the overlay is removed.
      */
     public void cleanup() {
+        shuttingDown = true;
         try {
             if (sharedTempDir != null && Files.exists(sharedTempDir)) {
                 Files.walk(sharedTempDir)
@@ -263,8 +293,12 @@ public class DLPixelClassifier implements PixelClassifier {
         for (ClassifierMetadata.ClassInfo classInfo : classes) {
             int color = parseClassColor(classInfo.color(), classInfo.index());
             PathClass pathClass = PathClass.fromString(classInfo.name(), color);
+            // Use the actual color from the resolved PathClass (may differ from metadata
+            // if QuPath already has a cached PathClass with a different color)
+            int resolvedColor = pathClass.getColor();
+            resolvedClassColors.put(classInfo.index(), resolvedColor);
             labels.put(classInfo.index(), pathClass);
-            channels.add(ImageChannel.getInstance(classInfo.name(), color));
+            channels.add(ImageChannel.getInstance(classInfo.name(), resolvedColor));
         }
 
         int tileSize = inferenceConfig.getTileSize();
@@ -283,19 +317,19 @@ public class DLPixelClassifier implements PixelClassifier {
 
     /**
      * Builds an IndexColorModel for the class indices, used for TYPE_BYTE_INDEXED images.
+     * Uses colors resolved from PathClass cache (populated by buildPixelMetadata) so that
+     * overlay colors match the annotation class colors the user sees in QuPath.
      */
     private IndexColorModel buildColorModel() {
-        List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
-        int numClasses = Math.max(classes.size(), 2);
         byte[] r = new byte[256];
         byte[] g = new byte[256];
         byte[] b = new byte[256];
         byte[] a = new byte[256];
 
-        for (ClassifierMetadata.ClassInfo classInfo : classes) {
-            int idx = classInfo.index();
+        for (Map.Entry<Integer, Integer> entry : resolvedClassColors.entrySet()) {
+            int idx = entry.getKey();
             if (idx < 0 || idx >= 256) continue;
-            int color = parseClassColor(classInfo.color(), idx);
+            int color = entry.getValue();
             r[idx] = (byte) ColorTools.red(color);
             g[idx] = (byte) ColorTools.green(color);
             b[idx] = (byte) ColorTools.blue(color);

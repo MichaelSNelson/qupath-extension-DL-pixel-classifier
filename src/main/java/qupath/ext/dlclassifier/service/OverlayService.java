@@ -123,9 +123,20 @@ public class OverlayService {
     /**
      * Removes the current DL classification overlay from all viewers
      * and cleans up all resources.
+     * <p>
+     * Shutdown is performed in order to avoid errors from interrupted in-flight requests:
+     * 1. Signal the classifier to reject new tile requests
+     * 2. Stop the overlay (interrupts worker threads)
+     * 3. Remove from viewers
+     * 4. Defer temp directory cleanup to allow in-flight requests to finish
      */
     public void removeOverlay() {
         if (currentOverlay != null) {
+            // Signal classifier first so in-flight threads don't count errors
+            if (currentClassifier != null) {
+                currentClassifier.shutdown();
+            }
+
             currentOverlay.stop();
 
             QuPathGUI qupath = QuPathGUI.getInstance();
@@ -140,10 +151,20 @@ public class OverlayService {
             currentOverlay = null;
             livePrediction.set(false);
 
-            // Clean up classifier resources (shared temp directory)
-            if (currentClassifier != null) {
-                currentClassifier.cleanup();
-                currentClassifier = null;
+            // Defer cleanup so interrupted threads can finish before temp files are deleted
+            DLPixelClassifier classifierToCleanup = currentClassifier;
+            currentClassifier = null;
+            if (classifierToCleanup != null) {
+                Thread cleanupThread = new Thread(() -> {
+                    try {
+                        Thread.sleep(2000);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    classifierToCleanup.cleanup();
+                }, "dl-classifier-cleanup");
+                cleanupThread.setDaemon(true);
+                cleanupThread.start();
             }
 
             logger.info("Removed DL pixel classifier overlay");

@@ -1,8 +1,10 @@
 package qupath.ext.dlclassifier.preferences;
 
 import javafx.beans.property.*;
+import javafx.collections.ObservableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.prefs.PathPrefs;
 
@@ -59,6 +61,10 @@ public final class DLClassifierPreferences {
     // Inference defaults
     private static final BooleanProperty useGPU = PathPrefs.createPersistentPreference(
             "dlclassifier.useGPU", true);
+
+    // Overlay settings
+    private static final IntegerProperty overlayReflectionPadding = PathPrefs.createPersistentPreference(
+            "dlclassifier.overlayReflectionPadding", 32);
 
     private static final DoubleProperty minObjectSizeMicrons = PathPrefs.createPersistentPreference(
             "dlclassifier.minObjectSizeMicrons", 10.0);
@@ -117,16 +123,51 @@ public final class DLClassifierPreferences {
         // Utility class - no instantiation
     }
 
+    private static final String CATEGORY = "DL Pixel Classifier";
+
     /**
-     * Registers preferences with QuPath's preference panel.
+     * Registers key preferences with QuPath's preference panel so they
+     * appear in Edit > Preferences under "DL Pixel Classifier".
      *
      * @param qupath the QuPath GUI instance
      */
     public static void installPreferences(QuPathGUI qupath) {
+        if (qupath == null)
+            return;
+
         logger.info("Installing DL Pixel Classifier preferences");
 
-        // Preferences will be automatically available through QuPath's preference system
-        // Custom preference dialog can be added later if needed
+        ObservableList<org.controlsfx.control.PropertySheet.Item> items =
+                qupath.getPreferencePane()
+                        .getPropertySheet()
+                        .getItems();
+
+        items.add(new PropertyItemBuilder<>(serverHost, String.class)
+                .name("DL Server Host")
+                .category(CATEGORY)
+                .description("Hostname or IP address of the Python DL classification server.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(serverPort, Integer.class)
+                .name("DL Server Port")
+                .category(CATEGORY)
+                .description("Port number of the Python DL classification server.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(overlayReflectionPadding, Integer.class)
+                .name("Overlay Reflection Padding")
+                .category(CATEGORY)
+                .description("Pixels of reflection padding added around each tile before " +
+                        "neural network inference. Reduces tile edge artifacts caused by " +
+                        "zero padding in convolutional layers. Set to 0 to disable. Default: 32.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)
+                .name("Use GPU for Inference")
+                .category(CATEGORY)
+                .description("Use GPU acceleration for inference when available. " +
+                        "Falls back to CPU if no GPU is detected.")
+                .build());
     }
 
     // ==================== Server Settings ====================
@@ -281,6 +322,20 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty useGPUProperty() {
         return useGPU;
+    }
+
+    // ==================== Overlay Settings ====================
+
+    public static int getOverlayReflectionPadding() {
+        return overlayReflectionPadding.get();
+    }
+
+    public static void setOverlayReflectionPadding(int padding) {
+        overlayReflectionPadding.set(padding);
+    }
+
+    public static IntegerProperty overlayReflectionPaddingProperty() {
+        return overlayReflectionPadding;
     }
 
     public static double getMinObjectSizeMicrons() {

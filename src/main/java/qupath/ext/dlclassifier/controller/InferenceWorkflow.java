@@ -593,7 +593,8 @@ public class InferenceWorkflow {
                             tileDataList,
                             channelConfig,
                             inferenceConfig,
-                            tempDir
+                            tempDir,
+                            0
                     );
 
                     if (pixelResult != null && pixelResult.outputPaths() != null) {

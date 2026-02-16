@@ -129,7 +129,8 @@ class InferenceService:
         model_path: str,
         tiles: List[Dict[str, Any]],
         input_config: Dict[str, Any],
-        output_dir: str
+        output_dir: str,
+        reflection_padding: int = 0
     ) -> Dict[str, str]:
         """Run inference returning per-pixel probability maps saved as files.
 
@@ -166,7 +167,8 @@ class InferenceService:
                 img_array = img_array[:, :, selected]
 
             # Run inference - get full spatial probability map
-            prob_map = self._infer_tile_spatial(model, img_array)
+            prob_map = self._infer_tile_spatial(model, img_array,
+                                                reflection_padding=reflection_padding)
 
             # Save as raw float32 binary (C, H, W order) for easy Java reading
             output_path = os.path.join(output_dir, f"{tile_id}.bin")
@@ -316,18 +318,32 @@ class InferenceService:
     def _infer_tile_spatial(
         self,
         model_tuple: Tuple[str, Any],
-        img_array: np.ndarray
+        img_array: np.ndarray,
+        reflection_padding: int = 0
     ) -> np.ndarray:
         """Run inference on a single tile, returning full spatial probability map.
 
         Args:
             model_tuple: (model_type, model) from _load_model
             img_array: Image array (H, W, C) normalized
+            reflection_padding: Pixels of reflection padding to add around the tile
+                before inference. Reduces edge artifacts from zero padding in
+                convolutional layers. The output is cropped back to original size.
 
         Returns:
             Probability map with shape (C, H, W) where C is num_classes
         """
         model_type, model = model_tuple
+
+        # Apply reflection padding to reduce tile edge artifacts
+        pad = reflection_padding
+        if pad > 0:
+            max_pad = min(img_array.shape[0], img_array.shape[1]) // 2
+            pad = min(pad, max_pad)
+            if img_array.ndim == 2:
+                img_array = np.pad(img_array, ((pad, pad), (pad, pad)), mode='reflect')
+            else:
+                img_array = np.pad(img_array, ((pad, pad), (pad, pad), (0, 0)), mode='reflect')
 
         # Convert to tensor (HWC -> NCHW)
         if img_array.ndim == 2:
@@ -350,6 +366,10 @@ class InferenceService:
 
         # Softmax to get probabilities (C, H, W)
         probs = self._softmax(logits[0])
+
+        # Crop out the reflection padding from the output
+        if pad > 0:
+            probs = probs[:, pad:-pad, pad:-pad]
 
         return probs
 
