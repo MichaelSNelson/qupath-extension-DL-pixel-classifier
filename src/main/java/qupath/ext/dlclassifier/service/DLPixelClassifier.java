@@ -261,7 +261,7 @@ public class DLPixelClassifier implements PixelClassifier {
         List<ImageChannel> channels = new ArrayList<>();
 
         for (ClassifierMetadata.ClassInfo classInfo : classes) {
-            int color = parseClassColor(classInfo.color());
+            int color = parseClassColor(classInfo.color(), classInfo.index());
             PathClass pathClass = PathClass.fromString(classInfo.name(), color);
             labels.put(classInfo.index(), pathClass);
             channels.add(ImageChannel.getInstance(classInfo.name(), color));
@@ -295,7 +295,7 @@ public class DLPixelClassifier implements PixelClassifier {
         for (ClassifierMetadata.ClassInfo classInfo : classes) {
             int idx = classInfo.index();
             if (idx < 0 || idx >= 256) continue;
-            int color = parseClassColor(classInfo.color());
+            int color = parseClassColor(classInfo.color(), idx);
             r[idx] = (byte) ColorTools.red(color);
             g[idx] = (byte) ColorTools.green(color);
             b[idx] = (byte) ColorTools.blue(color);
@@ -305,12 +305,21 @@ public class DLPixelClassifier implements PixelClassifier {
         return new IndexColorModel(8, 256, r, g, b, a);
     }
 
+    /** Distinct color palette for fallback when class metadata lacks colors. */
+    private static final int[][] FALLBACK_PALETTE = {
+            {255, 0, 0}, {0, 170, 0}, {0, 0, 255}, {255, 255, 0},
+            {255, 0, 255}, {0, 255, 255}, {255, 136, 0}, {136, 0, 255}
+    };
+
     /**
      * Parses a hex color string to a packed RGB integer (QuPath format).
+     * Falls back to a distinct palette color for the given class index.
      */
-    private static int parseClassColor(String colorStr) {
-        if (colorStr == null || colorStr.isEmpty()) {
-            return ColorTools.packRGB(128, 128, 128);
+    private static int parseClassColor(String colorStr, int classIndex) {
+        if (colorStr == null || colorStr.isEmpty() || "#808080".equals(colorStr)) {
+            // Use distinct fallback color instead of gray
+            int[] c = FALLBACK_PALETTE[classIndex % FALLBACK_PALETTE.length];
+            return ColorTools.packRGB(c[0], c[1], c[2]);
         }
         try {
             String hex = colorStr.startsWith("#") ? colorStr.substring(1) : colorStr;
@@ -320,7 +329,15 @@ public class DLPixelClassifier implements PixelClassifier {
                     (rgb >> 8) & 0xFF,
                     rgb & 0xFF);
         } catch (NumberFormatException e) {
-            return ColorTools.packRGB(128, 128, 128);
+            int[] c = FALLBACK_PALETTE[classIndex % FALLBACK_PALETTE.length];
+            return ColorTools.packRGB(c[0], c[1], c[2]);
         }
+    }
+
+    /**
+     * Parses a hex color string to a packed RGB integer (QuPath format).
+     */
+    private static int parseClassColor(String colorStr) {
+        return parseClassColor(colorStr, 0);
     }
 }

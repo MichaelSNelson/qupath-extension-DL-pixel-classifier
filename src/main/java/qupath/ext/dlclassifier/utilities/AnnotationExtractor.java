@@ -3,6 +3,7 @@ package qupath.ext.dlclassifier.utilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.lib.common.ColorTools;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.objects.PathObject;
@@ -177,8 +178,9 @@ public class AnnotationExtractor {
             classIndex.put(classNames.get(i), i);
         }
 
-        // Collect all annotations with their class info
+        // Collect all annotations with their class info and extract class colors
         List<AnnotationInfo> allAnnotations = new ArrayList<>();
+        Map<String, String> classColorMap = new LinkedHashMap<>();
         for (PathObject annotation : imageData.getHierarchy().getAnnotationObjects()) {
             if (annotation.getPathClass() == null) continue;
             String className = annotation.getPathClass().getName();
@@ -189,6 +191,12 @@ public class AnnotationExtractor {
                         classIndex.get(className),
                         isSparseROI(annotation.getROI())
                 ));
+                // Extract color from PathClass (first annotation of each class wins)
+                if (!classColorMap.containsKey(className)) {
+                    int color = annotation.getPathClass().getColor();
+                    classColorMap.put(className, String.format("#%02X%02X%02X",
+                            ColorTools.red(color), ColorTools.green(color), ColorTools.blue(color)));
+                }
             }
         }
 
@@ -261,9 +269,9 @@ public class AnnotationExtractor {
             logger.info("  Class '{}': {} labeled pixels", classNames.get(i), classPixelCounts[i]);
         }
 
-        // Save configuration with class distribution and metadata
+        // Save configuration with class distribution, colors, and metadata
         saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels,
-                trainCount, valCount, allAnnotations.size(), classWeightMultipliers);
+                trainCount, valCount, allAnnotations.size(), classWeightMultipliers, classColorMap);
 
         return new ExportResult(patchIndex, trainCount, valCount,
                 pixelCounts, totalLabeledPixels);
@@ -571,8 +579,10 @@ public class AnnotationExtractor {
         json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");
         json.append("  \"classes\": [\n");
         for (int i = 0; i < classNames.size(); i++) {
+            String color = getDefaultClassColor(i);
             json.append("    {\"index\": ").append(i)
                     .append(", \"name\": \"").append(classNames.get(i))
+                    .append("\", \"color\": \"").append(color)
                     .append("\", \"pixel_count\": ").append(classPixelCounts[i]).append("}");
             if (i < classNames.size() - 1) json.append(",");
             json.append("\n");
@@ -861,7 +871,8 @@ public class AnnotationExtractor {
      */
     private void saveConfig(Path outputDir, List<String> classNames,
                             long[] classPixelCounts, long totalLabeledPixels) throws IOException {
-        saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels, 0, 0, 0, Collections.emptyMap());
+        saveConfig(outputDir, classNames, classPixelCounts, totalLabeledPixels, 0, 0, 0,
+                Collections.emptyMap(), Collections.emptyMap());
     }
 
     /**
@@ -875,11 +886,13 @@ public class AnnotationExtractor {
      * @param valCount               number of validation patches
      * @param annotationCount        number of annotations processed
      * @param classWeightMultipliers user-supplied multipliers on auto-computed weights (empty = no modification)
+     * @param classColors            map of class name to hex color string (e.g. "#FF0000"), or empty
      */
     private void saveConfig(Path outputDir, List<String> classNames,
                             long[] classPixelCounts, long totalLabeledPixels,
                             int trainCount, int valCount, int annotationCount,
-                            Map<String, Double> classWeightMultipliers) throws IOException {
+                            Map<String, Double> classWeightMultipliers,
+                            Map<String, String> classColors) throws IOException {
         Path configPath = outputDir.resolve("config.json");
 
         List<String> channelNames = channelConfig.getChannelNames();
@@ -894,8 +907,10 @@ public class AnnotationExtractor {
         json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");
         json.append("  \"classes\": [\n");
         for (int i = 0; i < classNames.size(); i++) {
+            String color = classColors.getOrDefault(classNames.get(i), getDefaultClassColor(i));
             json.append("    {\"index\": ").append(i)
                     .append(", \"name\": \"").append(classNames.get(i))
+                    .append("\", \"color\": \"").append(color)
                     .append("\", \"pixel_count\": ").append(classPixelCounts[i]).append("}");
             if (i < classNames.size() - 1) json.append(",");
             json.append("\n");
@@ -941,6 +956,18 @@ public class AnnotationExtractor {
 
         Files.writeString(configPath, json.toString());
         logger.info("Saved config to: {}", configPath);
+    }
+
+    /**
+     * Returns a distinct default color for a class index.
+     * Used when class colors are not available from annotations.
+     */
+    private static String getDefaultClassColor(int classIndex) {
+        String[] palette = {
+                "#FF0000", "#00AA00", "#0000FF", "#FFFF00",
+                "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"
+        };
+        return palette[classIndex % palette.length];
     }
 
     /**

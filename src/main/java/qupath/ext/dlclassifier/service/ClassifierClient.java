@@ -689,19 +689,51 @@ public class ClassifierClient {
     public static float[][][] readProbabilityMap(Path filePath, int numClasses,
                                                   int height, int width) throws IOException {
         byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
+
+        // Validate file size matches expected dimensions
+        long expectedSize = (long) numClasses * height * width * Float.BYTES;
+        if (bytes.length != expectedSize) {
+            throw new IOException(String.format(
+                    "Probability map size mismatch for %s: expected %d bytes (C=%d, H=%d, W=%d) but got %d bytes",
+                    filePath.getFileName(), expectedSize, numClasses, height, width, bytes.length));
+        }
+
         java.nio.FloatBuffer buffer = java.nio.ByteBuffer.wrap(bytes)
                 .order(java.nio.ByteOrder.LITTLE_ENDIAN)
                 .asFloatBuffer();
 
         // Data is in CHW order from Python, convert to HWC for TileProcessor
         float[][][] result = new float[height][width][numClasses];
+        float[] classMin = new float[numClasses];
+        float[] classMax = new float[numClasses];
+        double[] classSum = new double[numClasses];
+        java.util.Arrays.fill(classMin, Float.MAX_VALUE);
+        java.util.Arrays.fill(classMax, -Float.MAX_VALUE);
+
         for (int c = 0; c < numClasses; c++) {
             for (int h = 0; h < height; h++) {
                 for (int w = 0; w < width; w++) {
-                    result[h][w][c] = buffer.get(c * height * width + h * width + w);
+                    float val = buffer.get(c * height * width + h * width + w);
+                    result[h][w][c] = val;
+                    if (val < classMin[c]) classMin[c] = val;
+                    if (val > classMax[c]) classMax[c] = val;
+                    classSum[c] += val;
                 }
             }
         }
+
+        // Log probability distribution diagnostics
+        if (logger.isDebugEnabled()) {
+            int totalPixels = height * width;
+            StringBuilder sb = new StringBuilder("Probability map stats for ");
+            sb.append(filePath.getFileName()).append(": ");
+            for (int c = 0; c < numClasses; c++) {
+                double mean = classSum[c] / totalPixels;
+                sb.append(String.format("C%d[min=%.3f, max=%.3f, mean=%.3f] ", c, classMin[c], classMax[c], mean));
+            }
+            logger.debug(sb.toString());
+        }
+
         return result;
     }
 

@@ -1058,6 +1058,27 @@ class TrainingService:
         except Exception as e:
             logger.warning(f"ONNX export failed: {e}")
 
+        # Read class colors from training config.json if available
+        class_colors = {}
+        try:
+            config_path = Path(data_path) / "config.json"
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    train_config = json.load(f)
+                for cls_info in train_config.get("classes", []):
+                    if "color" in cls_info and "name" in cls_info:
+                        class_colors[cls_info["name"]] = cls_info["color"]
+        except Exception as e:
+            logger.warning(f"Could not read class colors from config.json: {e}")
+
+        # Build class list with colors
+        class_list = []
+        for i, c in enumerate(classes):
+            entry = {"index": i, "name": c}
+            if c in class_colors:
+                entry["color"] = class_colors[c]
+            class_list.append(entry)
+
         # Save metadata
         metadata = {
             "id": model_id,
@@ -1067,7 +1088,7 @@ class TrainingService:
                 **architecture
             },
             "input_config": input_config,
-            "classes": [{"index": i, "name": c} for i, c in enumerate(classes)]
+            "classes": class_list
         }
 
         metadata_path = output_dir / "metadata.json"

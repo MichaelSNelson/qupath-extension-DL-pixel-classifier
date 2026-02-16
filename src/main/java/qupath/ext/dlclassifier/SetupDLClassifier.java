@@ -11,14 +11,23 @@ import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.controller.DLClassifierController;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.DLPixelClassifier;
+import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.GitHubProject;
 import qupath.lib.gui.extensions.QuPathExtension;
+import qupath.lib.images.ImageData;
+
+import java.awt.image.BufferedImage;
+import java.util.List;
 
 import java.util.ResourceBundle;
 
@@ -152,22 +161,35 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
 
         // 3) Live DL Prediction - toggle live tile classification on/off
+        //    When checked and no overlay exists, prompts user to select a classifier
         CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
         setMenuItemTooltip(livePredictionOption,
-                "Toggle live DL classification. When off, cached tiles remain " +
-                        "visible but no new server requests are made. " +
-                        "Works like QuPath's own 'Live prediction' toggle.");
+                "Toggle live DL classification overlay. " +
+                        "If no overlay exists, you will be prompted to select a classifier. " +
+                        "When unchecked, the overlay is removed.");
         OverlayService overlayService = OverlayService.getInstance();
         // Sync CheckMenuItem state from the property (for programmatic changes)
         overlayService.livePredictionProperty().addListener((obs, wasLive, isLive) ->
                 livePredictionOption.setSelected(isLive));
-        // Trigger live prediction toggle when user clicks the CheckMenuItem
-        livePredictionOption.setOnAction(e ->
-                overlayService.setLivePrediction(livePredictionOption.isSelected()));
+        // Trigger overlay creation or removal when user clicks the CheckMenuItem
+        livePredictionOption.setOnAction(e -> {
+            if (livePredictionOption.isSelected()) {
+                if (overlayService.hasOverlay()) {
+                    // Overlay exists - just re-enable live prediction
+                    overlayService.setLivePrediction(true);
+                } else {
+                    // No overlay - create one by prompting for classifier selection
+                    createOverlayFromClassifierSelection(qupath, overlayService, livePredictionOption);
+                }
+            } else {
+                // Unchecked - remove the overlay entirely
+                overlayService.removeOverlay();
+            }
+        });
         livePredictionOption.disableProperty().bind(
                 Bindings.createBooleanBinding(
-                        () -> !overlayService.hasOverlay(),
-                        overlayService.livePredictionProperty()
+                        () -> qupath.getImageData() == null,
+                        qupath.imageDataProperty()
                 )
         );
 
@@ -249,6 +271,74 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         );
 
         logger.info("Menu items added for extension: {}", EXTENSION_NAME);
+    }
+
+    /**
+     * Prompts the user to select a classifier and creates a live overlay.
+     * Called when the user checks "Live DL Prediction" and no overlay exists.
+     */
+    private void createOverlayFromClassifierSelection(QuPathGUI qupath,
+                                                       OverlayService overlayService,
+                                                       CheckMenuItem livePredictionOption) {
+        ImageData<BufferedImage> imageData = qupath.getImageData();
+        if (imageData == null) {
+            livePredictionOption.setSelected(false);
+            Dialogs.showWarningNotification(EXTENSION_NAME, "No image is open.");
+            return;
+        }
+
+        // List available classifiers
+        ModelManager modelManager = new ModelManager();
+        List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
+        if (classifiers.isEmpty()) {
+            livePredictionOption.setSelected(false);
+            Dialogs.showWarningNotification(EXTENSION_NAME,
+                    "No classifiers available. Train a classifier first.");
+            return;
+        }
+
+        // Show a choice dialog
+        List<String> names = classifiers.stream()
+                .map(c -> c.getName() + " (" + c.getId() + ")")
+                .toList();
+        String choice = Dialogs.showChoiceDialog("Select Classifier",
+                "Choose a classifier for the live overlay:", names, names.get(0));
+        if (choice == null) {
+            livePredictionOption.setSelected(false);
+            return;
+        }
+
+        // Find the selected classifier
+        int selectedIdx = names.indexOf(choice);
+        ClassifierMetadata metadata = classifiers.get(selectedIdx);
+
+        // Build channel config from metadata
+        List<String> expectedChannels = metadata.getExpectedChannelNames();
+        List<Integer> selectedChannels = new java.util.ArrayList<>();
+        for (int i = 0; i < Math.max(expectedChannels.size(), metadata.getInputChannels()); i++) {
+            selectedChannels.add(i);
+        }
+        ChannelConfiguration channelConfig = ChannelConfiguration.builder()
+                .selectedChannels(selectedChannels)
+                .channelNames(expectedChannels.isEmpty()
+                        ? List.of("Red", "Green", "Blue") : expectedChannels)
+                .bitDepth(metadata.getBitDepthTrained())
+                .normalizationStrategy(metadata.getNormalizationStrategy())
+                .build();
+
+        // Build a minimal inference config for overlay mode
+        InferenceConfig inferenceConfig = InferenceConfig.builder()
+                .tileSize(metadata.getInputWidth())
+                .overlap(32)
+                .outputType(InferenceConfig.OutputType.OVERLAY)
+                .build();
+
+        // Create the pixel classifier and apply overlay
+        DLPixelClassifier pixelClassifier = new DLPixelClassifier(
+                metadata, channelConfig, inferenceConfig, imageData);
+        overlayService.applyClassifierOverlay(imageData, pixelClassifier);
+        Dialogs.showInfoNotification(EXTENSION_NAME,
+                "Live DL overlay applied: " + metadata.getName());
     }
 
     /**

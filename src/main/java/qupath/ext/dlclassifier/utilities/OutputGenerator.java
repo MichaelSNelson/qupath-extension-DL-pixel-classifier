@@ -11,17 +11,18 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.InferenceConfig.OutputObjectType;
-import qupath.lib.common.GeneralTools;
+import qupath.lib.analysis.images.ContourTracing;
+import qupath.lib.analysis.images.SimpleImage;
+import qupath.lib.analysis.images.SimpleImages;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.regions.ImagePlane;
+import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
-import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
 
-import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.concurrent.ForkJoinPool;
@@ -33,7 +34,7 @@ import java.util.concurrent.RecursiveTask;
  * This class converts raw classification probabilities into QuPath outputs:
  * <ul>
  *   <li>Measurements: Area and percentage per class</li>
- *   <li>Objects: Detection objects from connected components</li>
+ *   <li>Objects: Detection/annotation objects using QuPath's ContourTracing API</li>
  *   <li>Overlay: Classification overlay for visualization</li>
  * </ul>
  *
@@ -120,7 +121,7 @@ public class OutputGenerator {
     }
 
     /**
-     * Creates detection objects from classification results.
+     * Creates detection objects from classification results using QuPath's ContourTracing API.
      *
      * @param predictions probability map [height][width][numClasses]
      * @param offsetX     X offset in image coordinates
@@ -128,134 +129,16 @@ public class OutputGenerator {
      * @return list of created detection objects
      */
     public List<PathObject> createObjects(float[][][] predictions, int offsetX, int offsetY) {
-        logger.info("Creating objects from predictions");
+        logger.info("Creating objects from predictions using ContourTracing");
 
-        List<PathObject> detections = new ArrayList<>();
         int height = predictions.length;
         int width = predictions[0].length;
         int numClasses = predictions[0][0].length;
 
-        // Create classification map
-        int[][] classMap = new int[height][width];
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int maxClass = 0;
-                float maxProb = predictions[y][x][0];
-                for (int c = 1; c < numClasses; c++) {
-                    if (predictions[y][x][c] > maxProb) {
-                        maxProb = predictions[y][x][c];
-                        maxClass = c;
-                    }
-                }
-                classMap[y][x] = maxClass;
-            }
-        }
+        // Create classification map (argmax)
+        int[][] classMap = createClassificationMap(predictions, height, width, numClasses);
 
-        // Connected component labeling for each class (skip background = class 0)
-        for (int classIdx = 1; classIdx < numClasses; classIdx++) {
-            List<ROI> rois = extractConnectedComponents(classMap, classIdx, offsetX, offsetY);
-
-            // Get class info
-            List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
-            String className = classIdx < classes.size() ? classes.get(classIdx).name() : "Class " + classIdx;
-            PathClass pathClass = PathClass.fromString(className);
-
-            // Create detection objects
-            for (ROI roi : rois) {
-                // Apply minimum size filter
-                double areaMicrons = roi.getArea() * pixelSizeMicrons * pixelSizeMicrons;
-                if (areaMicrons >= config.getMinObjectSizeMicrons()) {
-                    PathObject detection = PathObjects.createDetectionObject(roi, pathClass);
-                    detections.add(detection);
-                }
-            }
-        }
-
-        logger.info("Created {} detection objects", detections.size());
-        return detections;
-    }
-
-    /**
-     * Extracts connected components for a class.
-     */
-    private List<ROI> extractConnectedComponents(int[][] classMap, int targetClass,
-                                                 int offsetX, int offsetY) {
-        int height = classMap.length;
-        int width = classMap[0].length;
-        boolean[][] visited = new boolean[height][width];
-        List<ROI> rois = new ArrayList<>();
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (classMap[y][x] == targetClass && !visited[y][x]) {
-                    // Found start of new component - BFS
-                    List<int[]> component = new ArrayList<>();
-                    Queue<int[]> queue = new LinkedList<>();
-                    queue.add(new int[]{x, y});
-                    visited[y][x] = true;
-
-                    while (!queue.isEmpty()) {
-                        int[] pos = queue.poll();
-                        component.add(pos);
-
-                        // Check 4-neighbors
-                        int[][] neighbors = {
-                                {pos[0] - 1, pos[1]},
-                                {pos[0] + 1, pos[1]},
-                                {pos[0], pos[1] - 1},
-                                {pos[0], pos[1] + 1}
-                        };
-
-                        for (int[] n : neighbors) {
-                            int nx = n[0], ny = n[1];
-                            if (nx >= 0 && nx < width && ny >= 0 && ny < height &&
-                                    !visited[ny][nx] && classMap[ny][nx] == targetClass) {
-                                visited[ny][nx] = true;
-                                queue.add(new int[]{nx, ny});
-                            }
-                        }
-                    }
-
-                    // Create ROI from component
-                    if (!component.isEmpty()) {
-                        ROI roi = createROIFromComponent(component, offsetX, offsetY);
-                        if (roi != null) {
-                            rois.add(roi);
-                        }
-                    }
-                }
-            }
-        }
-
-        return rois;
-    }
-
-    /**
-     * Creates a ROI from a connected component.
-     */
-    private ROI createROIFromComponent(List<int[]> component, int offsetX, int offsetY) {
-        if (component.isEmpty()) return null;
-
-        // Find bounding box
-        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-
-        for (int[] pos : component) {
-            minX = Math.min(minX, pos[0]);
-            maxX = Math.max(maxX, pos[0]);
-            minY = Math.min(minY, pos[1]);
-            maxY = Math.max(maxY, pos[1]);
-        }
-
-        // For simplicity, create a rectangle ROI
-        // A more sophisticated implementation would trace the boundary
-        return ROIs.createRectangleROI(
-                offsetX + minX,
-                offsetY + minY,
-                maxX - minX + 1,
-                maxY - minY + 1,
-                ImagePlane.getDefaultPlane()
-        );
+        return createObjectsFromMergedMap(classMap, offsetX, offsetY, OutputObjectType.DETECTION);
     }
 
     /**
@@ -414,15 +297,12 @@ public class OutputGenerator {
             TileProcessor.TileSpec spec = tileSpecs.get(i);
 
             List<PathObject> detections = createObjects(predictions, spec.x(), spec.y());
+            allDetections.addAll(detections);
+        }
 
-            // Filter to only include objects within the parent ROI
-            for (PathObject detection : detections) {
-                ROI detectionROI = detection.getROI();
-                if (parentROI == null || parentROI.contains(
-                        detectionROI.getCentroidX(), detectionROI.getCentroidY())) {
-                    allDetections.add(detection);
-                }
-            }
+        // Filter and clip objects to the parent ROI using geometric intersection
+        if (parentROI != null) {
+            allDetections = clipObjectsToParent(allDetections, parentROI);
         }
 
         logger.info("Created {} detection objects from {} tiles", allDetections.size(), tileResults.size());
@@ -430,11 +310,10 @@ public class OutputGenerator {
     }
 
     /**
-     * Creates PathObjects from a merged classification map.
+     * Creates PathObjects from a merged classification map using QuPath's ContourTracing API.
      * <p>
      * This method processes the ENTIRE merged classification map at once, enabling
      * objects that span tile boundaries to be correctly identified as single objects.
-     * Uses Union-Find for efficient connected component labeling.
      *
      * @param classMap   merged classification map [height][width] with class indices
      * @param offsetX    X offset in image coordinates
@@ -453,10 +332,15 @@ public class OutputGenerator {
         int width = classMap[0].length;
         int numClasses = metadata.getClasses().size();
 
+        // Create a RegionRequest to translate contour coordinates to image space
+        RegionRequest region = RegionRequest.createInstance(
+                imageData.getServer().getPath(), 1.0,
+                offsetX, offsetY, width, height);
+
         // Process each class (skip background = class 0)
         for (int classIdx = 1; classIdx < numClasses; classIdx++) {
-            List<PathObject> classObjects = extractClassObjects(
-                    classMap, classIdx, offsetX, offsetY, objectType);
+            List<PathObject> classObjects = traceClassContours(
+                    classMap, classIdx, width, height, region, objectType);
             objects.addAll(classObjects);
         }
 
@@ -501,99 +385,63 @@ public class OutputGenerator {
                 numClasses
         );
 
-        // Create objects from the merged classification map
+        // Create objects from the merged classification map using ContourTracing
         List<PathObject> objects = createObjectsFromMergedMap(
                 merged.classificationMap(),
                 regionX, regionY,
                 objectType
         );
 
-        // Filter objects to only include those within the parent ROI
+        // Clip objects to the parent ROI using geometric intersection
         if (parentROI != null) {
-            objects = objects.stream()
-                    .filter(obj -> parentROI.contains(
-                            obj.getROI().getCentroidX(),
-                            obj.getROI().getCentroidY()))
-                    .toList();
+            objects = clipObjectsToParent(objects, parentROI);
         }
 
         return new ArrayList<>(objects);
     }
 
+    // ==================== ContourTracing Integration ====================
+
     /**
-     * Extracts connected component objects for a single class using Union-Find.
+     * Traces contours for a single class using QuPath's ContourTracing API
+     * and creates PathObjects with post-processing applied.
      */
-    private List<PathObject> extractClassObjects(int[][] classMap, int targetClass,
-                                                  int offsetX, int offsetY,
-                                                  OutputObjectType objectType) {
-        int height = classMap.length;
-        int width = classMap[0].length;
-
-        // Union-Find for connected component labeling
-        UnionFind uf = new UnionFind(width * height);
-
-        // First pass: union adjacent pixels of the same class
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (classMap[y][x] != targetClass) continue;
-
-                int idx = y * width + x;
-
-                // Check right neighbor
-                if (x + 1 < width && classMap[y][x + 1] == targetClass) {
-                    uf.union(idx, idx + 1);
-                }
-
-                // Check bottom neighbor
-                if (y + 1 < height && classMap[y + 1][x] == targetClass) {
-                    uf.union(idx, (y + 1) * width + x);
-                }
-            }
-        }
-
-        // Second pass: collect pixels by component
-        Map<Integer, List<int[]>> components = new HashMap<>();
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (classMap[y][x] != targetClass) continue;
-
-                int idx = y * width + x;
-                int root = uf.find(idx);
-                components.computeIfAbsent(root, k -> new ArrayList<>())
-                        .add(new int[]{x, y});
-            }
-        }
-
-        // Convert components to PathObjects
+    private List<PathObject> traceClassContours(int[][] classMap, int targetClass,
+                                                 int width, int height,
+                                                 RegionRequest region,
+                                                 OutputObjectType objectType) {
         List<PathObject> objects = new ArrayList<>();
         List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
         String className = targetClass < classes.size() ? classes.get(targetClass).name() : "Class " + targetClass;
         PathClass pathClass = PathClass.fromString(className);
 
-        for (List<int[]> component : components.values()) {
-            // Calculate area in microns
-            double areaPixels = component.size();
-            double areaMicrons = areaPixels * pixelSizeMicrons * pixelSizeMicrons;
+        // Create a SimpleImage where pixels matching targetClass have value targetClass,
+        // and all other pixels have value 0
+        SimpleImage classImage = createClassImage(classMap, targetClass, width, height);
 
-            // Apply minimum size filter
-            if (areaMicrons < config.getMinObjectSizeMicrons()) {
-                continue;
-            }
+        // Use ContourTracing to trace geometries for this class value
+        Geometry geometry = ContourTracing.createTracedGeometry(
+                classImage, targetClass, targetClass, region);
 
-            // Create ROI from component boundary
-            ROI roi = createROIFromComponentBoundary(component, offsetX, offsetY);
-            if (roi == null) continue;
+        if (geometry == null || geometry.isEmpty()) {
+            return objects;
+        }
 
-            // Apply hole filling and boundary smoothing
-            Geometry geometry = GeometryTools.roiToGeometry(roi);
-            geometry = applyGeometryPostProcessing(geometry);
-            if (geometry == null || geometry.isEmpty()) continue;
-            roi = GeometryTools.geometryToROI(geometry, ImagePlane.getDefaultPlane());
+        // Split multi-geometries into individual objects
+        for (int i = 0; i < geometry.getNumGeometries(); i++) {
+            Geometry part = geometry.getGeometryN(i);
+            if (part == null || part.isEmpty()) continue;
 
-            // Re-check area after post-processing
-            double postAreaPixels = geometry.getArea();
-            double postAreaMicrons = postAreaPixels * pixelSizeMicrons * pixelSizeMicrons;
-            if (postAreaMicrons < config.getMinObjectSizeMicrons()) continue;
+            // Apply post-processing (hole filling, smoothing)
+            part = applyGeometryPostProcessing(part);
+            if (part == null || part.isEmpty()) continue;
+
+            // Check minimum size
+            double areaMicrons = part.getArea() * pixelSizeMicrons * pixelSizeMicrons;
+            if (areaMicrons < config.getMinObjectSizeMicrons()) continue;
+
+            // Convert to ROI
+            ROI roi = GeometryTools.geometryToROI(part, ImagePlane.getDefaultPlane());
 
             // Create object based on type
             PathObject pathObject;
@@ -603,15 +451,77 @@ public class OutputGenerator {
                 pathObject = PathObjects.createDetectionObject(roi, pathClass);
             }
 
-            // Add area measurement (use post-processed values)
-            pathObject.getMeasurementList().put("Area (um^2)", postAreaMicrons);
-            pathObject.getMeasurementList().put("Area (pixels)", postAreaPixels);
+            // Add area measurements
+            pathObject.getMeasurementList().put("Area (um^2)", areaMicrons);
+            pathObject.getMeasurementList().put("Area (pixels)", part.getArea());
 
             objects.add(pathObject);
         }
 
         return objects;
     }
+
+    /**
+     * Creates a SimpleImage from the classification map for a specific class.
+     * Pixels matching the target class are set to the class value; others are 0.
+     */
+    private SimpleImage createClassImage(int[][] classMap, int targetClass,
+                                          int width, int height) {
+        float[] data = new float[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                data[y * width + x] = classMap[y][x] == targetClass ? targetClass : 0;
+            }
+        }
+        return SimpleImages.createFloatImage(data, width, height);
+    }
+
+    /**
+     * Clips objects to the parent ROI using geometric intersection.
+     * Objects that don't intersect the parent are removed.
+     * Objects that partially intersect are clipped to the parent boundary.
+     */
+    private List<PathObject> clipObjectsToParent(List<PathObject> objects, ROI parentROI) {
+        Geometry parentGeom = GeometryTools.roiToGeometry(parentROI);
+        if (parentGeom == null) return objects;
+
+        List<PathObject> clipped = new ArrayList<>();
+        for (PathObject obj : objects) {
+            Geometry objGeom = GeometryTools.roiToGeometry(obj.getROI());
+            if (objGeom == null || objGeom.isEmpty()) continue;
+
+            try {
+                Geometry intersection = objGeom.intersection(parentGeom);
+                if (intersection.isEmpty()) continue;
+
+                // Check minimum size after clipping
+                double areaMicrons = intersection.getArea() * pixelSizeMicrons * pixelSizeMicrons;
+                if (areaMicrons < config.getMinObjectSizeMicrons()) continue;
+
+                ROI clippedROI = GeometryTools.geometryToROI(intersection, ImagePlane.getDefaultPlane());
+
+                // Recreate the object with the clipped ROI
+                PathObject clippedObj;
+                if (obj.isDetection()) {
+                    clippedObj = PathObjects.createDetectionObject(clippedROI, obj.getPathClass());
+                } else {
+                    clippedObj = PathObjects.createAnnotationObject(clippedROI, obj.getPathClass());
+                }
+
+                // Copy measurements
+                clippedObj.getMeasurementList().put("Area (um^2)", areaMicrons);
+                clippedObj.getMeasurementList().put("Area (pixels)", intersection.getArea());
+
+                clipped.add(clippedObj);
+            } catch (Exception e) {
+                // Geometric operations can fail for edge cases; skip this object
+                logger.debug("Failed to clip object to parent: {}", e.getMessage());
+            }
+        }
+        return clipped;
+    }
+
+    // ==================== Geometry Post-Processing ====================
 
     /**
      * Applies hole filling and boundary smoothing to a geometry.
@@ -678,163 +588,27 @@ public class OutputGenerator {
         return geometry;
     }
 
-    /**
-     * Creates a ROI from component boundary points using convex hull or bounding box.
-     */
-    private ROI createROIFromComponentBoundary(List<int[]> component, int offsetX, int offsetY) {
-        if (component.isEmpty()) return null;
-
-        // For small components, use bounding box
-        if (component.size() < 10) {
-            return createBoundingBoxROI(component, offsetX, offsetY);
-        }
-
-        // For larger components, trace the boundary
-        return createBoundaryROI(component, offsetX, offsetY);
-    }
+    // ==================== Helper Methods ====================
 
     /**
-     * Creates a bounding box ROI from component pixels.
+     * Creates a classification map (argmax) from probability predictions.
      */
-    private ROI createBoundingBoxROI(List<int[]> component, int offsetX, int offsetY) {
-        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-
-        for (int[] pos : component) {
-            minX = Math.min(minX, pos[0]);
-            maxX = Math.max(maxX, pos[0]);
-            minY = Math.min(minY, pos[1]);
-            maxY = Math.max(maxY, pos[1]);
-        }
-
-        return ROIs.createRectangleROI(
-                offsetX + minX,
-                offsetY + minY,
-                maxX - minX + 1,
-                maxY - minY + 1,
-                ImagePlane.getDefaultPlane()
-        );
-    }
-
-    /**
-     * Creates a polygon ROI by tracing the component boundary.
-     */
-    private ROI createBoundaryROI(List<int[]> component, int offsetX, int offsetY) {
-        // Create a binary mask for the component
-        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-        for (int[] pos : component) {
-            minX = Math.min(minX, pos[0]);
-            maxX = Math.max(maxX, pos[0]);
-            minY = Math.min(minY, pos[1]);
-            maxY = Math.max(maxY, pos[1]);
-        }
-
-        int localWidth = maxX - minX + 3; // +3 for border
-        int localHeight = maxY - minY + 3;
-        boolean[][] mask = new boolean[localHeight][localWidth];
-
-        for (int[] pos : component) {
-            mask[pos[1] - minY + 1][pos[0] - minX + 1] = true;
-        }
-
-        // Find boundary points using marching squares (simplified)
-        List<double[]> boundaryPoints = traceBoundary(mask);
-
-        if (boundaryPoints.size() < 3) {
-            return createBoundingBoxROI(component, offsetX, offsetY);
-        }
-
-        // Convert to polygon
-        double[] xPoints = new double[boundaryPoints.size()];
-        double[] yPoints = new double[boundaryPoints.size()];
-
-        for (int i = 0; i < boundaryPoints.size(); i++) {
-            xPoints[i] = offsetX + minX - 1 + boundaryPoints.get(i)[0];
-            yPoints[i] = offsetY + minY - 1 + boundaryPoints.get(i)[1];
-        }
-
-        return ROIs.createPolygonROI(xPoints, yPoints, ImagePlane.getDefaultPlane());
-    }
-
-    /**
-     * Traces the boundary of a binary mask (simplified contour tracing).
-     */
-    private List<double[]> traceBoundary(boolean[][] mask) {
-        List<double[]> boundary = new ArrayList<>();
-        int height = mask.length;
-        int width = mask[0].length;
-
-        // Find starting point on boundary
-        int startX = -1, startY = -1;
-        outer:
+    private int[][] createClassificationMap(float[][][] predictions, int height, int width, int numClasses) {
+        int[][] classMap = new int[height][width];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                if (mask[y][x] && isBoundaryPixel(mask, x, y)) {
-                    startX = x;
-                    startY = y;
-                    break outer;
+                int maxClass = 0;
+                float maxProb = predictions[y][x][0];
+                for (int c = 1; c < numClasses; c++) {
+                    if (predictions[y][x][c] > maxProb) {
+                        maxProb = predictions[y][x][c];
+                        maxClass = c;
+                    }
                 }
+                classMap[y][x] = maxClass;
             }
         }
-
-        if (startX < 0) return boundary;
-
-        // Simple boundary following
-        boolean[][] visited = new boolean[height][width];
-        int x = startX, y = startY;
-        int direction = 0; // 0=right, 1=down, 2=left, 3=up
-        int[][] dirs = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
-
-        int maxSteps = width * height * 2;
-        int steps = 0;
-
-        do {
-            if (!visited[y][x]) {
-                boundary.add(new double[]{x, y});
-                visited[y][x] = true;
-            }
-
-            // Try to turn left first, then straight, then right, then back
-            boolean moved = false;
-            for (int turn = -1; turn <= 2; turn++) {
-                int newDir = (direction + turn + 4) % 4;
-                int nx = x + dirs[newDir][0];
-                int ny = y + dirs[newDir][1];
-
-                if (nx >= 0 && nx < width && ny >= 0 && ny < height &&
-                        mask[ny][nx] && isBoundaryPixel(mask, nx, ny)) {
-                    x = nx;
-                    y = ny;
-                    direction = newDir;
-                    moved = true;
-                    break;
-                }
-            }
-
-            if (!moved) break;
-            steps++;
-        } while ((x != startX || y != startY) && steps < maxSteps);
-
-        return boundary;
-    }
-
-    /**
-     * Checks if a pixel is on the boundary (has at least one non-object neighbor).
-     */
-    private boolean isBoundaryPixel(boolean[][] mask, int x, int y) {
-        int height = mask.length;
-        int width = mask[0].length;
-
-        int[][] neighbors = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-        for (int[] n : neighbors) {
-            int nx = x + n[0];
-            int ny = y + n[1];
-            if (nx < 0 || nx >= width || ny < 0 || ny >= height || !mask[ny][nx]) {
-                return true;
-            }
-        }
-        return false;
+        return classMap;
     }
 
     // ==================== Geometry Union Utilities ====================
@@ -962,53 +736,6 @@ public class OutputGenerator {
                 return leftResult.union(rightResult);
             }
             return leftResult != null ? leftResult : rightResult;
-        }
-    }
-
-    /**
-     * Union-Find (Disjoint Set Union) data structure for efficient connected component labeling.
-     */
-    private static class UnionFind {
-        private final int[] parent;
-        private final int[] rank;
-
-        public UnionFind(int size) {
-            parent = new int[size];
-            rank = new int[size];
-            for (int i = 0; i < size; i++) {
-                parent[i] = i;
-                rank[i] = 0;
-            }
-        }
-
-        /**
-         * Finds the root of the set containing element x with path compression.
-         */
-        public int find(int x) {
-            if (parent[x] != x) {
-                parent[x] = find(parent[x]); // Path compression
-            }
-            return parent[x];
-        }
-
-        /**
-         * Unions the sets containing elements x and y using rank.
-         */
-        public void union(int x, int y) {
-            int rootX = find(x);
-            int rootY = find(y);
-
-            if (rootX == rootY) return;
-
-            // Union by rank
-            if (rank[rootX] < rank[rootY]) {
-                parent[rootX] = rootY;
-            } else if (rank[rootX] > rank[rootY]) {
-                parent[rootY] = rootX;
-            } else {
-                parent[rootY] = rootX;
-                rank[rootX]++;
-            }
         }
     }
 }

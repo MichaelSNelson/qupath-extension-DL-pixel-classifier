@@ -32,6 +32,8 @@ import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 
+import qupath.lib.common.ColorTools;
+
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -400,7 +402,8 @@ public class TrainingWorkflow {
         CompletableFuture.runAsync(() -> {
             TrainingResult result = trainCore(classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
-                    qupath.getImageData(), selectedImages, progress, currentJobId);
+                    qupath.getImageData(), selectedImages, progress, currentJobId,
+                    classColors);
 
             if (result.success()) {
                 progress.complete(true, String.format(
@@ -442,7 +445,7 @@ public class TrainingWorkflow {
                                     List<ProjectImageEntry<BufferedImage>> selectedImages,
                                     ProgressMonitorController progress) {
         return trainCore(classifierName, description, handler, trainingConfig,
-                channelConfig, classNames, imageData, selectedImages, progress, null);
+                channelConfig, classNames, imageData, selectedImages, progress, null, null);
     }
 
     /**
@@ -458,6 +461,7 @@ public class TrainingWorkflow {
      * @param selectedImages project images for multi-image training, or null for single-image
      * @param progress       progress monitor (nullable for headless execution)
      * @param jobIdHolder    optional array to receive the job ID (element 0 is set)
+     * @param classColors    map of class name to packed RGB color, or null
      * @return the training result
      */
     static TrainingResult trainCore(String classifierName,
@@ -469,7 +473,8 @@ public class TrainingWorkflow {
                                     ImageData<BufferedImage> imageData,
                                     List<ProjectImageEntry<BufferedImage>> selectedImages,
                                     ProgressMonitorController progress,
-                                    String[] jobIdHolder) {
+                                    String[] jobIdHolder,
+                                    Map<String, Integer> classColors) {
         try {
             if (progress != null) {
                 progress.setStatus("Exporting training data...");
@@ -633,10 +638,7 @@ public class TrainingWorkflow {
             String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") +
                     "_" + System.currentTimeMillis();
 
-            List<ClassifierMetadata.ClassInfo> classInfoList = new ArrayList<>();
-            for (int i = 0; i < classNames.size(); i++) {
-                classInfoList.add(new ClassifierMetadata.ClassInfo(i, classNames.get(i), "#808080"));
-            }
+            List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
 
             ClassifierMetadata metadata = ClassifierMetadata.builder()
                     .id(classifierId)
@@ -855,10 +857,7 @@ public class TrainingWorkflow {
                 String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") +
                         "_" + System.currentTimeMillis();
 
-                List<ClassifierMetadata.ClassInfo> classInfoList = new ArrayList<>();
-                for (int i = 0; i < classNames.size(); i++) {
-                    classInfoList.add(new ClassifierMetadata.ClassInfo(i, classNames.get(i), "#808080"));
-                }
+                List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, null);
 
                 ClassifierMetadata metadata = ClassifierMetadata.builder()
                         .id(classifierId)
@@ -1008,6 +1007,41 @@ public class TrainingWorkflow {
             logger.info("Current image has unsaved changes - these will be included in single-image training");
             return true;
         }
+    }
+
+    /**
+     * Builds a list of ClassInfo objects with proper hex color strings.
+     * Uses the class colors from the training dialog when available,
+     * falling back to a distinct color palette.
+     */
+    static List<ClassifierMetadata.ClassInfo> buildClassInfoList(List<String> classNames,
+                                                                  Map<String, Integer> classColors) {
+        List<ClassifierMetadata.ClassInfo> classInfoList = new ArrayList<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            String name = classNames.get(i);
+            String hexColor;
+            if (classColors != null && classColors.containsKey(name)) {
+                int packed = classColors.get(name);
+                hexColor = String.format("#%02X%02X%02X",
+                        ColorTools.red(packed), ColorTools.green(packed), ColorTools.blue(packed));
+            } else {
+                hexColor = getDefaultClassColor(i);
+            }
+            classInfoList.add(new ClassifierMetadata.ClassInfo(i, name, hexColor));
+        }
+        return classInfoList;
+    }
+
+    /**
+     * Returns a distinct default color for a class index.
+     * Used when class colors are not available (e.g. headless training).
+     */
+    private static String getDefaultClassColor(int classIndex) {
+        String[] palette = {
+                "#FF0000", "#00AA00", "#0000FF", "#FFFF00",
+                "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"
+        };
+        return palette[classIndex % palette.length];
     }
 
     /**
