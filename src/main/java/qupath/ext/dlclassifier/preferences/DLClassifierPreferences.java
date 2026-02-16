@@ -102,6 +102,23 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty augElasticDeform = PathPrefs.createPersistentPreference(
             "dlclassifier.augElasticDeform", false);
 
+    // ==================== Training Strategy Preferences ====================
+
+    private static final StringProperty defaultScheduler = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultScheduler", "onecycle");
+
+    private static final StringProperty defaultLossFunction = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultLossFunction", "ce_dice");
+
+    private static final StringProperty defaultEarlyStoppingMetric = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultEarlyStoppingMetric", "mean_iou");
+
+    private static final IntegerProperty defaultEarlyStoppingPatience = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultEarlyStoppingPatience", 15);
+
+    private static final BooleanProperty defaultMixedPrecision = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultMixedPrecision", true);
+
     // ==================== Inference Dialog Preferences ====================
 
     private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
@@ -472,6 +489,68 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty augElasticDeformProperty() {
         return augElasticDeform;
+    }
+
+    // ==================== Training Strategy Preferences ====================
+
+    public static String getDefaultScheduler() {
+        return defaultScheduler.get();
+    }
+
+    public static void setDefaultScheduler(String scheduler) {
+        defaultScheduler.set(scheduler);
+    }
+
+    public static StringProperty defaultSchedulerProperty() {
+        return defaultScheduler;
+    }
+
+    public static String getDefaultLossFunction() {
+        return defaultLossFunction.get();
+    }
+
+    public static void setDefaultLossFunction(String lossFunction) {
+        defaultLossFunction.set(lossFunction);
+    }
+
+    public static StringProperty defaultLossFunctionProperty() {
+        return defaultLossFunction;
+    }
+
+    public static String getDefaultEarlyStoppingMetric() {
+        return defaultEarlyStoppingMetric.get();
+    }
+
+    public static void setDefaultEarlyStoppingMetric(String metric) {
+        defaultEarlyStoppingMetric.set(metric);
+    }
+
+    public static StringProperty defaultEarlyStoppingMetricProperty() {
+        return defaultEarlyStoppingMetric;
+    }
+
+    public static int getDefaultEarlyStoppingPatience() {
+        return defaultEarlyStoppingPatience.get();
+    }
+
+    public static void setDefaultEarlyStoppingPatience(int patience) {
+        defaultEarlyStoppingPatience.set(patience);
+    }
+
+    public static IntegerProperty defaultEarlyStoppingPatienceProperty() {
+        return defaultEarlyStoppingPatience;
+    }
+
+    public static boolean isDefaultMixedPrecision() {
+        return defaultMixedPrecision.get();
+    }
+
+    public static void setDefaultMixedPrecision(boolean enabled) {
+        defaultMixedPrecision.set(enabled);
+    }
+
+    public static BooleanProperty defaultMixedPrecisionProperty() {
+        return defaultMixedPrecision;
     }
 
     // ==================== Inference Dialog Preferences ====================

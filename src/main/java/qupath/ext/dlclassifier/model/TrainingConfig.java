@@ -45,6 +45,13 @@ public class TrainingConfig {
     // Class weight multipliers (user-supplied multipliers on auto-computed inverse-frequency weights)
     private final Map<String, Double> classWeightMultipliers;
 
+    // Training strategy
+    private final String schedulerType;
+    private final String lossFunction;
+    private final String earlyStoppingMetric;
+    private final int earlyStoppingPatience;
+    private final boolean mixedPrecision;
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -62,6 +69,11 @@ public class TrainingConfig {
         this.frozenLayers = Collections.unmodifiableList(new ArrayList<>(builder.frozenLayers));
         this.lineStrokeWidth = builder.lineStrokeWidth;
         this.classWeightMultipliers = Collections.unmodifiableMap(new LinkedHashMap<>(builder.classWeightMultipliers));
+        this.schedulerType = builder.schedulerType;
+        this.lossFunction = builder.lossFunction;
+        this.earlyStoppingMetric = builder.earlyStoppingMetric;
+        this.earlyStoppingPatience = builder.earlyStoppingPatience;
+        this.mixedPrecision = builder.mixedPrecision;
     }
 
     // Getters
@@ -172,6 +184,51 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the learning rate scheduler type.
+     *
+     * @return scheduler type ("onecycle", "cosine", "step", or "none")
+     */
+    public String getSchedulerType() {
+        return schedulerType;
+    }
+
+    /**
+     * Gets the loss function type.
+     *
+     * @return loss function ("ce_dice" or "cross_entropy")
+     */
+    public String getLossFunction() {
+        return lossFunction;
+    }
+
+    /**
+     * Gets the metric used for early stopping.
+     *
+     * @return early stopping metric ("mean_iou" or "val_loss")
+     */
+    public String getEarlyStoppingMetric() {
+        return earlyStoppingMetric;
+    }
+
+    /**
+     * Gets the early stopping patience (epochs to wait without improvement).
+     *
+     * @return patience value
+     */
+    public int getEarlyStoppingPatience() {
+        return earlyStoppingPatience;
+    }
+
+    /**
+     * Checks whether mixed precision (AMP) training is enabled.
+     *
+     * @return true if mixed precision is enabled
+     */
+    public boolean isMixedPrecision() {
+        return mixedPrecision;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -194,11 +251,16 @@ public class TrainingConfig {
                 usePretrainedWeights == that.usePretrainedWeights &&
                 freezeEncoderLayers == that.freezeEncoderLayers &&
                 lineStrokeWidth == that.lineStrokeWidth &&
+                earlyStoppingPatience == that.earlyStoppingPatience &&
+                mixedPrecision == that.mixedPrecision &&
                 Objects.equals(modelType, that.modelType) &&
                 Objects.equals(backbone, that.backbone) &&
                 Objects.equals(augmentationConfig, that.augmentationConfig) &&
                 Objects.equals(frozenLayers, that.frozenLayers) &&
-                Objects.equals(classWeightMultipliers, that.classWeightMultipliers);
+                Objects.equals(classWeightMultipliers, that.classWeightMultipliers) &&
+                Objects.equals(schedulerType, that.schedulerType) &&
+                Objects.equals(lossFunction, that.lossFunction) &&
+                Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric);
     }
 
     @Override
@@ -206,13 +268,15 @@ public class TrainingConfig {
         return Objects.hash(modelType, backbone, epochs, batchSize, learningRate,
                 weightDecay, tileSize, overlap, downsample, validationSplit, augmentationConfig,
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
-                classWeightMultipliers);
+                classWeightMultipliers, schedulerType, lossFunction, earlyStoppingMetric,
+                earlyStoppingPatience, mixedPrecision);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, lineStroke=%d}",
-                modelType, backbone, epochs, learningRate, tileSize, downsample, lineStrokeWidth);
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b}",
+                modelType, backbone, epochs, learningRate, tileSize, downsample, lineStrokeWidth,
+                schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision);
     }
 
     public static Builder builder() {
@@ -239,6 +303,11 @@ public class TrainingConfig {
         private List<String> frozenLayers = new ArrayList<>();
         private int lineStrokeWidth = 5;
         private Map<String, Double> classWeightMultipliers = new LinkedHashMap<>();
+        private String schedulerType = "onecycle";
+        private String lossFunction = "ce_dice";
+        private String earlyStoppingMetric = "mean_iou";
+        private int earlyStoppingPatience = 15;
+        private boolean mixedPrecision = true;
 
         public Builder() {
             // Default augmentation configuration
@@ -388,6 +457,56 @@ public class TrainingConfig {
          */
         public Builder classWeightMultipliers(Map<String, Double> classWeightMultipliers) {
             this.classWeightMultipliers = new LinkedHashMap<>(classWeightMultipliers);
+            return this;
+        }
+
+        /**
+         * Sets the learning rate scheduler type.
+         *
+         * @param schedulerType "onecycle", "cosine", "step", or "none"
+         */
+        public Builder schedulerType(String schedulerType) {
+            this.schedulerType = schedulerType;
+            return this;
+        }
+
+        /**
+         * Sets the loss function type.
+         *
+         * @param lossFunction "ce_dice" or "cross_entropy"
+         */
+        public Builder lossFunction(String lossFunction) {
+            this.lossFunction = lossFunction;
+            return this;
+        }
+
+        /**
+         * Sets the metric used for early stopping.
+         *
+         * @param earlyStoppingMetric "mean_iou" or "val_loss"
+         */
+        public Builder earlyStoppingMetric(String earlyStoppingMetric) {
+            this.earlyStoppingMetric = earlyStoppingMetric;
+            return this;
+        }
+
+        /**
+         * Sets the early stopping patience.
+         *
+         * @param earlyStoppingPatience epochs to wait without improvement (3-50)
+         */
+        public Builder earlyStoppingPatience(int earlyStoppingPatience) {
+            this.earlyStoppingPatience = earlyStoppingPatience;
+            return this;
+        }
+
+        /**
+         * Sets whether to use mixed precision (AMP) training.
+         *
+         * @param mixedPrecision true to enable mixed precision on CUDA devices
+         */
+        public Builder mixedPrecision(boolean mixedPrecision) {
+            this.mixedPrecision = mixedPrecision;
             return this;
         }
 

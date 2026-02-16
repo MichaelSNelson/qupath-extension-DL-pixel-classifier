@@ -286,6 +286,12 @@ public class ClassifierClient {
         trainingParams.put("weight_decay", trainingConfig.getWeightDecay());
         trainingParams.put("validation_split", trainingConfig.getValidationSplit());
         trainingParams.put("augmentation", trainingConfig.isAugmentation());
+        trainingParams.put("scheduler", trainingConfig.getSchedulerType());
+        trainingParams.put("loss_function", trainingConfig.getLossFunction());
+        trainingParams.put("early_stopping", true);
+        trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
+        trainingParams.put("early_stopping_metric", trainingConfig.getEarlyStoppingMetric());
+        trainingParams.put("mixed_precision", trainingConfig.isMixedPrecision());
         requestBody.put("training", trainingParams);
 
         // Classes

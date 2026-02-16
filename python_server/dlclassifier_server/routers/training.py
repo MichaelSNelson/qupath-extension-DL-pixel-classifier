@@ -39,6 +39,13 @@ class TrainingParams(BaseModel):
     weight_decay: float = 1e-4
     validation_split: float = 0.2
     augmentation: bool = True
+    scheduler: str = "onecycle"
+    loss_function: str = "ce_dice"
+    early_stopping: bool = True
+    early_stopping_patience: int = 15
+    early_stopping_metric: str = "mean_iou"
+    early_stopping_min_delta: float = 0.001
+    mixed_precision: bool = True
 
 
 class TrainRequest(BaseModel):

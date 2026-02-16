@@ -153,6 +153,11 @@ public class ScriptGenerator {
         appendLine(sb, "        .tileSize(" + config.getTileSize() + ")");
         appendLine(sb, "        .overlap(" + config.getOverlap() + ")");
         appendLine(sb, "        .usePretrainedWeights(" + config.isUsePretrainedWeights() + ")");
+        appendLine(sb, "        .schedulerType(" + quote(config.getSchedulerType()) + ")");
+        appendLine(sb, "        .lossFunction(" + quote(config.getLossFunction()) + ")");
+        appendLine(sb, "        .earlyStoppingMetric(" + quote(config.getEarlyStoppingMetric()) + ")");
+        appendLine(sb, "        .earlyStoppingPatience(" + config.getEarlyStoppingPatience() + ")");
+        appendLine(sb, "        .mixedPrecision(" + config.isMixedPrecision() + ")");
 
         // Augmentation config
         Map<String, Boolean> augConfig = config.getAugmentationConfig();

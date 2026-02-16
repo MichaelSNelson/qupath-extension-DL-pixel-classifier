@@ -151,6 +151,13 @@ public class TrainingDialog {
         private CheckBox colorJitterCheck;
         private CheckBox elasticCheck;
 
+        // Training strategy
+        private ComboBox<String> schedulerCombo;
+        private ComboBox<String> lossFunctionCombo;
+        private ComboBox<String> earlyStoppingMetricCombo;
+        private Spinner<Integer> earlyStoppingPatienceSpinner;
+        private CheckBox mixedPrecisionCheck;
+
         // Transfer learning
         private LayerFreezePanel layerFreezePanel;
         private CheckBox usePretrainedCheck;
@@ -217,6 +224,7 @@ public class TrainingDialog {
                     createModelSection(),
                     createTransferLearningSection(),
                     createTrainingSection(),
+                    createTrainingStrategySection(),
                     channelSection,
                     classSection,
                     createAugmentationSection(),
@@ -696,6 +704,98 @@ public class TrainingDialog {
             return pane;
         }
 
+        private TitledPane createTrainingStrategySection() {
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(8);
+            grid.setPadding(new Insets(10));
+
+            ColumnConstraints labelCol = new ColumnConstraints();
+            labelCol.setMinWidth(140);
+            labelCol.setPrefWidth(150);
+            ColumnConstraints fieldCol = new ColumnConstraints();
+            fieldCol.setHgrow(Priority.ALWAYS);
+            grid.getColumnConstraints().addAll(labelCol, fieldCol);
+
+            int row = 0;
+
+            // LR Scheduler
+            schedulerCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "One Cycle", "Cosine Annealing", "Step Decay", "None"));
+            schedulerCombo.setValue(mapSchedulerToDisplay(DLClassifierPreferences.getDefaultScheduler()));
+            schedulerCombo.setTooltip(new Tooltip(
+                    "Learning rate schedule during training.\n" +
+                    "One Cycle: smooth ramp-up then decay, best default.\n" +
+                    "Cosine Annealing: warm restarts can cause LR spikes.\n" +
+                    "Step Decay: reduce LR by factor every N epochs.\n" +
+                    "None: constant learning rate."));
+
+            grid.add(new Label("LR Scheduler:"), 0, row);
+            grid.add(schedulerCombo, 1, row);
+            row++;
+
+            // Loss function
+            lossFunctionCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "Cross Entropy + Dice", "Cross Entropy"));
+            lossFunctionCombo.setValue(mapLossFunctionToDisplay(DLClassifierPreferences.getDefaultLossFunction()));
+            lossFunctionCombo.setTooltip(new Tooltip(
+                    "Loss function for training.\n" +
+                    "CE + Dice: combines per-pixel CE with region overlap Dice loss.\n" +
+                    "  Modern standard for segmentation -- Dice directly optimizes IoU.\n" +
+                    "Cross Entropy: per-pixel only, may over-weight easy/majority pixels."));
+
+            grid.add(new Label("Loss Function:"), 0, row);
+            grid.add(lossFunctionCombo, 1, row);
+            row++;
+
+            // Early stopping metric
+            earlyStoppingMetricCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "Mean IoU", "Validation Loss"));
+            earlyStoppingMetricCombo.setValue(
+                    mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
+            earlyStoppingMetricCombo.setTooltip(new Tooltip(
+                    "Metric monitored for early stopping.\n" +
+                    "Mean IoU: stops when segmentation quality plateaus (recommended).\n" +
+                    "Validation Loss: stops when loss stops decreasing.\n" +
+                    "  Loss can oscillate while IoU still improves."));
+
+            grid.add(new Label("Early Stop Metric:"), 0, row);
+            grid.add(earlyStoppingMetricCombo, 1, row);
+            row++;
+
+            // Early stopping patience
+            earlyStoppingPatienceSpinner = new Spinner<>(3, 50,
+                    DLClassifierPreferences.getDefaultEarlyStoppingPatience(), 1);
+            earlyStoppingPatienceSpinner.setEditable(true);
+            earlyStoppingPatienceSpinner.setPrefWidth(100);
+            earlyStoppingPatienceSpinner.setTooltip(new Tooltip(
+                    "Number of epochs to wait without improvement before stopping.\n" +
+                    "Higher patience allows the model more time to recover from\n" +
+                    "temporary plateaus, but risks wasting time on a converged model.\n" +
+                    "15 is a good default; increase for noisy training curves."));
+
+            grid.add(new Label("Early Stop Patience:"), 0, row);
+            grid.add(earlyStoppingPatienceSpinner, 1, row);
+            row++;
+
+            // Mixed precision
+            mixedPrecisionCheck = new CheckBox("Enable mixed precision (AMP)");
+            mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
+            mixedPrecisionCheck.setTooltip(new Tooltip(
+                    "Use automatic mixed precision (FP16/FP32) on CUDA GPUs.\n" +
+                    "Typically provides ~2x speedup with no accuracy loss.\n" +
+                    "Only active when training on NVIDIA GPUs; ignored on CPU/MPS."));
+
+            grid.add(mixedPrecisionCheck, 0, row, 2, 1);
+
+            TitledPane pane = new TitledPane("TRAINING STRATEGY", grid);
+            pane.setExpanded(false); // Collapsed by default - advanced settings
+            pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(new Tooltip(
+                    "Advanced training strategy: scheduler, loss function, early stopping, and mixed precision"));
+            return pane;
+        }
+
         private TitledPane createChannelSection() {
             channelPanel = new ChannelSelectionPanel();
             channelPanel.validProperty().addListener((obs, old, valid) -> {
@@ -995,6 +1095,14 @@ public class TrainingDialog {
                 }
             }
 
+            // Save training strategy preferences
+            DLClassifierPreferences.setDefaultScheduler(mapSchedulerFromDisplay(schedulerCombo.getValue()));
+            DLClassifierPreferences.setDefaultLossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()));
+            DLClassifierPreferences.setDefaultEarlyStoppingMetric(
+                    mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()));
+            DLClassifierPreferences.setDefaultEarlyStoppingPatience(earlyStoppingPatienceSpinner.getValue());
+            DLClassifierPreferences.setDefaultMixedPrecision(mixedPrecisionCheck.isSelected());
+
             // Build training config
             TrainingConfig trainingConfig = TrainingConfig.builder()
                     .classifierType(architectureCombo.getValue())
@@ -1011,6 +1119,11 @@ public class TrainingDialog {
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
                     .classWeightMultipliers(classWeightMultipliers)
+                    .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
+                    .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
+                    .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
+                    .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
+                    .mixedPrecision(mixedPrecisionCheck.isSelected())
                     .build();
 
             // Get channel config
@@ -1063,6 +1176,50 @@ public class TrainingDialog {
             return 1.0;
         }
 
+        // ==================== Display/Value Mapping Helpers ====================
+
+        private static String mapSchedulerToDisplay(String value) {
+            if (value == null) return "One Cycle";
+            return switch (value) {
+                case "onecycle" -> "One Cycle";
+                case "cosine" -> "Cosine Annealing";
+                case "step" -> "Step Decay";
+                case "none" -> "None";
+                default -> "One Cycle";
+            };
+        }
+
+        private static String mapSchedulerFromDisplay(String display) {
+            if (display == null) return "onecycle";
+            return switch (display) {
+                case "One Cycle" -> "onecycle";
+                case "Cosine Annealing" -> "cosine";
+                case "Step Decay" -> "step";
+                case "None" -> "none";
+                default -> "onecycle";
+            };
+        }
+
+        private static String mapLossFunctionToDisplay(String value) {
+            if ("cross_entropy".equals(value)) return "Cross Entropy";
+            return "Cross Entropy + Dice";
+        }
+
+        private static String mapLossFunctionFromDisplay(String display) {
+            if ("Cross Entropy".equals(display)) return "cross_entropy";
+            return "ce_dice";
+        }
+
+        private static String mapEarlyStoppingMetricToDisplay(String value) {
+            if ("val_loss".equals(value)) return "Validation Loss";
+            return "Mean IoU";
+        }
+
+        private static String mapEarlyStoppingMetricFromDisplay(String display) {
+            if ("Validation Loss".equals(display)) return "val_loss";
+            return "mean_iou";
+        }
+
         private void copyTrainingScript(Button sourceButton) {
             String name = classifierNameField.getText().trim();
             if (name.isEmpty()) {
@@ -1090,6 +1247,11 @@ public class TrainingDialog {
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
+                    .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
+                    .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
+                    .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
+                    .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
+                    .mixedPrecision(mixedPrecisionCheck.isSelected())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();

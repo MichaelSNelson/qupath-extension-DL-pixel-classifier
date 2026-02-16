@@ -2,8 +2,10 @@
 
 Includes:
 - Data augmentation via albumentations
-- Learning rate scheduling (cosine annealing with warm restarts)
-- Early stopping with patience
+- Learning rate scheduling (cosine annealing, one-cycle, step decay)
+- Early stopping with configurable metric (loss or mean IoU)
+- Combined CE + Dice loss for improved segmentation quality
+- Mixed precision training (AMP) for CUDA devices
 - GPU memory monitoring and management
 - Support for CUDA, Apple MPS, and CPU training
 """
@@ -121,44 +123,53 @@ def get_validation_transform() -> Optional[A.Compose]:
 
 
 class EarlyStopping:
-    """Early stopping to stop training when validation loss doesn't improve.
+    """Early stopping to stop training when a monitored metric stops improving.
 
     Args:
         patience: Number of epochs to wait for improvement
         min_delta: Minimum change to qualify as improvement
         restore_best_weights: Whether to restore best model weights when stopping
+        mode: "min" if lower metric is better (e.g. loss),
+              "max" if higher metric is better (e.g. IoU)
     """
 
     def __init__(
         self,
         patience: int = 10,
         min_delta: float = 0.0,
-        restore_best_weights: bool = True
+        restore_best_weights: bool = True,
+        mode: str = "min"
     ):
         self.patience = patience
         self.min_delta = min_delta
         self.restore_best_weights = restore_best_weights
+        self.mode = mode
 
-        self.best_loss = float("inf")
+        self.best_score = float("inf") if mode == "min" else float("-inf")
         self.best_epoch = 0
         self.best_state = None
         self.counter = 0
         self.should_stop = False
 
-    def __call__(self, epoch: int, val_loss: float, model: nn.Module) -> bool:
+        if mode == "min":
+            self._is_better = lambda current, best: current < best - self.min_delta
+        else:
+            self._is_better = lambda current, best: current > best + self.min_delta
+
+    def __call__(self, epoch: int, metric_value: float, model: nn.Module) -> bool:
         """Check if training should stop.
 
         Args:
             epoch: Current epoch number
-            val_loss: Current validation loss
+            metric_value: Current value of the monitored metric
             model: The model being trained
 
         Returns:
             True if training should stop, False otherwise
         """
-        if val_loss < self.best_loss - self.min_delta:
+        if self._is_better(metric_value, self.best_score):
             # Improvement found
-            self.best_loss = val_loss
+            self.best_score = metric_value
             self.best_epoch = epoch
             self.counter = 0
 
@@ -166,7 +177,7 @@ class EarlyStopping:
                 # Save best model state
                 self.best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
-            logger.debug(f"Early stopping: new best loss {val_loss:.4f} at epoch {epoch}")
+            logger.debug(f"Early stopping: new best {metric_value:.4f} at epoch {epoch}")
             return False
         else:
             # No improvement
@@ -176,7 +187,7 @@ class EarlyStopping:
             if self.counter >= self.patience:
                 self.should_stop = True
                 logger.info(f"Early stopping triggered at epoch {epoch}. "
-                           f"Best loss: {self.best_loss:.4f} at epoch {self.best_epoch}")
+                           f"Best score: {self.best_score:.4f} at epoch {self.best_epoch}")
                 return True
 
         return False
@@ -186,6 +197,89 @@ class EarlyStopping:
         if self.best_state is not None and self.restore_best_weights:
             model.load_state_dict(self.best_state)
             logger.info(f"Restored best model weights from epoch {self.best_epoch}")
+
+
+class DiceLoss(nn.Module):
+    """Soft Dice loss for segmentation with ignore_index support.
+
+    Computes per-class Dice loss and averages across classes.
+    """
+
+    def __init__(self, ignore_index: int = 255, smooth: float = 1.0):
+        super().__init__()
+        self.ignore_index = ignore_index
+        self.smooth = smooth
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute Dice loss.
+
+        Args:
+            inputs: Model logits of shape (N, C, H, W)
+            targets: Ground truth labels of shape (N, H, W)
+
+        Returns:
+            Scalar Dice loss (1 - mean Dice coefficient)
+        """
+        num_classes = inputs.shape[1]
+        probs = F.softmax(inputs, dim=1)
+
+        # Create valid pixel mask
+        valid_mask = (targets != self.ignore_index)
+
+        # One-hot encode targets (only valid pixels)
+        targets_safe = targets.clone()
+        targets_safe[~valid_mask] = 0
+        targets_one_hot = F.one_hot(targets_safe, num_classes).permute(0, 3, 1, 2).float()
+
+        # Zero out invalid pixels
+        valid_mask_expanded = valid_mask.unsqueeze(1).float()
+        probs = probs * valid_mask_expanded
+        targets_one_hot = targets_one_hot * valid_mask_expanded
+
+        # Per-class Dice
+        dims = (0, 2, 3)
+        intersection = (probs * targets_one_hot).sum(dim=dims)
+        cardinality = probs.sum(dim=dims) + targets_one_hot.sum(dim=dims)
+
+        dice_per_class = (2.0 * intersection + self.smooth) / (cardinality + self.smooth)
+
+        return 1.0 - dice_per_class.mean()
+
+
+class CombinedCEDiceLoss(nn.Module):
+    """Combined Cross-Entropy + Dice loss for segmentation.
+
+    The CE component handles per-pixel classification while the Dice component
+    optimizes region overlap directly, making this combination the modern
+    standard for segmentation tasks.
+
+    Args:
+        class_weights: Optional per-class weights for the CE component
+        ignore_index: Label index to ignore (default 255)
+        ce_weight: Weight for Cross-Entropy component (default 0.5)
+        dice_weight: Weight for Dice component (default 0.5)
+    """
+
+    def __init__(
+        self,
+        class_weights: Optional[torch.Tensor] = None,
+        ignore_index: int = 255,
+        ce_weight: float = 0.5,
+        dice_weight: float = 0.5
+    ):
+        super().__init__()
+        self.ce_loss = nn.CrossEntropyLoss(
+            weight=class_weights,
+            ignore_index=ignore_index
+        )
+        self.dice_loss = DiceLoss(ignore_index=ignore_index)
+        self.ce_weight = ce_weight
+        self.dice_weight = dice_weight
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ce = self.ce_loss(inputs, targets)
+        dice = self.dice_loss(inputs, targets)
+        return self.ce_weight * ce + self.dice_weight * dice
 
 
 class SegmentationDataset(Dataset):
@@ -509,7 +603,7 @@ class TrainingService:
         epochs = training_params.get("epochs", 50)
         scheduler = self._create_scheduler(
             optimizer=optimizer,
-            scheduler_type=training_params.get("scheduler", "cosine"),
+            scheduler_type=training_params.get("scheduler", "onecycle"),
             scheduler_config=training_params.get("scheduler_config", {}),
             epochs=epochs,
             steps_per_epoch=len(train_loader)
@@ -517,13 +611,17 @@ class TrainingService:
 
         # Setup early stopping
         early_stopping = None
+        early_stopping_metric = training_params.get("early_stopping_metric", "mean_iou")
         if training_params.get("early_stopping", True):
+            es_mode = "max" if early_stopping_metric == "mean_iou" else "min"
             early_stopping = EarlyStopping(
-                patience=training_params.get("early_stopping_patience", 10),
+                patience=training_params.get("early_stopping_patience", 15),
                 min_delta=training_params.get("early_stopping_min_delta", 0.001),
-                restore_best_weights=True
+                restore_best_weights=True,
+                mode=es_mode
             )
-            logger.info(f"Early stopping enabled with patience={early_stopping.patience}")
+            logger.info(f"Early stopping enabled: metric={early_stopping_metric}, "
+                       f"mode={es_mode}, patience={early_stopping.patience}")
 
         # Load class weights and unlabeled index from exported config
         unlabeled_index = 255
@@ -538,16 +636,41 @@ class TrainingService:
                 class_weights = torch.tensor(weights_list, dtype=torch.float32).to(self.device)
                 logger.info(f"Using class weights: {weights_list}")
 
-        criterion = nn.CrossEntropyLoss(
-            weight=class_weights,
-            ignore_index=unlabeled_index
-        )
+        loss_function = training_params.get("loss_function", "ce_dice")
+        if loss_function == "ce_dice":
+            criterion = CombinedCEDiceLoss(
+                class_weights=class_weights,
+                ignore_index=unlabeled_index
+            )
+            logger.info("Using Combined CE + Dice loss")
+        else:
+            criterion = nn.CrossEntropyLoss(
+                weight=class_weights,
+                ignore_index=unlabeled_index
+            )
+            logger.info("Using CrossEntropy loss")
 
-        # Restore from checkpoint if resuming
-        best_loss = float("inf")
+        # Setup mixed precision training
+        use_mixed_precision = (
+            training_params.get("mixed_precision", True)
+            and self.device == "cuda"
+        )
+        scaler = torch.amp.GradScaler("cuda") if use_mixed_precision else None
+        if use_mixed_precision:
+            logger.info("Mixed precision training enabled")
+
+        # Determine best-model tracking mode (same metric as early stopping)
+        best_score_mode = "max" if early_stopping_metric == "mean_iou" else "min"
+        best_score = float("-inf") if best_score_mode == "max" else float("inf")
         best_model_state = None
         training_history = []
 
+        def _is_best(current, best):
+            if best_score_mode == "max":
+                return current > best
+            return current < best
+
+        # Restore from checkpoint if resuming
         if checkpoint_path:
             checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             model.load_state_dict(checkpoint["model_state_dict"])
@@ -574,23 +697,29 @@ class TrainingService:
                 elif "scheduler_state_dict" in checkpoint:
                     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
-            # Restore early stopping state
+            # Restore early stopping state (handle both old and new format)
             if early_stopping is not None and "early_stopping" in checkpoint:
                 es_state = checkpoint["early_stopping"]
-                early_stopping.best_loss = es_state["best_loss"]
+                if "best_score" in es_state:
+                    early_stopping.best_score = es_state["best_score"]
+                elif "best_loss" in es_state:
+                    early_stopping.best_score = es_state["best_loss"]
                 early_stopping.best_epoch = es_state["best_epoch"]
                 early_stopping.counter = es_state["counter"]
                 if "best_state" in es_state and es_state["best_state"] is not None:
                     early_stopping.best_state = es_state["best_state"]
 
-            # Restore training history and best model
+            # Restore training history and best model (handle both formats)
             training_history = checkpoint.get("training_history", [])
-            best_loss = checkpoint.get("best_loss", float("inf"))
+            if "best_score" in checkpoint:
+                best_score = checkpoint["best_score"]
+            elif "best_loss" in checkpoint:
+                best_score = checkpoint["best_loss"]
             if "best_model_state" in checkpoint:
                 best_model_state = checkpoint["best_model_state"]
 
             logger.info(f"Resumed from checkpoint at epoch {start_epoch}, "
-                       f"best_loss={best_loss:.4f}")
+                       f"best_score={best_score:.4f}")
 
         # Training loop
         num_classes = len(classes)
@@ -621,10 +750,19 @@ class TrainingService:
                 masks = masks.to(self.device)
 
                 optimizer.zero_grad()
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-                loss.backward()
-                optimizer.step()
+
+                if use_mixed_precision:
+                    with torch.amp.autocast("cuda"):
+                        outputs = model(images)
+                        loss = criterion(outputs, masks)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    outputs = model(images)
+                    loss = criterion(outputs, masks)
+                    loss.backward()
+                    optimizer.step()
 
                 train_loss += loss.item()
 
@@ -652,8 +790,13 @@ class TrainingService:
                     images = images.to(self.device)
                     masks = masks.to(self.device)
 
-                    outputs = model(images)
-                    loss = criterion(outputs, masks)
+                    if use_mixed_precision:
+                        with torch.amp.autocast("cuda"):
+                            outputs = model(images)
+                            loss = criterion(outputs, masks)
+                    else:
+                        outputs = model(images)
+                        loss = criterion(outputs, masks)
                     val_loss += loss.item()
 
                     _, predicted = outputs.max(1)
@@ -737,14 +880,17 @@ class TrainingService:
                     scheduler.step()
 
             # Save best model checkpoint (independent of early stopping)
-            if val_loss < best_loss:
-                best_loss = val_loss
+            current_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+            if _is_best(current_metric, best_score):
+                best_score = current_metric
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                logger.info(f"  New best model at epoch {epoch+1} (loss={val_loss:.4f})")
+                metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
+                logger.info(f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})")
 
             # Check early stopping
             if early_stopping is not None:
-                if early_stopping(epoch + 1, val_loss, model):
+                es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                if early_stopping(epoch + 1, es_value, model):
                     logger.info(f"Early stopping triggered at epoch {epoch+1}")
                     break
 
@@ -757,7 +903,8 @@ class TrainingService:
                     scheduler=scheduler,
                     early_stopping=early_stopping,
                     training_history=training_history,
-                    best_loss=best_loss,
+                    best_score=best_score,
+                    best_score_mode=best_score_mode,
                     best_model_state=best_model_state,
                     model_type=model_type,
                     training_config={
@@ -799,7 +946,7 @@ class TrainingService:
         elif best_model_state is not None:
             model.load_state_dict(best_model_state)
             model = model.to(self.device)
-            logger.info(f"Restored best model weights (loss={best_loss:.4f})")
+            logger.info(f"Restored best model weights (score={best_score:.4f})")
 
         # Save final model
         model_path = self._save_model(
@@ -816,7 +963,7 @@ class TrainingService:
             "model_path": model_path,
             "final_loss": final_loss,
             "final_accuracy": final_accuracy,
-            "best_loss": best_loss,
+            "best_score": best_score,
             "epochs_trained": len(training_history),
             "early_stopped": early_stopping.should_stop if early_stopping else False
         }
@@ -897,7 +1044,8 @@ class TrainingService:
         scheduler,
         early_stopping,
         training_history: List[Dict[str, Any]],
-        best_loss: float,
+        best_score: float,
+        best_score_mode: str,
         best_model_state: Optional[Dict],
         model_type: str,
         training_config: Dict[str, Any]
@@ -919,7 +1067,8 @@ class TrainingService:
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "training_history": training_history,
-            "best_loss": best_loss,
+            "best_score": best_score,
+            "best_score_mode": best_score_mode,
             "training_config": training_config,
         }
 
@@ -931,7 +1080,8 @@ class TrainingService:
 
         if early_stopping is not None:
             checkpoint["early_stopping"] = {
-                "best_loss": early_stopping.best_loss,
+                "best_score": early_stopping.best_score,
+                "mode": early_stopping.mode,
                 "best_epoch": early_stopping.best_epoch,
                 "counter": early_stopping.counter,
                 "best_state": early_stopping.best_state,
