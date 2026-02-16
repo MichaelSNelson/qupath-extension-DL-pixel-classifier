@@ -252,6 +252,18 @@ The extension stores preferences via QuPath's preference system. Defaults:
 | Color jitter | `false` | Augmentation: brightness/contrast variation |
 | Elastic deformation | `false` | Augmentation: elastic distortion |
 
+**Training Strategy (remembered across sessions):**
+
+These are in the collapsed **"TRAINING STRATEGY"** section of the training dialog.
+
+| Preference | Default | Description |
+|-----------|---------|-------------|
+| LR Scheduler | `One Cycle` | Learning rate schedule (One Cycle / Cosine Annealing / Step Decay / None) |
+| Loss Function | `Cross Entropy + Dice` | Loss function (CE+Dice optimizes region overlap; CE alone over-weights easy pixels) |
+| Early Stop Metric | `Mean IoU` | Metric for early stopping (Mean IoU / Validation Loss) |
+| Early Stop Patience | `15` | Epochs to wait without improvement before stopping |
+| Mixed Precision | `true` | Use FP16/FP32 automatic mixed precision on CUDA GPUs (~2x speedup) |
+
 **Inference Dialog (remembered across sessions):**
 
 | Preference | Default | Description |
@@ -334,4 +346,5 @@ python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {t
 - **Try transfer learning** -- freeze early encoder layers for faster convergence on small datasets
 - **Experiment with architectures** -- UNet++ and DeepLabV3+ often outperform vanilla UNet
 - **Multi-image training** -- combine annotations from several images for a more robust classifier
+- **Tune training strategy** -- expand the "TRAINING STRATEGY" section in the training dialog to adjust the LR scheduler, loss function, early stopping metric/patience, and mixed precision
 - See the full [README](README.md) and [Python server docs](python_server/README.md) for the complete API reference

@@ -11,6 +11,10 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Multiple output types**: Measurements, detection objects, or classification overlays
 - **Pixel-level inference** for OBJECTS and OVERLAY output types with full per-pixel probability maps
 - **Dialog preference persistence** -- training and inference settings are remembered across sessions
+- **Combined CE + Dice loss** for improved segmentation quality (default)
+- **IoU-based early stopping** monitors mean IoU instead of validation loss
+- **Mixed precision training** (AMP) for ~2x speedup on CUDA GPUs
+- **Configurable training strategy** via collapsed "Training Strategy" section in the training dialog (scheduler, loss function, early stopping metric/patience, mixed precision)
 - **Histology-pretrained encoders** from TCGA/Lunit/Kather100K for better tissue feature extraction
 - **Pluggable architecture** supporting UNet, SegFormer, and custom ONNX models
 - **REST API communication** with Python deep learning server

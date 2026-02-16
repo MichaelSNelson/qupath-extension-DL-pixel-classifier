@@ -272,7 +272,7 @@ training_data/
 The training system supports sparse annotations where only part of each image is labeled:
 
 - **Unlabeled pixels**: Set to 255 (or value specified in `unlabeled_index`)
-- **Loss computation**: Uses `ignore_index=255` in CrossEntropyLoss
+- **Loss computation**: Both CE+Dice and CrossEntropy losses use `ignore_index=255` to skip unlabeled pixels
 - **Class weights**: Calculated from labeled pixels only
 
 This allows training from line/brush annotations without requiring full image segmentation.
@@ -324,9 +324,13 @@ This creates 6 synthetic images (256x256 RGB) with random circles in `tests/test
     "learning_rate": 0.001,
     "weight_decay": 0.0001,
     "augmentation": true,
+    "scheduler": "onecycle",
+    "loss_function": "ce_dice",
     "early_stopping": true,
-    "patience": 10,
-    "scheduler": "cosine"
+    "early_stopping_patience": 15,
+    "early_stopping_metric": "mean_iou",
+    "early_stopping_min_delta": 0.001,
+    "mixed_precision": true
   },
   "classes": ["Background", "Foreground"],
   "data_path": "/path/to/training_data"
@@ -353,10 +357,22 @@ This creates 6 synthetic images (256x256 RGB) with random circles in `tests/test
 - `fixed_range` - User-specified min/max values
 
 **Learning Rate Schedulers** (`scheduler`):
+- `onecycle` - One-cycle policy: smooth ramp-up then decay (default, recommended)
+- `cosine` - Cosine annealing with warm restarts
+- `step` - Step decay (reduce LR by factor every N epochs)
 - `none` - Constant learning rate
-- `cosine` - Cosine annealing
-- `step` - Step decay
-- `one_cycle` - One-cycle policy
+
+**Loss Functions** (`loss_function`):
+- `ce_dice` - Combined Cross-Entropy + Dice loss (default, recommended for segmentation)
+- `cross_entropy` - Standard Cross-Entropy loss
+
+**Early Stopping Metrics** (`early_stopping_metric`):
+- `mean_iou` - Stop when mean IoU plateaus (default, recommended)
+- `val_loss` - Stop when validation loss stops decreasing
+
+**Mixed Precision** (`mixed_precision`):
+- `true` - Enable automatic mixed precision on CUDA GPUs (~2x speedup, default)
+- `false` - Use full FP32 precision
 
 ## Inference Request Format
 
