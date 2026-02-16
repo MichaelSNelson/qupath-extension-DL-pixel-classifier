@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.ui;
 
+import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.FXCollections;
@@ -144,43 +145,57 @@ public class LayerFreezePanel extends VBox {
      * @param numChannels  number of input channels
      * @param numClasses   number of output classes
      */
+    /**
+     * Loads layers for the specified architecture and encoder.
+     * <p>
+     * This method may be called from a background thread. All UI updates
+     * are dispatched to the FX application thread via {@code Platform.runLater}.
+     *
+     * @param architecture model architecture (e.g., "unet")
+     * @param encoder      encoder name (e.g., "resnet34")
+     * @param numChannels  number of input channels
+     * @param numClasses   number of output classes
+     */
     public void loadLayers(String architecture, String encoder, int numChannels, int numClasses) {
         this.currentArchitecture = architecture;
         this.currentEncoder = encoder;
 
-        layers.clear();
+        Platform.runLater(() -> {
+            layers.clear();
+            statusLabel.setText("Loading layer structure...");
+        });
 
         if (client == null) {
-            statusLabel.setText("No server connection");
+            Platform.runLater(() -> statusLabel.setText("No server connection"));
             return;
         }
 
         try {
-            statusLabel.setText("Loading layer structure...");
-
             List<ClassifierClient.LayerInfo> layerInfos = client.getModelLayers(
                     architecture, encoder, numChannels, numClasses);
 
-            for (ClassifierClient.LayerInfo info : layerInfos) {
-                LayerItem item = new LayerItem(
-                        info.name(),
-                        info.displayName(),
-                        info.paramCount(),
-                        info.isEncoder(),
-                        info.depth(),
-                        info.recommendedFreeze(),
-                        info.description()
-                );
-                item.setFrozen(info.recommendedFreeze());
-                layers.add(item);
-            }
+            Platform.runLater(() -> {
+                for (ClassifierClient.LayerInfo info : layerInfos) {
+                    LayerItem item = new LayerItem(
+                            info.name(),
+                            info.displayName(),
+                            info.paramCount(),
+                            info.isEncoder(),
+                            info.depth(),
+                            info.recommendedFreeze(),
+                            info.description()
+                    );
+                    item.setFrozen(info.recommendedFreeze());
+                    layers.add(item);
+                }
 
-            updateStatus();
-            logger.info("Loaded {} layers for {}/{}", layers.size(), architecture, encoder);
+                updateStatus();
+            });
+            logger.info("Loaded {} layers for {}/{}", layerInfos.size(), architecture, encoder);
 
         } catch (Exception e) {
-            logger.error("Failed to load layers", e);
-            statusLabel.setText("Error: " + e.getMessage());
+            logger.warn("Failed to load model layers for {}/{}: {}", architecture, encoder, e.getMessage());
+            Platform.runLater(() -> statusLabel.setText("Could not load layers: " + e.getMessage()));
         }
     }
 

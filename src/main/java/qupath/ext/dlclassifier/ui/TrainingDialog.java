@@ -524,9 +524,14 @@ public class TrainingDialog {
                             .count();
                     if (numClasses < 2) numClasses = 2;
 
-                    layerFreezePanel.loadLayers(architecture, encoder, numChannels, numClasses);
+                    // Load layers asynchronously to avoid blocking the FX thread on HTTP call
+                    final int ch = numChannels;
+                    final int cls = numClasses;
+                    CompletableFuture.runAsync(() -> {
+                        layerFreezePanel.loadLayers(architecture, encoder, ch, cls);
+                    });
                 } catch (Exception e) {
-                    logger.debug("Could not update layer freeze panel: {}", e.getMessage());
+                    logger.warn("Could not update layer freeze panel: {}", e.getMessage());
                 }
             }
         }
@@ -674,7 +679,13 @@ public class TrainingDialog {
 
         private TitledPane createChannelSection() {
             channelPanel = new ChannelSelectionPanel();
-            channelPanel.validProperty().addListener((obs, old, valid) -> updateValidation());
+            channelPanel.validProperty().addListener((obs, old, valid) -> {
+                updateValidation();
+                // Channel count affects model layer structure - reload layers when channels become valid
+                if (valid) {
+                    updateLayerFreezePanel();
+                }
+            });
 
             TitledPane pane = new TitledPane("CHANNEL CONFIGURATION", channelPanel);
             pane.setExpanded(true);

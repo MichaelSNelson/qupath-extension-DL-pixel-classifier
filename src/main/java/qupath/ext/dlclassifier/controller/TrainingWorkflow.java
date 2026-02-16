@@ -947,11 +947,14 @@ public class TrainingWorkflow {
     }
 
     /**
-     * Checks for unsaved changes in the current image and warns the user.
+     * Checks for unsaved changes and saves them before training.
      * <p>
      * In single-image mode, training uses the live in-memory ImageData, so
-     * unsaved annotations are included. In multi-image mode, training reads
-     * from saved .qpdata files on disk, so unsaved changes would be missed.
+     * unsaved annotations are included automatically.
+     * <p>
+     * In multi-image mode, training reads from saved .qpdata files on disk,
+     * so this method auto-saves the current image to ensure the newest
+     * annotations are included.
      * <p>
      * This method must be called on the JavaFX Application Thread.
      *
@@ -972,16 +975,29 @@ public class TrainingWorkflow {
         }
 
         if (isMultiImage) {
-            // Multi-image mode reads from saved .qpdata files -- unsaved changes are missed
-            return Dialogs.showConfirmDialog(
-                    "Unsaved Changes",
-                    "The current image has unsaved annotation changes.\n\n" +
-                    "Multi-image training reads from saved project data.\n" +
-                    "Unsaved changes in the current image will NOT be\n" +
-                    "included in training.\n\n" +
-                    "Save your changes first (File -> Save) or click OK\n" +
-                    "to continue without the unsaved changes."
-            );
+            // Multi-image mode reads from saved .qpdata files -- auto-save to include latest changes
+            var project = qupath.getProject();
+            if (project != null) {
+                var currentEntry = project.getEntry(currentImageData);
+                if (currentEntry != null) {
+                    try {
+                        logger.info("Auto-saving current image data before multi-image training...");
+                        currentEntry.saveImageData(currentImageData);
+                        logger.info("Saved current image: {}", currentEntry.getImageName());
+                    } catch (Exception e) {
+                        logger.error("Failed to auto-save current image data", e);
+                        return Dialogs.showConfirmDialog(
+                                "Save Failed",
+                                "Could not auto-save the current image:\n" +
+                                e.getMessage() + "\n\n" +
+                                "Unsaved annotation changes will NOT be included\n" +
+                                "in multi-image training.\n\n" +
+                                "Continue anyway?"
+                        );
+                    }
+                }
+            }
+            return true;
         } else {
             // Single-image mode uses live in-memory data -- unsaved annotations are included
             logger.info("Current image has unsaved changes - these will be included in single-image training");
