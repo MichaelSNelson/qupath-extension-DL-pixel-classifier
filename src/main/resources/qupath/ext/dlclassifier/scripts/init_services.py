@@ -21,16 +21,8 @@ logging.basicConfig(
 
 logger = logging.getLogger("dlclassifier.appose")
 
-# Add the dlclassifier_server package to sys.path if not already importable.
-# This allows Appose to import the existing Python services without requiring
-# the package to be installed in the pixi environment.
-# The server_package_path is set by ApposeClassifierBackend before init.
-_server_path = globals().get("server_package_path", "")
-if _server_path and os.path.isdir(_server_path):
-    parent = os.path.dirname(_server_path)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
-        logger.info("Added %s to sys.path for dlclassifier_server imports", parent)
+# The dlclassifier_server package is installed in the pixi environment
+# via the git URL in pixi.toml. No sys.path manipulation needed.
 
 # Import and initialize persistent services
 try:

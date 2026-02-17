@@ -24,3 +24,6 @@ timm = ">=1.0.0"
 # ONNX (optional, for exported models)
 onnx = ">=1.15.0"
 onnxruntime = ">=1.16.0"
+
+# DL classifier server (from GitHub)
+dlclassifier-server = { git = "https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git", subdirectory = "python_server" }
