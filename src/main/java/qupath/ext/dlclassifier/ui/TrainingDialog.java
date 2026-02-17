@@ -1217,7 +1217,15 @@ public class TrainingDialog {
                     .filter(item -> item.selected().get())
                     .collect(Collectors.toList());
 
-            if (selected.isEmpty()) return;
+            if (selected.isEmpty()) {
+                logger.warn("Rebalance: no selected classes");
+                return;
+            }
+
+            // Log per-class areas for diagnostics
+            for (ClassItem item : selected) {
+                logger.info("Rebalance: class '{}' annotationArea={}", item.name(), item.annotationArea());
+            }
 
             // Collect non-zero areas and sort for median calculation
             List<Double> areas = selected.stream()
@@ -1226,7 +1234,10 @@ public class TrainingDialog {
                     .sorted()
                     .collect(Collectors.toList());
 
-            if (areas.isEmpty()) return;
+            if (areas.isEmpty()) {
+                logger.warn("Rebalance: all selected classes have zero annotation area -- cannot compute weights");
+                return;
+            }
 
             // Compute median area
             double median;
@@ -1236,8 +1247,10 @@ public class TrainingDialog {
             } else {
                 median = areas.get(n / 2);
             }
+            logger.info("Rebalance: median area = {}", median);
 
             // Set inverse-frequency weights clamped to spinner range [0.1, 10.0]
+            // The property->spinner listener in ClassListCell updates spinners automatically
             for (ClassItem item : selected) {
                 double area = item.annotationArea();
                 double weight;
@@ -1248,9 +1261,6 @@ public class TrainingDialog {
                 }
                 item.weightMultiplier().set(weight);
             }
-
-            // Refresh list view to update spinner displays
-            classListView.refresh();
 
             // Log the rebalanced weights
             StringBuilder sb = new StringBuilder("Rebalanced class weights:");
@@ -1500,6 +1510,8 @@ public class TrainingDialog {
 
     /**
      * Custom cell renderer for class items with weight multiplier spinner.
+     * Properly manages bidirectional binding between the spinner and the
+     * ClassItem's weightMultiplier property, cleaning up on cell reuse.
      */
     private static class ClassListCell extends ListCell<ClassItem> {
         private final HBox content;
@@ -1507,6 +1519,12 @@ public class TrainingDialog {
         private final javafx.scene.shape.Rectangle colorBox;
         private final Label weightLabel;
         private final Spinner<Double> weightSpinner;
+
+        // Track current bindings for cleanup on cell reuse
+        private javafx.beans.property.BooleanProperty boundSelectedProperty;
+        private javafx.beans.value.ChangeListener<Number> weightToSpinnerListener;
+        private javafx.beans.value.ChangeListener<Double> spinnerToWeightListener;
+        private javafx.beans.property.DoubleProperty boundWeightProperty;
 
         public ClassListCell() {
             checkBox = new CheckBox();
@@ -1538,11 +1556,28 @@ public class TrainingDialog {
         protected void updateItem(ClassItem item, boolean empty) {
             super.updateItem(item, empty);
 
+            // Clean up previous bindings to avoid listener leaks
+            if (boundSelectedProperty != null) {
+                checkBox.selectedProperty().unbindBidirectional(boundSelectedProperty);
+                boundSelectedProperty = null;
+            }
+            if (boundWeightProperty != null && weightToSpinnerListener != null) {
+                boundWeightProperty.removeListener(weightToSpinnerListener);
+            }
+            if (spinnerToWeightListener != null) {
+                weightSpinner.valueProperty().removeListener(spinnerToWeightListener);
+            }
+            boundWeightProperty = null;
+            weightToSpinnerListener = null;
+            spinnerToWeightListener = null;
+
             if (empty || item == null) {
                 setGraphic(null);
             } else {
                 checkBox.setText(item.name());
+                checkBox.selectedProperty().set(item.selected().get());
                 checkBox.selectedProperty().bindBidirectional(item.selected());
+                boundSelectedProperty = item.selected();
 
                 if (item.color() != null) {
                     int r = (item.color() >> 16) & 0xFF;
@@ -1553,13 +1588,25 @@ public class TrainingDialog {
                     colorBox.setFill(javafx.scene.paint.Color.GRAY);
                 }
 
-                // Bind weight spinner to item's weight multiplier
+                // Set initial spinner value
                 weightSpinner.getValueFactory().setValue(item.weightMultiplier().get());
-                weightSpinner.valueProperty().addListener((obs, oldVal, newVal) -> {
+
+                // Property -> spinner: update spinner when weight changes programmatically
+                boundWeightProperty = item.weightMultiplier();
+                weightToSpinnerListener = (obs, oldVal, newVal) -> {
+                    if (newVal != null) {
+                        weightSpinner.getValueFactory().setValue(newVal.doubleValue());
+                    }
+                };
+                boundWeightProperty.addListener(weightToSpinnerListener);
+
+                // Spinner -> property: update weight when user changes spinner
+                spinnerToWeightListener = (obs, oldVal, newVal) -> {
                     if (newVal != null) {
                         item.weightMultiplier().set(newVal);
                     }
-                });
+                };
+                weightSpinner.valueProperty().addListener(spinnerToWeightListener);
 
                 setGraphic(content);
             }
