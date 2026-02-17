@@ -4,8 +4,8 @@ import org.apposed.appose.Appose;
 import org.apposed.appose.Environment;
 import org.apposed.appose.Service;
 import org.apposed.appose.Service.Task;
-import org.apposed.appose.Service.TaskStatus;
 import org.apposed.appose.Service.ResponseType;
+import org.apposed.appose.TaskException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -150,17 +150,12 @@ public class ApposeService {
                 }
             });
             task.waitFor();
-
-            // Check for task failure (waitFor does not throw on failure)
-            if (task.status == TaskStatus.FAILED || task.status == TaskStatus.CRASHED) {
-                throw new IOException("Appose task '" + scriptName + "' failed: " + task.error);
-            }
             return task;
-        } catch (IOException e) {
-            throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Appose task '" + scriptName + "' interrupted", e);
+        } catch (TaskException e) {
+            throw new IOException("Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
         }
     }
 
@@ -192,17 +187,12 @@ public class ApposeService {
             Task task = pythonService.task(script, inputs);
             task.listen(eventListener::accept);
             task.waitFor();
-
-            // Check for task failure (waitFor does not throw on failure)
-            if (task.status == TaskStatus.FAILED || task.status == TaskStatus.CRASHED) {
-                throw new IOException("Appose task '" + scriptName + "' failed: " + task.error);
-            }
             return task;
-        } catch (IOException e) {
-            throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Appose task '" + scriptName + "' interrupted", e);
+        } catch (TaskException e) {
+            throw new IOException("Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
         }
     }
 
