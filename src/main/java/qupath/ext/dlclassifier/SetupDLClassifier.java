@@ -6,8 +6,6 @@ import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.control.Tooltip;
-import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.controller.DLClassifierController;
@@ -19,6 +17,7 @@ import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.ui.TooltipHelper;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
@@ -136,9 +135,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // 1) Train Classifier - create a new classifier from annotations
         MenuItem trainOption = new MenuItem(res.getString("menu.training"));
-        setMenuItemTooltip(trainOption,
-                "Train a new deep learning pixel classifier from annotated regions. " +
-                        "Requires foreground and background class annotations.");
+        TooltipHelper.installOnMenuItem(trainOption,
+                "Train a new deep learning pixel classifier from annotated regions.\n" +
+                        "Requires at least 2 annotation classes (e.g. Foreground/Background).\n" +
+                        "Supports single-image and multi-image training from project images.");
         trainOption.disableProperty().bind(
                 Bindings.createBooleanBinding(
                         () -> qupath.getImageData() == null,
@@ -149,9 +149,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // 2) Apply Classifier - run inference on current image
         MenuItem inferenceOption = new MenuItem(res.getString("menu.inference"));
-        setMenuItemTooltip(inferenceOption,
-                "Apply a trained classifier to the current image or selected annotations. " +
-                        "Results can be added as measurements, objects, or overlays.");
+        TooltipHelper.installOnMenuItem(inferenceOption,
+                "Apply a trained classifier to the current image or selected annotations.\n" +
+                        "Results can be added as measurements, detection/annotation objects,\n" +
+                        "or live classification overlays.");
         inferenceOption.disableProperty().bind(
                 Bindings.createBooleanBinding(
                         () -> qupath.getImageData() == null,
@@ -163,10 +164,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         // 3) Live DL Prediction - toggle live tile classification on/off
         //    When checked and no overlay exists, prompts user to select a classifier
         CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
-        setMenuItemTooltip(livePredictionOption,
-                "Toggle live DL classification overlay. " +
-                        "If no overlay exists, you will be prompted to select a classifier. " +
-                        "When unchecked, the overlay is removed.");
+        TooltipHelper.installOnMenuItem(livePredictionOption,
+                "Toggle live DL classification overlay on the current viewer.\n" +
+                        "If no overlay exists, you will be prompted to select a classifier.\n" +
+                        "When unchecked, the overlay is removed and GPU memory is freed.");
         OverlayService overlayService = OverlayService.getInstance();
         // Sync CheckMenuItem state from the property (for programmatic changes)
         overlayService.livePredictionProperty().addListener((obs, wasLive, isLive) ->
@@ -195,8 +196,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // 4) Remove Overlay - fully remove and clean up resources
         MenuItem removeOverlayOption = new MenuItem(res.getString("menu.removeOverlay"));
-        setMenuItemTooltip(removeOverlayOption,
-                "Permanently remove the DL classification overlay and free resources.");
+        TooltipHelper.installOnMenuItem(removeOverlayOption,
+                "Permanently remove the DL classification overlay and free GPU/CPU resources.\n" +
+                        "Use this to reclaim memory after you are done viewing the overlay.");
         removeOverlayOption.setOnAction(e -> {
             overlayService.removeOverlay();
             Dialogs.showInfoNotification(EXTENSION_NAME, "Classification overlay removed.");
@@ -204,9 +206,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // 5) Manage Models - browse and manage saved classifiers
         MenuItem modelsOption = new MenuItem(res.getString("menu.manageModels"));
-        setMenuItemTooltip(modelsOption,
-                "Browse, import, export, and delete saved classifiers. " +
-                        "View model metadata and training configuration.");
+        TooltipHelper.installOnMenuItem(modelsOption,
+                "Browse, import, export, and delete saved classifiers.\n" +
+                        "View model metadata, training configuration, and class mappings.");
         modelsOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("modelManagement"));
 
         // === UTILITIES SUBMENU ===
@@ -214,16 +216,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // Server Settings
         MenuItem serverOption = new MenuItem(res.getString("menu.serverSettings"));
-        setMenuItemTooltip(serverOption,
-                "Configure the connection to the Python classification server. " +
-                        "Test connectivity and view GPU availability.");
+        TooltipHelper.installOnMenuItem(serverOption,
+                "Configure the connection to the Python classification server.\n" +
+                        "Test connectivity, view GPU availability, and check server version.");
         serverOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("serverSettings"));
 
         // Free GPU Memory
         MenuItem freeGpuOption = new MenuItem("Free GPU Memory");
-        setMenuItemTooltip(freeGpuOption,
-                "Force-clear all GPU memory held by the classification server. " +
-                        "Cancels running training jobs, clears cached models, and " +
+        TooltipHelper.installOnMenuItem(freeGpuOption,
+                "Force-clear all GPU memory held by the classification server.\n" +
+                        "Cancels running training jobs, clears cached models, and\n" +
                         "frees GPU VRAM. Use after a crash or failed training.");
         freeGpuOption.setOnAction(e -> {
             freeGpuOption.setDisable(true);
@@ -341,28 +343,4 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Live DL overlay applied: " + metadata.getName());
     }
 
-    /**
-     * Sets a tooltip on a MenuItem using the JavaFX tooltip mechanism.
-     *
-     * @param menuItem    the menu item to add tooltip to
-     * @param tooltipText the tooltip text to display
-     */
-    private void setMenuItemTooltip(MenuItem menuItem, String tooltipText) {
-        Tooltip tooltip = new Tooltip(tooltipText);
-        tooltip.setShowDelay(Duration.millis(500));
-        tooltip.setShowDuration(Duration.seconds(30));
-        tooltip.setWrapText(true);
-        tooltip.setMaxWidth(350);
-
-        menuItem.parentPopupProperty().addListener((obs, oldPopup, newPopup) -> {
-            if (newPopup != null) {
-                newPopup.setOnShown(e -> {
-                    var node = menuItem.getStyleableNode();
-                    if (node != null) {
-                        Tooltip.install(node, tooltip);
-                    }
-                });
-            }
-        });
-    }
 }

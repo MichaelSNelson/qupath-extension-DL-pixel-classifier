@@ -75,15 +75,18 @@ public class LayerFreezePanel extends VBox {
         );
         presetCombo.setValue("Medium (500-5000) - Balanced");
         presetCombo.setOnAction(e -> applyPreset());
-        presetCombo.setTooltip(new Tooltip(
-                "Select a freeze strategy based on your dataset size:\n" +
+        TooltipHelper.install(presetCombo,
+                "Select a freeze strategy based on your dataset size:\n\n" +
                 "Small (<500 tiles): Freeze most encoder layers to prevent overfitting.\n" +
+                "  Best when you have limited annotations -- preserves pretrained features.\n\n" +
                 "Medium (500-5000): Balanced freeze of early layers only.\n" +
+                "  Good default for most histopathology projects.\n\n" +
                 "Large (>5000): Fine-tune nearly all layers for best adaptation.\n" +
-                "Custom: Manually toggle individual layers below."));
+                "  Enough data to train most layers without overfitting.\n\n" +
+                "Custom: Manually toggle individual layers below.");
 
         Button applyButton = new Button("Apply");
-        applyButton.setTooltip(new Tooltip("Apply the selected freeze preset to all layers"));
+        TooltipHelper.install(applyButton, "Apply the selected freeze preset to all layers");
         applyButton.setOnAction(e -> applyPreset());
         presetBox.getChildren().addAll(presetLabel, presetCombo, applyButton);
 
@@ -91,10 +94,13 @@ public class LayerFreezePanel extends VBox {
         layerListView = new ListView<>(layers);
         layerListView.setCellFactory(lv -> new LayerCell());
         layerListView.setPrefHeight(200);
-        layerListView.setTooltip(new Tooltip(
+        TooltipHelper.install(layerListView,
                 "Model layers from early (top) to late (bottom).\n" +
                 "Check a layer to freeze (skip training) it.\n" +
-                "Green = early/general features, Red = late/specific features."));
+                "Green = early/general features, Red = late/specific features.\n\n" +
+                "Early layers learn edges and textures -- these transfer well and\n" +
+                "are safe to freeze. Later layers learn task-specific patterns\n" +
+                "and benefit from fine-tuning on your data.");
         VBox.setVgrow(layerListView, Priority.ALWAYS);
 
         // Quick actions
@@ -102,23 +108,27 @@ public class LayerFreezePanel extends VBox {
         actionBox.setAlignment(Pos.CENTER);
 
         Button freezeAllEncoderBtn = new Button("Freeze All Encoder");
-        freezeAllEncoderBtn.setTooltip(new Tooltip(
-                "Freeze all encoder layers.\n" +
-                "Only the decoder will be trained.\n" +
-                "Most conservative option, best for very small datasets."));
+        TooltipHelper.installWithLink(freezeAllEncoderBtn,
+                "Freeze all encoder layers -- only the decoder will be trained.\n" +
+                "Most conservative option, best for very small datasets (<200 tiles).\n" +
+                "Fastest training since fewer parameters are updated.",
+                "https://cs231n.github.io/transfer-learning/");
         freezeAllEncoderBtn.setOnAction(e -> setAllEncoderLayers(true));
 
         Button unfreezeAllBtn = new Button("Unfreeze All");
-        unfreezeAllBtn.setTooltip(new Tooltip(
+        TooltipHelper.install(unfreezeAllBtn,
                 "Unfreeze all layers for full fine-tuning.\n" +
-                "Most aggressive option, best for large datasets.\n" +
-                "Risk of overfitting with small datasets."));
+                "Most aggressive option -- best for large datasets (>5000 tiles).\n" +
+                "Risk of overfitting with small datasets. Use a lower learning\n" +
+                "rate (e.g. 1e-5) when fine-tuning all layers.");
         unfreezeAllBtn.setOnAction(e -> setAllLayers(false));
 
         Button recommendedBtn = new Button("Use Recommended");
-        recommendedBtn.setTooltip(new Tooltip(
+        TooltipHelper.install(recommendedBtn,
                 "Apply the server's recommended freeze configuration\n" +
-                "based on the selected architecture and backbone."));
+                "based on the selected architecture and backbone.\n" +
+                "The server analyzes layer depth and parameter counts\n" +
+                "to suggest a balanced freeze strategy.");
         recommendedBtn.setOnAction(e -> applyRecommended());
 
         actionBox.getChildren().addAll(freezeAllEncoderBtn, unfreezeAllBtn, recommendedBtn);

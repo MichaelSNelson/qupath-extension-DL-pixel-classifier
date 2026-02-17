@@ -7,6 +7,7 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
@@ -61,40 +62,42 @@ public class ChannelSelectionPanel extends VBox {
         availableList.setCellFactory(lv -> new ChannelListCell());
         availableList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         availableList.setPrefHeight(150);
-        availableList.setTooltip(new Tooltip(
+        TooltipHelper.install(availableList,
                 "Image channels available for selection.\n" +
-                "Multi-select with Ctrl+click or Shift+click."));
+                "Multi-select with Ctrl+click or Shift+click.");
 
         // Selected channels list
         selectedList = new ListView<>();
         selectedList.setCellFactory(lv -> new ChannelListCell());
         selectedList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         selectedList.setPrefHeight(150);
-        selectedList.setTooltip(new Tooltip(
+        TooltipHelper.install(selectedList,
                 "Channels that will be used as model input.\n" +
-                "Order matters: must match the order used during training."));
+                "Order matters: must match the order used during training.\n" +
+                "For RGB brightfield images, use Red/Green/Blue in order.\n" +
+                "For fluorescence, select only the channels relevant to your task.");
 
         // Transfer buttons - fixed width to prevent text truncation
         double buttonWidth = 40;
 
         Button addButton = new Button(">");
         addButton.setMinWidth(buttonWidth);
-        addButton.setTooltip(new Tooltip("Add selected channels"));
+        TooltipHelper.install(addButton, "Add selected channels to model input");
         addButton.setOnAction(e -> addSelectedChannels());
 
         Button removeButton = new Button("<");
         removeButton.setMinWidth(buttonWidth);
-        removeButton.setTooltip(new Tooltip("Remove selected channels"));
+        TooltipHelper.install(removeButton, "Remove selected channels from model input");
         removeButton.setOnAction(e -> removeSelectedChannels());
 
         Button addAllButton = new Button(">>");
         addAllButton.setMinWidth(buttonWidth);
-        addAllButton.setTooltip(new Tooltip("Add all channels"));
+        TooltipHelper.install(addAllButton, "Add all available channels to model input");
         addAllButton.setOnAction(e -> addAllChannels());
 
         Button removeAllButton = new Button("<<");
         removeAllButton.setMinWidth(buttonWidth);
-        removeAllButton.setTooltip(new Tooltip("Remove all channels"));
+        TooltipHelper.install(removeAllButton, "Remove all channels from model input");
         removeAllButton.setOnAction(e -> removeAllChannels());
 
         VBox transferButtons = new VBox(5, addButton, removeButton, new Separator(), addAllButton, removeAllButton);
@@ -102,11 +105,11 @@ public class ChannelSelectionPanel extends VBox {
 
         // Reorder buttons
         Button upButton = new Button("Up");
-        upButton.setTooltip(new Tooltip("Move selected channel up"));
+        TooltipHelper.install(upButton, "Move selected channel up in input order");
         upButton.setOnAction(e -> moveSelectedUp());
 
         Button downButton = new Button("Down");
-        downButton.setTooltip(new Tooltip("Move selected channel down"));
+        TooltipHelper.install(downButton, "Move selected channel down in input order");
         downButton.setOnAction(e -> moveSelectedDown());
 
         VBox reorderButtons = new VBox(5, upButton, downButton);
@@ -125,12 +128,16 @@ public class ChannelSelectionPanel extends VBox {
         normalizationCombo = new ComboBox<>(FXCollections.observableArrayList(
                 ChannelConfiguration.NormalizationStrategy.values()));
         normalizationCombo.setValue(ChannelConfiguration.NormalizationStrategy.PERCENTILE_99);
-        normalizationCombo.setTooltip(new Tooltip(
-                "Per-channel intensity normalization before inference:\n" +
+        TooltipHelper.install(normalizationCombo,
+                "Per-channel intensity normalization before model input:\n\n" +
+                "PERCENTILE_99 (recommended): Scale using 1st/99th percentiles.\n" +
+                "  Robust to outliers and hot pixels. Best for most images.\n\n" +
                 "MIN_MAX: Scale to [0,1] using channel min/max values.\n" +
-                "PERCENTILE_99: Scale using 1st/99th percentiles (robust to outliers).\n" +
+                "  Sensitive to outliers -- a single bright pixel affects the range.\n\n" +
                 "Z_SCORE: Subtract mean, divide by std deviation.\n" +
-                "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit)."));
+                "  Common in deep learning; centers data around zero.\n\n" +
+                "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit).\n" +
+                "  Useful when consistent intensity scaling is required across images.");
 
         HBox normBox = new HBox(10,
                 new Label("Normalization:"),

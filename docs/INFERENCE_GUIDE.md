@@ -1,0 +1,104 @@
+# Inference Guide
+
+Step-by-step guide to applying a trained classifier to images.
+
+## Overview
+
+Inference applies a trained pixel classifier to new images, producing results as measurements, detection objects, or a live color overlay.
+
+## Step 1: Open an Image
+
+Open the image you want to classify in QuPath. The image type (brightfield, fluorescence) should match what the classifier was trained on.
+
+## Step 2: Open the Inference Dialog
+
+Go to **Extensions > DL Pixel Classifier > Apply Classifier...**
+
+## Step 3: Select a Classifier
+
+The classifier table shows all available trained models with their:
+- Name and type (architecture)
+- Number of input channels and classes
+- Training date
+
+Click a row to select it. The info panel below shows architecture details, input requirements, and class names.
+
+> **Channel validation**: The channel panel will indicate if the current image has the wrong number of channels for the selected classifier.
+
+## Step 4: Configure Output Type
+
+| Output Type | Description | Best for |
+|-------------|-------------|----------|
+| **MEASUREMENTS** | Adds per-class probability values as annotation measurements | Quantification (% area per class) |
+| **OBJECTS** | Creates detection or annotation objects from the classification map | Spatial analysis, counting structures |
+| **OVERLAY** | Renders a live color overlay on the viewer | Visual inspection, quality checking |
+
+### Object output options (OBJECTS only)
+
+| Option | Description | Typical value |
+|--------|-------------|---------------|
+| **Object Type** | DETECTION (lightweight) or ANNOTATION (editable) | DETECTION for quantification |
+| **Min Object Size** | Discard objects smaller than this area (um^2) | 10-100 um^2 |
+| **Hole Filling** | Fill holes smaller than this area (um^2) | 5-50 um^2 |
+| **Boundary Smoothing** | Simplify jagged boundaries (microns tolerance) | 0.5-2.0 um |
+
+## Step 5: Configure Processing Options
+
+These options are collapsed by default. Expand **PROCESSING OPTIONS** to adjust.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| **Tile Size** | Auto-set from classifier | Should match training tile size |
+| **Tile Overlap (%)** | 12.5% | Higher = better blending but slower. See below. |
+| **Blend Mode** | LINEAR | How overlapping tiles merge. LINEAR or GAUSSIAN recommended. |
+| **Use GPU** | Yes | 10-50x faster than CPU |
+
+### Tile overlap and blending
+
+Overlap determines how much adjacent tiles share:
+
+| Overlap | Quality | Speed | Notes |
+|---------|---------|-------|-------|
+| 0% | Seams visible | Fastest | Objects may split at tile boundaries |
+| 5-10% | Moderate | Fast | Some seam reduction |
+| 10-15% | Good | Moderate | Recommended for seamless results |
+| 15-20% | Best | Slower | ~2x processing time vs 0% |
+
+The **blend mode** controls how overlapping predictions merge:
+
+- **LINEAR**: Weighted average favoring tile centers. Good default.
+- **GAUSSIAN**: Gaussian-weighted for smoother transitions. Best for overlays.
+- **NONE**: Last tile wins. Fastest but may show seams.
+
+## Step 6: Set Application Scope
+
+| Scope | Description |
+|-------|-------------|
+| **Whole image** | Classify the entire image (no annotations needed) |
+| **All annotations** | Classify within all annotations |
+| **Selected annotations** | Classify only within selected annotations |
+
+> **Tip**: Use "Selected annotations" to test on a small region before processing the entire image.
+
+### Backup option
+
+Check **Create backup of annotation measurements** to save existing measurements before overwriting. Recommended when re-running inference on previously classified images.
+
+## Step 7: Apply
+
+Click **Apply** to start inference. Progress is shown in the QuPath log.
+
+## Live Overlay Mode
+
+For quick visual inspection without the full inference dialog:
+
+1. **Extensions > DL Pixel Classifier > Live DL Prediction** (toggle)
+2. Select a classifier from the popup
+3. The overlay renders as you pan and zoom
+4. Uncheck to remove the overlay
+
+Use **Extensions > DL Pixel Classifier > Remove Overlay** to permanently remove and free resources.
+
+## Copy as Script
+
+Click the **"Copy as Script"** button to generate a Groovy script matching your current settings. See [SCRIPTING.md](SCRIPTING.md) for batch processing.

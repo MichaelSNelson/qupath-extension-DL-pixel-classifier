@@ -23,168 +23,62 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **"Copy as Script" buttons** in dialogs for reproducible workflows
 - **Hierarchical geometry union** for efficient ROI merging
 
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Installation](docs/INSTALLATION.md) | Full setup: Java extension + Python server + GPU configuration |
+| [Training Guide](docs/TRAINING_GUIDE.md) | Step-by-step training workflow how-to |
+| [Inference Guide](docs/INFERENCE_GUIDE.md) | Step-by-step inference workflow how-to |
+| [Parameters](docs/PARAMETERS.md) | Every parameter with defaults, ranges, and ML guidance |
+| [Scripting](docs/SCRIPTING.md) | Groovy API, builder pattern, batch processing, Copy as Script |
+| [Best Practices](docs/BEST_PRACTICES.md) | Backbone selection, annotation strategy, hyperparameter tuning |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Server issues, training issues, GPU issues, diagnostics |
+| [Preferences](docs/PREFERENCES.md) | All persistent preferences with defaults and keys |
+| [Quickstart](QUICKSTART.md) | Zero-to-classifier in 10 minutes |
+| [Python Server](python_server/README.md) | Detailed Python server documentation |
+
 ## Requirements
 
-### QuPath Extension
-- QuPath 0.6.0 or later
-- Java 21+
+- QuPath 0.6.0+, Java 21+
+- Python 3.10+, PyTorch 2.1+
+- CUDA-capable GPU recommended (CPU and Apple Silicon MPS also supported)
 
-### Python Server
-- Python 3.10+
-- PyTorch 2.1+
-- CUDA-capable GPU (recommended)
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full setup instructions.
 
-## Installation
+## Quick Start
 
-### QuPath Extension
+```bash
+# Build Java extension
+./gradlew build
+# Copy JAR from build/libs/ to QuPath extensions directory
 
-1. Build the extension:
-   ```bash
-   cd qupath-extension-DL-pixel-classifier
-   ./gradlew build
-   ```
+# Set up Python server
+cd python_server && pip install -e ".[cuda]"
+dlclassifier-server
+```
 
-2. Copy the JAR from `build/libs/` to your QuPath extensions directory.
+Then in QuPath: **Extensions > DL Pixel Classifier > Train Classifier...**
 
-### Python Server
+See [QUICKSTART.md](QUICKSTART.md) for the complete walkthrough.
 
-1. Install dependencies:
-   ```bash
-   cd python_server
-   pip install -e .
-   ```
+## Usage Overview
 
-2. Start the server:
-   ```bash
-   dlclassifier-server
-   ```
+**Training**: Create annotations with 2+ classes, open the training dialog, configure parameters, and click Start Training. See [docs/TRAINING_GUIDE.md](docs/TRAINING_GUIDE.md).
 
-For detailed Python server documentation, see [python_server/README.md](python_server/README.md).
+**Inference**: Select a trained classifier, choose output type (measurements/objects/overlay), and click Apply. See [docs/INFERENCE_GUIDE.md](docs/INFERENCE_GUIDE.md).
+
+**Scripting**: Use the Simple API or Builder API for batch processing. Both dialogs include a "Copy as Script" button. See [docs/SCRIPTING.md](docs/SCRIPTING.md).
 
 ## Testing
 
-### Python Server Tests
-
-The Python server includes a comprehensive test suite covering GPU management, training, inference, and API endpoints.
-
 ```bash
 cd python_server
-
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-
-# Install with test dependencies
 pip install -e ".[dev]"
-
-# Run all tests
 pytest tests/ -v
-
-# Run with coverage
-pytest tests/ --cov=dlclassifier_server --cov-report=html
 ```
 
 Current status: **78 tests passing, 5 skipped**
-
-### Generating Test Data
-
-To generate synthetic training data for testing:
-
-```bash
-cd python_server
-python tests/generate_test_data.py
-```
-
-This creates 6 synthetic images with masks for training validation.
-
-## Usage
-
-### Training a Classifier
-
-1. Open an image in QuPath
-2. Create annotations with classification (e.g., "Foreground", "Background")
-3. Go to **Extensions > DL Pixel Classifier > Train Classifier...**
-4. Configure training parameters (model, epochs, tile size, etc.)
-5. Select training data source:
-   - **Current image only** (default) - train from annotations on the open image
-   - **Selected project images** - train from annotations across multiple project images
-6. Click **Start Training**
-7. Monitor progress with separate train/val loss charting
-
-### Applying a Classifier
-
-1. Open an image in QuPath
-2. Go to **Extensions > DL Pixel Classifier > Apply Classifier...**
-3. Select a trained classifier
-4. Choose output type (measurements, objects, or overlay)
-5. Click **Apply**
-
-### Scripting
-
-**Simple API** (convenience methods):
-
-```groovy
-// Load classifier
-def classifier = DLClassifierScripts.loadClassifier("my_classifier_id")
-
-// Apply to annotations
-def annotations = getAnnotationObjects()
-DLClassifierScripts.classifyRegions(classifier, annotations)
-
-// Or with specific output type
-DLClassifierScripts.classifyRegions(classifier, annotations, "objects")
-
-// Batch process project
-for (entry in getProject().getImageList()) {
-    def imageData = entry.readImageData()
-    DLClassifierScripts.classifyRegions(classifier, imageData.getAnnotationObjects())
-    entry.saveImageData(imageData)
-}
-```
-
-**Builder API** (full control, headless-compatible):
-
-```groovy
-import qupath.ext.dlclassifier.controller.InferenceWorkflow
-import qupath.ext.dlclassifier.model.*
-import qupath.ext.dlclassifier.scripting.DLClassifierScripts
-
-def classifier = DLClassifierScripts.loadClassifier("my_classifier_id")
-
-def inferenceConfig = InferenceConfig.builder()
-        .tileSize(512)
-        .overlap(64)
-        .blendMode(InferenceConfig.BlendMode.LINEAR)
-        .outputType(InferenceConfig.OutputType.MEASUREMENTS)
-        .useGPU(true)
-        .build()
-
-def channelConfig = ChannelConfiguration.builder()
-        .selectedChannels([0, 1, 2])
-        .channelNames(["Red", "Green", "Blue"])
-        .bitDepth(8)
-        .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.PERCENTILE_99)
-        .build()
-
-def result = InferenceWorkflow.builder()
-        .classifier(classifier)
-        .config(inferenceConfig)
-        .channels(channelConfig)
-        .annotations(getAnnotationObjects())
-        .build()
-        .run()
-
-println "Processed ${result.processedAnnotations()} annotations, ${result.processedTiles()} tiles"
-```
-
-Training follows the same pattern via `TrainingWorkflow.builder()`.
-
-### Copy as Script
-
-Both the training and inference dialogs include a **"Copy as Script"** button that generates
-a runnable Groovy script from the current dialog settings and copies it to the clipboard.
-This enables reproducible workflows -- configure in the GUI, then paste into QuPath's
-Script Editor for batch use.
 
 ## Architecture
 

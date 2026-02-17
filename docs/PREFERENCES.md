@@ -1,0 +1,99 @@
+# Preferences Reference
+
+All persistent preferences for the DL Pixel Classifier extension, their defaults, and where they appear.
+
+## How Preferences Work
+
+Preferences are stored using QuPath's persistent preference system (`PathPrefs`). They survive QuPath restarts and are scoped per user.
+
+- **Dialog preferences** are saved automatically when you click "Start Training" or "Apply"
+- **Server preferences** are editable in Edit > Preferences under "DL Pixel Classifier"
+- All preference keys are prefixed with `dlclassifier.`
+
+## Server & Processing Preferences
+
+These appear in **Edit > Preferences > DL Pixel Classifier**.
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| DL Server Host | `dlclassifier.serverHost` | `localhost` | Hostname or IP of the Python server |
+| DL Server Port | `dlclassifier.serverPort` | `8765` | Port of the Python server |
+| Overlay Reflection Padding | `dlclassifier.overlayReflectionPadding` | `32` | Pixels of reflection padding per tile to reduce edge artifacts. Set to 0 to disable. |
+| Use GPU for Inference | `dlclassifier.useGPU` | `true` | Use GPU acceleration when available |
+
+## Tile Settings
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| Tile Size | `dlclassifier.tileSize` | `512` | Default tile size in pixels |
+| Tile Overlap | `dlclassifier.tileOverlap` | `64` | Tile overlap in pixels |
+| Tile Overlap Percent | `dlclassifier.tileOverlapPercent` | `12.5` | Tile overlap as percentage |
+
+## Object Output Settings
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| Default Object Type | `dlclassifier.defaultObjectType` | `DETECTION` | QuPath object type for OBJECTS output |
+| Min Object Size | `dlclassifier.minObjectSizeMicrons` | `10.0` | Minimum object area in um^2 |
+| Hole Filling | `dlclassifier.holeFillingMicrons` | `5.0` | Hole filling threshold in um^2 |
+
+## Training Defaults
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| Default Epochs | `dlclassifier.defaultEpochs` | `50` | Initial epoch count |
+| Default Batch Size | `dlclassifier.defaultBatchSize` | `8` | Initial batch size |
+| Default Learning Rate | `dlclassifier.defaultLearningRate` | `0.001` | Initial learning rate |
+| Use Augmentation | `dlclassifier.useAugmentation` | `true` | Enable data augmentation |
+| Use Pretrained Weights | `dlclassifier.usePretrainedWeights` | `true` | Use pretrained encoder weights |
+| Default Normalization | `dlclassifier.defaultNormalization` | `PERCENTILE_99` | Channel normalization strategy |
+
+## Training Dialog Preferences (remembered across sessions)
+
+These are saved when you click "Start Training" and restored next time you open the dialog.
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| Last Architecture | `dlclassifier.lastArchitecture` | `unet` | Last used model architecture |
+| Last Backbone | `dlclassifier.lastBackbone` | `resnet34` | Last used encoder backbone |
+| Validation Split | `dlclassifier.validationSplit` | `20` | Validation split percentage |
+| Horizontal Flip | `dlclassifier.augFlipHorizontal` | `true` | Augmentation: horizontal flip |
+| Vertical Flip | `dlclassifier.augFlipVertical` | `true` | Augmentation: vertical flip |
+| Rotation | `dlclassifier.augRotation` | `true` | Augmentation: 90-degree rotation |
+| Color Jitter | `dlclassifier.augColorJitter` | `false` | Augmentation: color perturbation |
+| Elastic Deformation | `dlclassifier.augElasticDeform` | `false` | Augmentation: elastic distortion |
+
+## Training Strategy Preferences (remembered across sessions)
+
+These are in the collapsed "TRAINING STRATEGY" section of the training dialog.
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| LR Scheduler | `dlclassifier.defaultScheduler` | `onecycle` | Learning rate schedule type |
+| Loss Function | `dlclassifier.defaultLossFunction` | `ce_dice` | Training loss function |
+| Early Stop Metric | `dlclassifier.defaultEarlyStoppingMetric` | `mean_iou` | Metric for early stopping |
+| Early Stop Patience | `dlclassifier.defaultEarlyStoppingPatience` | `15` | Epochs without improvement |
+| Mixed Precision | `dlclassifier.defaultMixedPrecision` | `true` | FP16/FP32 AMP |
+
+## Inference Dialog Preferences (remembered across sessions)
+
+These are saved when you click "Apply" and restored next time you open the dialog.
+
+| Preference | Key | Default | Description |
+|-----------|-----|---------|-------------|
+| Output Type | `dlclassifier.lastOutputType` | `MEASUREMENTS` | Last used output type |
+| Blend Mode | `dlclassifier.lastBlendMode` | `LINEAR` | Last used blend mode |
+| Smoothing | `dlclassifier.smoothing` | `1.0` | Boundary smoothing amount |
+| Application Scope | `dlclassifier.applicationScope` | `ALL_ANNOTATIONS` | Last used scope |
+| Create Backup | `dlclassifier.createBackup` | `false` | Back up measurements before overwriting |
+
+## Resetting Preferences
+
+To reset all DL Pixel Classifier preferences to defaults:
+
+1. Close QuPath
+2. Open QuPath's preferences file (location varies by OS)
+3. Delete all entries starting with `dlclassifier.`
+4. Restart QuPath
+
+Alternatively, manually change individual preferences in **Edit > Preferences** or by adjusting dialog settings and clicking Apply/Train.
