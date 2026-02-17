@@ -161,6 +161,7 @@ public class ModelManager {
             int inputHeight = arch.has("input_height") ? arch.get("input_height").getAsInt() : 512;
             int inputChannels = arch.has("input_channels") ? arch.get("input_channels").getAsInt() : 3;
             double downsample = arch.has("downsample") ? arch.get("downsample").getAsDouble() : 1.0;
+            int contextScale = arch.has("context_scale") ? arch.get("context_scale").getAsInt() : 1;
 
             // Channel config
             JsonObject chanConfig = obj.has("channel_config") ?
@@ -211,6 +212,7 @@ public class ModelManager {
                     .inputSize(inputWidth, inputHeight)
                     .inputChannels(inputChannels)
                     .downsample(downsample)
+                    .contextScale(contextScale)
                     .expectedChannelNames(channelNames)
                     .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.valueOf(normStrategy))
                     .bitDepthTrained(bitDepth)

@@ -291,12 +291,14 @@ class SegmentationDataset(Dataset):
         masks_dir: str,
         input_config: Dict[str, Any],
         augment: bool = True,
-        augmentation_config: Optional[Dict[str, Any]] = None
+        augmentation_config: Optional[Dict[str, Any]] = None,
+        context_dir: Optional[str] = None
     ):
         self.images_dir = Path(images_dir)
         self.masks_dir = Path(masks_dir)
         self.input_config = input_config
         self.augment = augment and ALBUMENTATIONS_AVAILABLE
+        self.context_dir = Path(context_dir) if context_dir else None
 
         # Find all images (including raw float32 files from N-channel export)
         self.image_files = sorted(list(self.images_dir.glob("*.tiff")) +
@@ -304,6 +306,8 @@ class SegmentationDataset(Dataset):
                                   list(self.images_dir.glob("*.png")) +
                                   list(self.images_dir.glob("*.raw")))
         logger.info(f"Found {len(self.image_files)} images in {images_dir}")
+        if self.context_dir:
+            logger.info(f"Multi-scale context enabled from {context_dir}")
 
         # Setup augmentation
         if self.augment:
@@ -326,13 +330,26 @@ class SegmentationDataset(Dataset):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        # Load image (supports TIFF, PNG, and raw float32 files)
+        # Load detail image (supports TIFF, PNG, and raw float32 files)
         img_path = self.image_files[idx]
         img_array = self._load_patch(img_path)
 
         # Handle channels
         if img_array.ndim == 2:
             img_array = img_array[..., np.newaxis]
+
+        # Load and concatenate context tile when multi-scale is enabled
+        if self.context_dir is not None:
+            ctx_path = self.context_dir / img_path.name
+            if ctx_path.exists():
+                ctx_array = self._load_patch(ctx_path)
+                if ctx_array.ndim == 2:
+                    ctx_array = ctx_array[..., np.newaxis]
+                # Concatenate detail + context along channel axis: (H,W,C) + (H,W,C) -> (H,W,2C)
+                img_array = np.concatenate([img_array, ctx_array], axis=2)
+            else:
+                logger.warning(f"Context tile not found: {ctx_path}, duplicating detail tile")
+                img_array = np.concatenate([img_array, img_array], axis=2)
 
         # Normalize BEFORE augmentation
         img_array = self._normalize(img_array)
@@ -582,19 +599,36 @@ class TrainingService:
         data_path = Path(data_path)
         augmentation_config = training_params.get("augmentation_config", {})
 
+        # Multi-scale context: when context_scale > 1, load context tiles from context/ dirs
+        context_scale = architecture.get("context_scale", 1)
+        train_context_dir = None
+        val_context_dir = None
+        if context_scale > 1:
+            train_ctx = data_path / "train" / "context"
+            val_ctx = data_path / "validation" / "context"
+            if train_ctx.exists():
+                train_context_dir = str(train_ctx)
+                logger.info(f"Multi-scale context enabled (scale={context_scale})")
+            else:
+                logger.warning(f"context_scale={context_scale} but no context/ directory found")
+            if val_ctx.exists():
+                val_context_dir = str(val_ctx)
+
         train_dataset = SegmentationDataset(
             images_dir=str(data_path / "train" / "images"),
             masks_dir=str(data_path / "train" / "masks"),
             input_config=input_config,
             augment=training_params.get("augmentation", True),
-            augmentation_config=augmentation_config
+            augmentation_config=augmentation_config,
+            context_dir=train_context_dir
         )
 
         val_dataset = SegmentationDataset(
             images_dir=str(data_path / "validation" / "images"),
             masks_dir=str(data_path / "validation" / "masks"),
             input_config=input_config,
-            augment=False  # Never augment validation
+            augment=False,  # Never augment validation
+            context_dir=val_context_dir
         )
 
         # Create data loaders

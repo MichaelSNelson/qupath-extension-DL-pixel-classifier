@@ -82,6 +82,7 @@ public class AnnotationExtractor {
     private final ChannelConfiguration channelConfig;
     private final int lineStrokeWidth;
     private final double downsample;
+    private final int contextScale;
 
     /**
      * Creates a new annotation extractor.
@@ -125,12 +126,32 @@ public class AnnotationExtractor {
                                ChannelConfiguration channelConfig,
                                int lineStrokeWidth,
                                double downsample) {
+        this(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, 1);
+    }
+
+    /**
+     * Creates a new annotation extractor with multi-scale context support.
+     *
+     * @param imageData       the image data
+     * @param patchSize       the patch size to extract (output size in pixels)
+     * @param channelConfig   channel configuration
+     * @param lineStrokeWidth stroke width for rendering line annotations (pixels)
+     * @param downsample      downsample factor (1.0 = full resolution)
+     * @param contextScale    context scale factor (1 = disabled, 2/4/8 = context tile extracted)
+     */
+    public AnnotationExtractor(ImageData<BufferedImage> imageData,
+                               int patchSize,
+                               ChannelConfiguration channelConfig,
+                               int lineStrokeWidth,
+                               double downsample,
+                               int contextScale) {
         this.imageData = imageData;
         this.server = imageData.getServer();
         this.patchSize = patchSize;
         this.channelConfig = channelConfig;
         this.lineStrokeWidth = lineStrokeWidth;
         this.downsample = downsample;
+        this.contextScale = contextScale;
     }
 
     /**
@@ -175,6 +196,17 @@ public class AnnotationExtractor {
         Files.createDirectories(trainMasks);
         Files.createDirectories(valImages);
         Files.createDirectories(valMasks);
+
+        // Context tile directories (only when multi-scale is enabled)
+        Path trainContext = null;
+        Path valContext = null;
+        if (contextScale > 1) {
+            trainContext = outputDir.resolve("train/context");
+            valContext = outputDir.resolve("validation/context");
+            Files.createDirectories(trainContext);
+            Files.createDirectories(valContext);
+            logger.info("Multi-scale context enabled: contextScale={}", contextScale);
+        }
 
         // Build class index map (class 0, 1, 2, ...; 255 = unlabeled)
         Map<String, Integer> classIndex = new LinkedHashMap<>();
@@ -252,6 +284,14 @@ public class AnnotationExtractor {
             savePatch(image, imgPath);
             saveMask(maskResult.mask, maskPath);
 
+            // Extract context tile when multi-scale is enabled
+            if (contextScale > 1) {
+                Path ctxDir = isValidation ? valContext : trainContext;
+                Path ctxPath = ctxDir.resolve(String.format("patch_%04d.tiff", patchIndex));
+                BufferedImage contextImage = readContextTile(loc.x, loc.y, regionSize);
+                savePatch(contextImage, ctxPath);
+            }
+
             // Track statistics
             for (int i = 0; i < classNames.size(); i++) {
                 classPixelCounts[i] += maskResult.classPixelCounts[i];
@@ -307,6 +347,10 @@ public class AnnotationExtractor {
         Path valImages = outputDir.resolve("validation/images");
         Path valMasks = outputDir.resolve("validation/masks");
 
+        // Context tile directories
+        Path trainContext = contextScale > 1 ? outputDir.resolve("train/context") : null;
+        Path valContext = contextScale > 1 ? outputDir.resolve("validation/context") : null;
+
         // Build class index map
         Map<String, Integer> classIndex = new LinkedHashMap<>();
         for (int i = 0; i < classNames.size(); i++) {
@@ -357,6 +401,14 @@ public class AnnotationExtractor {
 
             savePatch(image, imgDir.resolve(String.format("patch_%04d.tiff", patchIndex)));
             saveMask(maskResult.mask, maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
+
+            // Extract context tile when multi-scale is enabled
+            if (contextScale > 1) {
+                Path ctxDir = isValidation ? valContext : trainContext;
+                Path ctxPath = ctxDir.resolve(String.format("patch_%04d.tiff", patchIndex));
+                BufferedImage contextImage = readContextTile(loc.x, loc.y, regionSize);
+                savePatch(contextImage, ctxPath);
+            }
 
             for (int i = 0; i < classNames.size(); i++) {
                 classPixelCounts[i] += maskResult.classPixelCounts[i];
@@ -483,6 +535,37 @@ public class AnnotationExtractor {
             int lineStrokeWidth,
             Map<String, Double> classWeightMultipliers,
             double downsample) throws IOException {
+        return exportFromProject(entries, patchSize, channelConfig, classNames,
+                outputDir, validationSplit, lineStrokeWidth, classWeightMultipliers, downsample, 1);
+    }
+
+    /**
+     * Exports training data from multiple project images with multi-scale context support.
+     *
+     * @param entries                project image entries to export from
+     * @param patchSize              the patch size to extract
+     * @param channelConfig          channel configuration
+     * @param classNames             list of class names to export
+     * @param outputDir              output directory for combined training data
+     * @param validationSplit        fraction of data for validation (0.0-1.0)
+     * @param lineStrokeWidth        stroke width for rendering line annotations (pixels)
+     * @param classWeightMultipliers user multipliers on auto-computed weights (empty = no modification)
+     * @param downsample             downsample factor (1.0 = full resolution)
+     * @param contextScale           context scale factor (1 = disabled, 2/4/8 = context)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth,
+            Map<String, Double> classWeightMultipliers,
+            double downsample,
+            int contextScale) throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
 
@@ -495,6 +578,13 @@ public class AnnotationExtractor {
         Files.createDirectories(trainMasks);
         Files.createDirectories(valImages);
         Files.createDirectories(valMasks);
+
+        // Context tile directories (only when multi-scale is enabled)
+        if (contextScale > 1) {
+            Files.createDirectories(outputDir.resolve("train/context"));
+            Files.createDirectories(outputDir.resolve("validation/context"));
+            logger.info("Multi-scale context enabled: contextScale={}", contextScale);
+        }
 
         // Accumulators across all images
         int totalPatchIndex = 0;
@@ -509,7 +599,7 @@ public class AnnotationExtractor {
             logger.info("Processing image: {}", entry.getImageName());
             try {
                 ImageData<BufferedImage> imageData = entry.readImageData();
-                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample);
+                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale);
 
                 ExportResult result = extractor.exportTrainingDataWithOffset(
                         outputDir, classNames, validationSplit, totalPatchIndex);
@@ -551,7 +641,7 @@ public class AnnotationExtractor {
         // Save combined config.json
         saveProjectConfig(outputDir, classNames, totalClassPixelCounts, totalLabeledPixels,
                 channelConfig, patchSize, totalTrainCount, totalValCount,
-                totalAnnotationCount, sourceImages, classWeightMultipliers, downsample);
+                totalAnnotationCount, sourceImages, classWeightMultipliers, downsample, contextScale);
 
         logger.info("Multi-image export complete: {} patches ({} train, {} val) from {} images",
                 totalPatchIndex, totalTrainCount, totalValCount, entries.size());
@@ -569,7 +659,7 @@ public class AnnotationExtractor {
                                            int trainCount, int valCount,
                                            int annotationCount, List<String> sourceImages,
                                            Map<String, Double> classWeightMultipliers,
-                                           double downsample)
+                                           double downsample, int contextScale)
             throws IOException {
         Path configPath = outputDir.resolve("config.json");
         List<String> channelNames = channelConfig.getChannelNames();
@@ -604,7 +694,12 @@ public class AnnotationExtractor {
         }
         json.append("  ],\n");
         json.append("  \"channel_config\": {\n");
-        json.append("    \"num_channels\": ").append(channelConfig.getNumChannels()).append(",\n");
+        int effectiveChannels = contextScale > 1
+                ? channelConfig.getNumChannels() * 2
+                : channelConfig.getNumChannels();
+        json.append("    \"num_channels\": ").append(effectiveChannels).append(",\n");
+        json.append("    \"detail_channels\": ").append(channelConfig.getNumChannels()).append(",\n");
+        json.append("    \"context_scale\": ").append(contextScale).append(",\n");
         json.append("    \"channel_names\": [");
         for (int i = 0; i < channelNames.size(); i++) {
             json.append("\"").append(channelNames.get(i)).append("\"");
@@ -636,6 +731,44 @@ public class AnnotationExtractor {
 
         Files.writeString(configPath, json.toString());
         logger.info("Saved combined config to: {}", configPath);
+    }
+
+    /**
+     * Reads a context tile centered on the same location as a detail tile.
+     * <p>
+     * The context region covers {@code contextScale} times the area of the detail
+     * region, read at {@code downsample * contextScale} so the output has the same
+     * pixel dimensions (patchSize x patchSize) as the detail tile.
+     *
+     * @param detailX    top-left X of the detail tile region (full-res coords)
+     * @param detailY    top-left Y of the detail tile region (full-res coords)
+     * @param detailSize size of the detail region in full-res coords (patchSize * downsample)
+     * @return context tile image (patchSize x patchSize pixels)
+     * @throws IOException if reading fails
+     */
+    private BufferedImage readContextTile(int detailX, int detailY, int detailSize) throws IOException {
+        // Context region is contextScale times larger, centered on the same point
+        int contextRegionSize = detailSize * contextScale;
+        int centerX = detailX + detailSize / 2;
+        int centerY = detailY + detailSize / 2;
+
+        // Top-left of context region, clamped to image bounds
+        int cx = centerX - contextRegionSize / 2;
+        int cy = centerY - contextRegionSize / 2;
+        cx = Math.max(0, Math.min(cx, server.getWidth() - contextRegionSize));
+        cy = Math.max(0, Math.min(cy, server.getHeight() - contextRegionSize));
+
+        // Clamp region size if it exceeds image dimensions
+        int clampedWidth = Math.min(contextRegionSize, server.getWidth() - cx);
+        int clampedHeight = Math.min(contextRegionSize, server.getHeight() - cy);
+
+        // Read at downsample * contextScale -> produces patchSize x patchSize pixels
+        double contextDownsample = downsample * contextScale;
+        RegionRequest contextRequest = RegionRequest.createInstance(
+                server.getPath(), contextDownsample,
+                cx, cy, clampedWidth, clampedHeight,
+                0, 0);
+        return server.readRegion(contextRequest);
     }
 
     /**
@@ -976,7 +1109,12 @@ public class AnnotationExtractor {
         }
         json.append("  ],\n");
         json.append("  \"channel_config\": {\n");
-        json.append("    \"num_channels\": ").append(channelConfig.getNumChannels()).append(",\n");
+        int effectiveChannels = contextScale > 1
+                ? channelConfig.getNumChannels() * 2
+                : channelConfig.getNumChannels();
+        json.append("    \"num_channels\": ").append(effectiveChannels).append(",\n");
+        json.append("    \"detail_channels\": ").append(channelConfig.getNumChannels()).append(",\n");
+        json.append("    \"context_scale\": ").append(contextScale).append(",\n");
         json.append("    \"channel_names\": [");
         for (int i = 0; i < channelNames.size(); i++) {
             json.append("\"").append(channelNames.get(i)).append("\"");

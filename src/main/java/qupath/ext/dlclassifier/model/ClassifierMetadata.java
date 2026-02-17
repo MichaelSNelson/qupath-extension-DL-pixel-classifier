@@ -36,6 +36,7 @@ public class ClassifierMetadata {
     private final int inputHeight;
     private final int inputChannels;
     private final double downsample;
+    private final int contextScale;
 
     // Channel configuration
     private final List<String> expectedChannelNames;
@@ -62,6 +63,7 @@ public class ClassifierMetadata {
         this.inputHeight = builder.inputHeight;
         this.inputChannels = builder.inputChannels;
         this.downsample = builder.downsample;
+        this.contextScale = builder.contextScale;
         this.expectedChannelNames = Collections.unmodifiableList(new ArrayList<>(builder.expectedChannelNames));
         this.normalizationStrategy = builder.normalizationStrategy;
         this.bitDepthTrained = builder.bitDepthTrained;
@@ -119,6 +121,20 @@ public class ClassifierMetadata {
      */
     public double getDownsample() {
         return downsample;
+    }
+
+    /**
+     * Gets the context scale factor for multi-scale inference.
+     * <p>
+     * When greater than 1, inference requires both a detail tile and a context tile.
+     * The context tile covers contextScale times the area in each dimension,
+     * downsampled to the same pixel size. Both tiles are concatenated along the
+     * channel axis before being sent to the model.
+     *
+     * @return context scale factor (1 = single-scale, no context tile needed)
+     */
+    public int getContextScale() {
+        return contextScale;
     }
 
     public List<String> getExpectedChannelNames() {
@@ -182,6 +198,7 @@ public class ClassifierMetadata {
         architecture.put("input_height", inputHeight);
         architecture.put("input_channels", inputChannels);
         architecture.put("downsample", downsample);
+        architecture.put("context_scale", contextScale);
         map.put("architecture", architecture);
 
         Map<String, Object> channelConfig = new HashMap<>();
@@ -258,6 +275,7 @@ public class ClassifierMetadata {
         private int inputHeight = 512;
         private int inputChannels = 3;
         private double downsample = 1.0;
+        private int contextScale = 1;
         private List<String> expectedChannelNames = new ArrayList<>();
         private ChannelConfiguration.NormalizationStrategy normalizationStrategy =
                 ChannelConfiguration.NormalizationStrategy.PERCENTILE_99;
@@ -316,6 +334,16 @@ public class ClassifierMetadata {
          */
         public Builder downsample(double downsample) {
             this.downsample = downsample;
+            return this;
+        }
+
+        /**
+         * Sets the context scale factor for multi-scale inference.
+         *
+         * @param contextScale context scale (1 = disabled, 2/4/8 = enabled)
+         */
+        public Builder contextScale(int contextScale) {
+            this.contextScale = contextScale;
             return this;
         }
 

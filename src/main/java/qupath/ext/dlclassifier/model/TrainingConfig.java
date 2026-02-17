@@ -45,6 +45,9 @@ public class TrainingConfig {
     // Class weight multipliers (user-supplied multipliers on auto-computed inverse-frequency weights)
     private final Map<String, Double> classWeightMultipliers;
 
+    // Multi-scale context
+    private final int contextScale;
+
     // Training strategy
     private final String schedulerType;
     private final String lossFunction;
@@ -69,6 +72,7 @@ public class TrainingConfig {
         this.frozenLayers = Collections.unmodifiableList(new ArrayList<>(builder.frozenLayers));
         this.lineStrokeWidth = builder.lineStrokeWidth;
         this.classWeightMultipliers = Collections.unmodifiableMap(new LinkedHashMap<>(builder.classWeightMultipliers));
+        this.contextScale = builder.contextScale;
         this.schedulerType = builder.schedulerType;
         this.lossFunction = builder.lossFunction;
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
@@ -184,6 +188,20 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the multi-scale context scale factor.
+     * <p>
+     * When greater than 1, each training tile also has a context tile extracted
+     * from a region {@code contextScale} times larger, downsampled to the same
+     * pixel dimensions. The two tiles are concatenated along the channel axis,
+     * doubling the model's input channels.
+     *
+     * @return context scale factor (1 = disabled, 2/4/8 = context enabled)
+     */
+    public int getContextScale() {
+        return contextScale;
+    }
+
+    /**
      * Gets the learning rate scheduler type.
      *
      * @return scheduler type ("onecycle", "cosine", "step", or "none")
@@ -251,6 +269,7 @@ public class TrainingConfig {
                 usePretrainedWeights == that.usePretrainedWeights &&
                 freezeEncoderLayers == that.freezeEncoderLayers &&
                 lineStrokeWidth == that.lineStrokeWidth &&
+                contextScale == that.contextScale &&
                 earlyStoppingPatience == that.earlyStoppingPatience &&
                 mixedPrecision == that.mixedPrecision &&
                 Objects.equals(modelType, that.modelType) &&
@@ -268,14 +287,14 @@ public class TrainingConfig {
         return Objects.hash(modelType, backbone, epochs, batchSize, learningRate,
                 weightDecay, tileSize, overlap, downsample, validationSplit, augmentationConfig,
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
-                classWeightMultipliers, schedulerType, lossFunction, earlyStoppingMetric,
-                earlyStoppingPatience, mixedPrecision);
+                classWeightMultipliers, contextScale, schedulerType, lossFunction,
+                earlyStoppingMetric, earlyStoppingPatience, mixedPrecision);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b}",
-                modelType, backbone, epochs, learningRate, tileSize, downsample, lineStrokeWidth,
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b}",
+                modelType, backbone, epochs, learningRate, tileSize, downsample, contextScale, lineStrokeWidth,
                 schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision);
     }
 
@@ -303,6 +322,7 @@ public class TrainingConfig {
         private List<String> frozenLayers = new ArrayList<>();
         private int lineStrokeWidth = 5;
         private Map<String, Double> classWeightMultipliers = new LinkedHashMap<>();
+        private int contextScale = 1;
         private String schedulerType = "onecycle";
         private String lossFunction = "ce_dice";
         private String earlyStoppingMetric = "mean_iou";
@@ -461,6 +481,20 @@ public class TrainingConfig {
         }
 
         /**
+         * Sets the multi-scale context scale factor.
+         * <p>
+         * When greater than 1, training data export will also extract a context
+         * tile from a region contextScale times larger, downsampled to the same
+         * pixel size. The model receives detail + context channels (2*C input).
+         *
+         * @param contextScale context scale factor (1 = disabled, 2/4/8 = context)
+         */
+        public Builder contextScale(int contextScale) {
+            this.contextScale = contextScale;
+            return this;
+        }
+
+        /**
          * Sets the learning rate scheduler type.
          *
          * @param schedulerType "onecycle", "cosine", "step", or "none"
@@ -522,6 +556,9 @@ public class TrainingConfig {
             }
             if (downsample < 1.0 || downsample > 32.0) {
                 throw new IllegalStateException("Downsample must be between 1.0 and 32.0");
+            }
+            if (contextScale != 1 && contextScale != 2 && contextScale != 4 && contextScale != 8) {
+                throw new IllegalStateException("Context scale must be 1, 2, 4, or 8");
             }
             if (epochs < 1) {
                 throw new IllegalStateException("Epochs must be at least 1");

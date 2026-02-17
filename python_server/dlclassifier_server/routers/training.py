@@ -29,6 +29,7 @@ class ArchitectureConfig(BaseModel):
     input_size: List[int] = [512, 512]
     use_pretrained: bool = True
     frozen_layers: Optional[List[str]] = None  # List of layer names to freeze
+    context_scale: int = 1  # Multi-scale context (1=disabled, 2/4/8=enabled)
 
 
 class TrainingParams(BaseModel):

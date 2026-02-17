@@ -55,6 +55,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private final ChannelConfiguration channelConfig;
     private final InferenceConfig inferenceConfig;
     private final double downsample;
+    private final int contextScale;
     private final PixelClassifierMetadata pixelMetadata;
     private final IndexColorModel colorModel;
     private final ClassifierBackend backend;
@@ -89,6 +90,7 @@ public class DLPixelClassifier implements PixelClassifier {
         this.channelConfig = channelConfig;
         this.inferenceConfig = inferenceConfig;
         this.downsample = metadata.getDownsample();
+        this.contextScale = metadata.getContextScale();
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
         this.backend = BackendFactory.getBackend();
@@ -135,21 +137,43 @@ public class DLPixelClassifier implements PixelClassifier {
             throw new IOException("Failed to read tile at " + request);
         }
 
-        // Encode tile as raw binary (uint8 fast path for simple RGB, float32 for N-channel)
+        // Encode detail tile as raw binary (uint8 fast path for simple RGB, float32 for N-channel)
         String dtype;
-        byte[] rawBytes;
-        int numChannels;
+        byte[] detailBytes;
+        int detailChannels;
         if (InferenceWorkflow.isSimpleRgb(tileImage)) {
             dtype = "uint8";
-            rawBytes = InferenceWorkflow.encodeTileRaw(tileImage);
-            numChannels = 3;
+            detailBytes = InferenceWorkflow.encodeTileRaw(tileImage);
+            detailChannels = 3;
         } else {
             dtype = "float32";
-            rawBytes = InferenceWorkflow.encodeTileRawFloat(tileImage,
+            detailBytes = InferenceWorkflow.encodeTileRawFloat(tileImage,
                     channelConfig.getSelectedChannels());
-            numChannels = channelConfig.getSelectedChannels().isEmpty()
+            detailChannels = channelConfig.getSelectedChannels().isEmpty()
                     ? tileImage.getRaster().getNumBands()
                     : channelConfig.getSelectedChannels().size();
+        }
+
+        // When multi-scale context is enabled, extract a context tile and concatenate
+        byte[] rawBytes;
+        int numChannels;
+        if (contextScale > 1) {
+            BufferedImage contextImage = readContextTile(server, request);
+            byte[] contextBytes;
+            if ("uint8".equals(dtype)) {
+                contextBytes = InferenceWorkflow.encodeTileRaw(contextImage);
+            } else {
+                contextBytes = InferenceWorkflow.encodeTileRawFloat(contextImage,
+                        channelConfig.getSelectedChannels());
+            }
+            // Concatenate detail + context bytes
+            rawBytes = new byte[detailBytes.length + contextBytes.length];
+            System.arraycopy(detailBytes, 0, rawBytes, 0, detailBytes.length);
+            System.arraycopy(contextBytes, 0, rawBytes, detailBytes.length, contextBytes.length);
+            numChannels = detailChannels * 2;
+        } else {
+            rawBytes = detailBytes;
+            numChannels = detailChannels;
         }
 
         String tileId = String.format("%d_%d_%d_%d",
@@ -266,6 +290,48 @@ public class DLPixelClassifier implements PixelClassifier {
     @Override
     public PixelClassifierMetadata getMetadata() {
         return pixelMetadata;
+    }
+
+    /**
+     * Reads a context tile centered on the same location as the given detail request,
+     * but covering a larger area (contextScale times in each dimension) and downsampled
+     * to the same pixel dimensions as the detail tile.
+     */
+    private BufferedImage readContextTile(ImageServer<BufferedImage> server,
+                                          RegionRequest detailRequest) throws IOException {
+        int detailX = detailRequest.getX();
+        int detailY = detailRequest.getY();
+        int detailW = detailRequest.getWidth();
+        int detailH = detailRequest.getHeight();
+
+        // Context region covers contextScale times the area in each dimension
+        int contextW = detailW * contextScale;
+        int contextH = detailH * contextScale;
+
+        // Center the context region on the detail tile's center
+        int centerX = detailX + detailW / 2;
+        int centerY = detailY + detailH / 2;
+        int cx = centerX - contextW / 2;
+        int cy = centerY - contextH / 2;
+
+        // Clamp to image bounds
+        cx = Math.max(0, Math.min(cx, server.getWidth() - contextW));
+        cy = Math.max(0, Math.min(cy, server.getHeight() - contextH));
+        int clampedW = Math.min(contextW, server.getWidth() - cx);
+        int clampedH = Math.min(contextH, server.getHeight() - cy);
+
+        // Read at higher downsample so output has same pixel dimensions as detail tile
+        double contextDownsample = detailRequest.getDownsample() * contextScale;
+        RegionRequest contextRequest = RegionRequest.createInstance(
+                server.getPath(), contextDownsample,
+                cx, cy, clampedW, clampedH,
+                detailRequest.getZ(), detailRequest.getT());
+
+        BufferedImage contextImage = server.readRegion(contextRequest);
+        if (contextImage == null) {
+            throw new IOException("Failed to read context tile at " + contextRequest);
+        }
+        return contextImage;
     }
 
     /**

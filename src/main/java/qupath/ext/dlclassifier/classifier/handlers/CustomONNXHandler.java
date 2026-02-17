@@ -160,6 +160,7 @@ public class CustomONNXHandler implements ClassifierHandler {
                 .backbone("none")
                 .inputSize(config.getTileSize(), config.getTileSize())
                 .inputChannels(channelConfig.getNumChannels())
+                .contextScale(config.getContextScale())
                 .expectedChannelNames(channelConfig.getChannelNames())
                 .normalizationStrategy(channelConfig.getNormalizationStrategy())
                 .bitDepthTrained(channelConfig.getBitDepth());

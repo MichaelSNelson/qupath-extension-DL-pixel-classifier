@@ -27,6 +27,7 @@ import qupath.lib.images.servers.ImageServer;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.regions.ImagePlane;
+import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
 
@@ -558,6 +559,9 @@ public class InferenceWorkflow {
         // OBJECTS needs full pixel-level probability maps
         boolean usePixelInference = inferenceConfig.getOutputType() != InferenceConfig.OutputType.MEASUREMENTS;
 
+        // Multi-scale context: when contextScale > 1, detail + context tiles are concatenated
+        int contextScale = metadata.getContextScale();
+
         // Process in batches with parallel tile preparation
         int batchSize = tileProcessor.getMaxTilesInMemory();
         List<float[][][]> allResults = new ArrayList<>();
@@ -597,7 +601,7 @@ public class InferenceWorkflow {
                     nextPrepared = null;
                 } else {
                     List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
-                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool);
+                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale);
                 }
 
                 // Start preparing NEXT batch in parallel while we send current to server
@@ -607,7 +611,7 @@ public class InferenceWorkflow {
                     int nextEnd = Math.min(nextStart + batchSize, tileSpecs.size());
                     List<TileProcessor.TileSpec> nextBatchSpecs = tileSpecs.subList(nextStart, nextEnd);
                     nextBatchFuture = tilePool.submit(() ->
-                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool));
+                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale));
                 }
 
                 // Send current batch to server for inference
@@ -799,11 +803,14 @@ public class InferenceWorkflow {
      * them in both raw binary and base64 formats.
      * <p>
      * Tile reading is parallelized across the provided thread pool for I/O overlap.
+     * When {@code contextScale > 1}, context tiles are also read and concatenated
+     * with detail tiles along the channel axis.
      *
      * @param batch         tile specs for this batch
      * @param tileProcessor tile processor for reading tiles
      * @param server        image server
      * @param tilePool      thread pool for parallel reading
+     * @param contextScale  context scale factor (1 = no context, >1 = multi-scale)
      * @return prepared batch data
      * @throws IOException if tile reading fails
      */
@@ -811,12 +818,18 @@ public class InferenceWorkflow {
             List<TileProcessor.TileSpec> batch,
             TileProcessor tileProcessor,
             ImageServer<BufferedImage> server,
-            ExecutorService tilePool) throws IOException {
+            ExecutorService tilePool,
+            int contextScale) throws IOException {
 
-        // Read all tiles in parallel
-        List<Future<BufferedImage>> futures = new ArrayList<>();
+        // Read all detail tiles in parallel
+        List<Future<BufferedImage>> detailFutures = new ArrayList<>();
+        List<Future<BufferedImage>> contextFutures = new ArrayList<>();
         for (TileProcessor.TileSpec spec : batch) {
-            futures.add(tilePool.submit(() -> tileProcessor.readTile(spec, server)));
+            detailFutures.add(tilePool.submit(() -> tileProcessor.readTile(spec, server)));
+            if (contextScale > 1) {
+                contextFutures.add(tilePool.submit(() ->
+                        readContextTileBatch(spec, tileProcessor, server, contextScale)));
+            }
         }
 
         List<String> tileIds = new ArrayList<>();
@@ -826,7 +839,7 @@ public class InferenceWorkflow {
         // Determine encoding path from first tile (all tiles in a batch share
         // the same image type since they come from the same server)
         String dtype = null;
-        int rawChannels = 0;
+        int detailChannels = 0;
 
         for (int j = 0; j < batch.size(); j++) {
             TileProcessor.TileSpec spec = batch.get(j);
@@ -835,7 +848,7 @@ public class InferenceWorkflow {
 
             BufferedImage tileImage;
             try {
-                tileImage = futures.get(j).get();
+                tileImage = detailFutures.get(j).get();
             } catch (Exception e) {
                 throw new IOException("Failed to read tile " + tileId, e);
             }
@@ -844,30 +857,97 @@ public class InferenceWorkflow {
             if (dtype == null) {
                 if (isSimpleRgb(tileImage)) {
                     dtype = "uint8";
-                    rawChannels = 3;
+                    detailChannels = 3;
                 } else {
                     dtype = "float32";
-                    rawChannels = tileImage.getRaster().getNumBands();
+                    detailChannels = tileImage.getRaster().getNumBands();
                 }
             }
 
-            // Raw bytes for binary transfer
-            byte[] rawBytes;
+            // Encode detail tile
+            byte[] detailBytes;
             if ("uint8".equals(dtype)) {
-                rawBytes = encodeTileRaw(tileImage);
+                detailBytes = encodeTileRaw(tileImage);
             } else {
-                rawBytes = encodeTileRawFloat(tileImage, null);
+                detailBytes = encodeTileRawFloat(tileImage, null);
             }
-            rawBuffer.write(rawBytes);
 
-            // Base64 for fallback
+            if (contextScale > 1) {
+                // Read and encode context tile, then concatenate
+                BufferedImage contextImage;
+                try {
+                    contextImage = contextFutures.get(j).get();
+                } catch (Exception e) {
+                    throw new IOException("Failed to read context tile for " + tileId, e);
+                }
+                byte[] contextBytes;
+                if ("uint8".equals(dtype)) {
+                    contextBytes = encodeTileRaw(contextImage);
+                } else {
+                    contextBytes = encodeTileRawFloat(contextImage, null);
+                }
+                rawBuffer.write(detailBytes);
+                rawBuffer.write(contextBytes);
+            } else {
+                rawBuffer.write(detailBytes);
+            }
+
+            // Base64 for fallback (detail tile only -- context not supported in JSON path)
             String encoded = encodeTile(tileImage);
             tileDataList.add(new ClassifierClient.TileData(
                     tileId, encoded, spec.x(), spec.y()));
         }
 
+        int numChannels = contextScale > 1 ? detailChannels * 2 : detailChannels;
         return new PreparedBatch(rawBuffer.toByteArray(), tileIds, tileDataList,
-                dtype != null ? dtype : "uint8", rawChannels);
+                dtype != null ? dtype : "uint8", numChannels);
+    }
+
+    /**
+     * Reads a context tile for batch inference. The context tile covers
+     * {@code contextScale} times the area of the detail tile in each dimension,
+     * centered on the same location, and downsampled to the same pixel dimensions.
+     */
+    private static BufferedImage readContextTileBatch(
+            TileProcessor.TileSpec spec,
+            TileProcessor tileProcessor,
+            ImageServer<BufferedImage> server,
+            int contextScale) throws IOException {
+        double downsample = tileProcessor.getDownsample();
+
+        // Convert tile coordinates from downsampled space to full-res
+        int fullResX = (int) (spec.x() * downsample);
+        int fullResY = (int) (spec.y() * downsample);
+        int fullResW = (int) (spec.width() * downsample);
+        int fullResH = (int) (spec.height() * downsample);
+
+        // Context region covers contextScale times the area in each dimension
+        int contextW = fullResW * contextScale;
+        int contextH = fullResH * contextScale;
+
+        // Center context on same location as detail tile
+        int centerX = fullResX + fullResW / 2;
+        int centerY = fullResY + fullResH / 2;
+        int cx = centerX - contextW / 2;
+        int cy = centerY - contextH / 2;
+
+        // Clamp to image bounds
+        cx = Math.max(0, Math.min(cx, server.getWidth() - contextW));
+        cy = Math.max(0, Math.min(cy, server.getHeight() - contextH));
+        int clampedW = Math.min(contextW, server.getWidth() - cx);
+        int clampedH = Math.min(contextH, server.getHeight() - cy);
+
+        // Read at higher downsample so output pixel dimensions match detail tile
+        double contextDownsample = downsample * contextScale;
+        RegionRequest contextRequest = RegionRequest.createInstance(
+                server.getPath(), contextDownsample,
+                cx, cy, clampedW, clampedH);
+
+        BufferedImage contextImage = server.readRegion(contextRequest);
+        if (contextImage == null) {
+            throw new IOException("Failed to read context tile for spec " + spec.index());
+        }
+        return contextImage;
     }
 
     /**

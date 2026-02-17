@@ -220,6 +220,7 @@ public class UNetHandler implements ClassifierHandler {
                 .backbone(config.getBackbone())
                 .inputSize(config.getTileSize(), config.getTileSize())
                 .inputChannels(channelConfig.getNumChannels())
+                .contextScale(config.getContextScale())
                 .expectedChannelNames(channelConfig.getChannelNames())
                 .normalizationStrategy(channelConfig.getNormalizationStrategy())
                 .bitDepthTrained(channelConfig.getBitDepth())

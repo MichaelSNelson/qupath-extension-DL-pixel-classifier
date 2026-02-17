@@ -258,6 +258,7 @@ public class ClassifierClient {
         architecture.put("input_size", List.of(trainingConfig.getTileSize(), trainingConfig.getTileSize()));
         architecture.put("downsample", trainingConfig.getDownsample());
         architecture.put("use_pretrained", trainingConfig.isUsePretrainedWeights());
+        architecture.put("context_scale", trainingConfig.getContextScale());
         // Pass frozen layer names for transfer learning
         List<String> frozenLayers = trainingConfig.getFrozenLayers();
         if (frozenLayers != null && !frozenLayers.isEmpty()) {
