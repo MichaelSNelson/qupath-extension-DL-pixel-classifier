@@ -84,13 +84,23 @@ public class ApposeService {
             // Load pixi.toml from JAR resources
             String pixiToml = loadResource(PIXI_TOML_RESOURCE);
 
+            // Set context classloader so ServiceLoader discovers Appose's
+            // Scheme implementations from the extension shadow JAR.
+            // QuPath's extension classloader doesn't propagate to thread context.
+            ClassLoader original = Thread.currentThread().getContextClassLoader();
+            Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+
             // Build the pixi environment (downloads deps on first run)
-            environment = Appose.pixi()
-                    .content(pixiToml)
-                    .scheme("pixi.toml")
-                    .name(ENV_NAME)
-                    .logDebug()
-                    .build();
+            try {
+                environment = Appose.pixi()
+                        .content(pixiToml)
+                        .scheme("pixi.toml")
+                        .name(ENV_NAME)
+                        .logDebug()
+                        .build();
+            } finally {
+                Thread.currentThread().setContextClassLoader(original);
+            }
 
             logger.info("Appose environment built successfully");
 
