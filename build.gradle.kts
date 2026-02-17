@@ -28,6 +28,10 @@ allprojects {
             name = "OME-Artifacts"
             url = uri("https://artifacts.openmicroscopy.org/artifactory/maven/")
         }
+        maven {
+            name = "JitPack"
+            url = uri("https://jitpack.io")
+        }
     }
 }
 
@@ -45,7 +49,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Appose for embedded Java-Python IPC with shared memory
-    implementation("org.apposed:appose:0.9.0")
+    // Pinned to post-0.9.0 commit that fixes Pixi auto-install on Windows
+    // (RuntimeException in Pixi.version() prevented auto-install; fixed in acbfd923)
+    implementation("com.github.apposed:appose-java:acbfd923")
 
     // Groovy for scripting support
     shadow(libs.bundles.groovy)
