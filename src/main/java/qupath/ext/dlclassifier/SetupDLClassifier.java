@@ -157,8 +157,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         "Supports single-image and multi-image training from project images.");
         trainOption.disableProperty().bind(
                 Bindings.createBooleanBinding(
-                        () -> qupath.getImageData() == null,
-                        qupath.imageDataProperty()
+                        () -> qupath.getProject() == null,
+                        qupath.projectProperty()
                 )
         );
         trainOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("training"));
