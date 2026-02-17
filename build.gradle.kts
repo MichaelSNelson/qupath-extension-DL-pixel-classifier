@@ -65,6 +65,10 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
+tasks.shadowJar {
+    mergeServiceFiles()
+}
+
 tasks.withType<JavaCompile> {
     options.compilerArgs.add("-Xlint:deprecation")
     options.compilerArgs.add("-Xlint:unchecked")
