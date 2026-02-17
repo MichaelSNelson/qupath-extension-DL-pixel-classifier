@@ -10,7 +10,8 @@ import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
@@ -360,10 +361,8 @@ public class TrainingWorkflow {
         progress.setOnPause(v -> {
             if (currentJobId[0] != null) {
                 try {
-                    ClassifierClient client = new ClassifierClient(
-                            DLClassifierPreferences.getServerHost(),
-                            DLClassifierPreferences.getServerPort());
-                    client.pauseTraining(currentJobId[0]);
+                    ClassifierBackend backend = BackendFactory.getBackend();
+                    backend.pauseTraining(currentJobId[0]);
                 } catch (Exception e) {
                     logger.error("Failed to pause training", e);
                     progress.log("ERROR: Failed to pause: " + e.getMessage());
@@ -510,15 +509,11 @@ public class TrainingWorkflow {
                         "Training cancelled by user");
             }
 
-            // Create client and start training
-            if (progress != null) progress.setStatus("Connecting to server...");
-            ClassifierClient client = new ClassifierClient(
-                    DLClassifierPreferences.getServerHost(),
-                    DLClassifierPreferences.getServerPort()
-            );
+            // Get appropriate backend (Appose or HTTP) and start training
+            if (progress != null) progress.setStatus("Connecting to backend...");
+            ClassifierBackend backend = BackendFactory.getBackend();
             if (progress != null) {
-                progress.log("Connected to server at " + DLClassifierPreferences.getServerHost() +
-                        ":" + DLClassifierPreferences.getServerPort());
+                progress.log("Connected to classification backend");
                 progress.setStatus("Training model...");
                 progress.setOverallProgress(0);
 
@@ -534,7 +529,7 @@ public class TrainingWorkflow {
 
             final AtomicInteger lastLoggedEpoch = new AtomicInteger(-1);
 
-            ClassifierClient.TrainingResult serverResult = client.startTraining(
+            ClassifierClient.TrainingResult serverResult = backend.startTraining(
                     trainingConfig,
                     channelConfig,
                     classNames,
@@ -769,14 +764,12 @@ public class TrainingWorkflow {
                 progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
             }
 
-            // 4. Call client.resumeTraining
-            ClassifierClient client = new ClassifierClient(
-                    DLClassifierPreferences.getServerHost(),
-                    DLClassifierPreferences.getServerPort());
+            // 4. Resume training via backend
+            ClassifierBackend backend = BackendFactory.getBackend();
 
             final AtomicInteger lastLoggedEpochResume = new AtomicInteger(-1);
 
-            ClassifierClient.TrainingResult serverResult = client.resumeTraining(
+            ClassifierClient.TrainingResult serverResult = backend.resumeTraining(
                     jobId,
                     tempDir,
                     params.totalEpochs(),

@@ -8,7 +8,8 @@ import qupath.ext.dlclassifier.DLClassifierChecks;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
@@ -227,10 +228,7 @@ public class InferenceWorkflow {
                 ImageServer<BufferedImage> server = imgData.getServer();
                 TileProcessor tileProcessor = new TileProcessor(config);
 
-                ClassifierClient client = new ClassifierClient(
-                        DLClassifierPreferences.getServerHost(),
-                        DLClassifierPreferences.getServerPort()
-                );
+                ClassifierBackend backend = BackendFactory.getBackend();
 
                 int processedAnnotations = 0;
                 int processedTiles = 0;
@@ -239,7 +237,7 @@ public class InferenceWorkflow {
                 for (PathObject annotation : annotations) {
                     ROI region = annotation.getROI();
                     int tilesForRegion = processRegionCore(
-                            region, annotation, tileProcessor, client,
+                            region, annotation, tileProcessor, backend,
                             classifier, channels, config, server, imgData,
                             null // no progress monitor
                     );
@@ -406,13 +404,10 @@ public class InferenceWorkflow {
                 // Create tile processor
                 TileProcessor tileProcessor = new TileProcessor(inferenceConfig);
 
-                // Create client
-                progress.setStatus("Connecting to server...");
-                ClassifierClient client = new ClassifierClient(
-                        DLClassifierPreferences.getServerHost(),
-                        DLClassifierPreferences.getServerPort()
-                );
-                progress.log("Connected to server");
+                // Get appropriate backend (Appose or HTTP)
+                progress.setStatus("Connecting to backend...");
+                ClassifierBackend backend = BackendFactory.getBackend();
+                progress.log("Connected to classification backend");
 
                 // Count total tiles
                 int totalTiles = 0;
@@ -439,7 +434,7 @@ public class InferenceWorkflow {
 
                     ROI region = annotation.getROI();
                     int tilesForRegion = processRegionWithProgress(
-                            region, annotation, tileProcessor, client, metadata,
+                            region, annotation, tileProcessor, backend, metadata,
                             channelConfig, inferenceConfig, server, imageData, progress
                     );
 
@@ -491,14 +486,14 @@ public class InferenceWorkflow {
     private int processRegionWithProgress(ROI region,
                                           PathObject parentObject,
                                           TileProcessor tileProcessor,
-                                          ClassifierClient client,
+                                          ClassifierBackend backend,
                                           ClassifierMetadata metadata,
                                           ChannelConfiguration channelConfig,
                                           InferenceConfig inferenceConfig,
                                           ImageServer<BufferedImage> server,
                                           ImageData<BufferedImage> imageData,
                                           ProgressMonitorController progress) throws IOException {
-        return processRegionCore(region, parentObject, tileProcessor, client,
+        return processRegionCore(region, parentObject, tileProcessor, backend,
                 metadata, channelConfig, inferenceConfig, server, imageData, progress);
     }
 
@@ -511,7 +506,7 @@ public class InferenceWorkflow {
      * @param region          the ROI to process
      * @param parentObject    the parent annotation
      * @param tileProcessor   tile processor for generating tiles
-     * @param client          classifier server client
+     * @param backend         classifier backend (Appose or HTTP)
      * @param metadata        classifier metadata
      * @param channelConfig   channel configuration
      * @param inferenceConfig inference configuration
@@ -524,7 +519,7 @@ public class InferenceWorkflow {
     static int processRegionCore(ROI region,
                                  PathObject parentObject,
                                  TileProcessor tileProcessor,
-                                 ClassifierClient client,
+                                 ClassifierBackend backend,
                                  ClassifierMetadata metadata,
                                  ChannelConfiguration channelConfig,
                                  InferenceConfig inferenceConfig,
@@ -617,14 +612,14 @@ public class InferenceWorkflow {
                 // Send current batch to server for inference
                 if (usePixelInference) {
                     ClassifierClient.PixelInferenceResult pixelResult =
-                            client.runPixelInferenceBinary(
+                            backend.runPixelInferenceBinary(
                                     modelDirPath, currentBatch.rawBytes(), currentBatch.tileIds(),
                                     tileSize, tileSize, currentBatch.numChannels(),
                                     currentBatch.dtype(),
                                     channelConfig, inferenceConfig, tempDir, 0);
 
                     if (pixelResult == null) {
-                        pixelResult = client.runPixelInference(
+                        pixelResult = backend.runPixelInference(
                                 modelDirPath, currentBatch.tileDataList(), channelConfig,
                                 inferenceConfig, tempDir, 0);
                     }
@@ -643,14 +638,14 @@ public class InferenceWorkflow {
                     }
                 } else {
                     ClassifierClient.InferenceResult result =
-                            client.runInferenceBinary(
+                            backend.runInferenceBinary(
                                     modelDirPath, currentBatch.rawBytes(), currentBatch.tileIds(),
                                     tileSize, tileSize, currentBatch.numChannels(),
                                     currentBatch.dtype(),
                                     channelConfig, inferenceConfig);
 
                     if (result == null) {
-                        result = client.runInference(
+                        result = backend.runInference(
                                 modelDirPath, currentBatch.tileDataList(), channelConfig,
                                 inferenceConfig);
                     }
@@ -742,7 +737,7 @@ public class InferenceWorkflow {
     @Deprecated
     private void processRegion(ROI region,
                                TileProcessor tileProcessor,
-                               ClassifierClient client,
+                               ClassifierBackend backend,
                                ClassifierMetadata metadata,
                                ChannelConfiguration channelConfig,
                                InferenceConfig inferenceConfig,
@@ -772,7 +767,7 @@ public class InferenceWorkflow {
             }
 
             // Run inference
-            client.runInference(
+            backend.runInference(
                     metadata.getId(),
                     tileDataList,
                     channelConfig,
