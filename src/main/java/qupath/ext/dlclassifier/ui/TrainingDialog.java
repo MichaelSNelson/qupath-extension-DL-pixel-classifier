@@ -9,6 +9,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.chart.PieChart;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.util.Duration;
@@ -143,6 +144,7 @@ public class TrainingDialog {
 
         // Class selection
         private ListView<ClassItem> classListView;
+        private PieChart classDistributionChart;
 
         // Augmentation
         private CheckBox flipHorizontalCheck;
@@ -449,20 +451,20 @@ public class TrainingDialog {
                     "resnet34: Good balance of speed and accuracy. Best default.\n" +
                     "resnet50: Deeper, more capacity, slower. For complex tasks.\n" +
                     "efficientnet-b0: Lightweight, fast inference.\n\n" +
-                    "Histology backbones (marked 'Histology') use weights pretrained\n" +
+                    "Histology encoders (marked 'Histology') use weights pretrained\n" +
                     "on millions of tissue patches instead of ImageNet. They provide\n" +
                     "better feature extraction for tissue classification and require\n" +
                     "less layer freezing. ~100MB download on first use (cached).",
                     "https://smp.readthedocs.io/en/latest/encoders.html");
             updateBackboneOptions(architectureCombo.getValue());
 
-            grid.add(new Label("Backbone:"), 0, row);
+            grid.add(new Label("Encoder:"), 0, row);
             grid.add(backboneCombo, 1, row);
 
             TitledPane pane = new TitledPane("MODEL ARCHITECTURE", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create("Select the neural network architecture and encoder backbone"));
+            pane.setTooltip(TooltipHelper.create("Select the neural network architecture and encoder"));
             return pane;
         }
 
@@ -866,6 +868,16 @@ public class TrainingDialog {
             Label infoLabel = new Label("Select annotation classes to use for training:");
             infoLabel.setStyle("-fx-text-fill: #666;");
 
+            // Pie chart showing per-class annotation area distribution
+            classDistributionChart = new PieChart();
+            classDistributionChart.setLegendVisible(false);
+            classDistributionChart.setLabelsVisible(true);
+            classDistributionChart.setLabelLineLength(10);
+            classDistributionChart.setPrefHeight(180);
+            classDistributionChart.setMaxHeight(180);
+            classDistributionChart.setVisible(false);
+            classDistributionChart.setManaged(false);
+
             classListView = new ListView<>();
             classListView.setCellFactory(lv -> new ClassListCell());
             classListView.setPrefHeight(120);
@@ -876,7 +888,7 @@ public class TrainingDialog {
                     "Use the weight spinner (right) to boost underrepresented\n" +
                     "classes. For example, set weight=2.0 for a rare class.");
 
-            // Add select all / none buttons
+            // Add select all / none / rebalance buttons
             Button selectAllBtn = new Button("Select All");
             TooltipHelper.install(selectAllBtn, "Select all annotation classes for training");
             selectAllBtn.setOnAction(e -> classListView.getItems().forEach(item -> item.selected().set(true)));
@@ -885,9 +897,20 @@ public class TrainingDialog {
             TooltipHelper.install(selectNoneBtn, "Deselect all annotation classes");
             selectNoneBtn.setOnAction(e -> classListView.getItems().forEach(item -> item.selected().set(false)));
 
-            HBox buttonBox = new HBox(10, selectAllBtn, selectNoneBtn);
+            Button rebalanceBtn = new Button("Rebalance Classes");
+            TooltipHelper.install(rebalanceBtn,
+                    "Auto-set weight multipliers to compensate for class imbalance.\n\n" +
+                    "Classes with fewer annotated pixels receive higher weights so the\n" +
+                    "model pays equal attention to all classes during training.\n\n" +
+                    "Note: Rebalancing weights helps but does NOT replace having\n" +
+                    "sufficient training data. Adding more annotations for under-\n" +
+                    "represented classes will produce better results than relying\n" +
+                    "on weight compensation alone.");
+            rebalanceBtn.setOnAction(e -> rebalanceClassWeights());
 
-            content.getChildren().addAll(infoLabel, classListView, buttonBox);
+            HBox buttonBox = new HBox(10, selectAllBtn, selectNoneBtn, rebalanceBtn);
+
+            content.getChildren().addAll(infoLabel, classDistributionChart, classListView, buttonBox);
 
             TitledPane pane = new TitledPane("ANNOTATION CLASSES", content);
             pane.setExpanded(true);
@@ -990,18 +1013,27 @@ public class TrainingDialog {
                     // Pre-select all channels for RGB
                 }
 
-                // Populate class list from image annotations
+                // Populate class list from image annotations, accumulating area per class
                 Set<PathClass> classes = new TreeSet<>(Comparator.comparing(PathClass::getName));
+                Map<String, Double> classAreas = new LinkedHashMap<>();
                 for (PathObject annotation : imageData.getHierarchy().getAnnotationObjects()) {
                     PathClass pathClass = annotation.getPathClass();
                     if (pathClass != null && !pathClass.isDerivedClass()) {
                         classes.add(pathClass);
+                        classAreas.merge(pathClass.getName(), annotation.getROI().getArea(), Double::sum);
                     }
                 }
 
                 for (PathClass pathClass : classes) {
-                    classListView.getItems().add(new ClassItem(pathClass.getName(), pathClass.getColor(), true));
+                    double area = classAreas.getOrDefault(pathClass.getName(), 0.0);
+                    ClassItem item = new ClassItem(pathClass.getName(), pathClass.getColor(), true, area);
+                    item.selected().addListener((obs, old, newVal) -> {
+                        refreshPieChart();
+                        updateValidation();
+                    });
+                    classListView.getItems().add(item);
                 }
+                refreshPieChart();
             }
 
             // Generate default name
@@ -1113,6 +1145,104 @@ public class TrainingDialog {
                 errorSummaryPanel.setManaged(true);
                 okButton.setDisable(true);
             }
+        }
+
+        private void refreshPieChart() {
+            if (classDistributionChart == null) return;
+            classDistributionChart.getData().clear();
+
+            double totalArea = 0;
+            List<ClassItem> selectedItems = new ArrayList<>();
+            for (ClassItem item : classListView.getItems()) {
+                if (item.selected().get() && item.annotationArea() > 0) {
+                    selectedItems.add(item);
+                    totalArea += item.annotationArea();
+                }
+            }
+
+            if (totalArea == 0 || selectedItems.isEmpty()) {
+                classDistributionChart.setVisible(false);
+                classDistributionChart.setManaged(false);
+                return;
+            }
+
+            classDistributionChart.setVisible(true);
+            classDistributionChart.setManaged(true);
+
+            for (ClassItem item : selectedItems) {
+                double pct = (item.annotationArea() / totalArea) * 100.0;
+                String label = String.format("%s (%.1f%%)", item.name(), pct);
+                PieChart.Data data = new PieChart.Data(label, item.annotationArea());
+                classDistributionChart.getData().add(data);
+            }
+
+            // Apply QuPath class colors to pie slices
+            for (int i = 0; i < selectedItems.size(); i++) {
+                ClassItem item = selectedItems.get(i);
+                PieChart.Data data = classDistributionChart.getData().get(i);
+                if (item.color() != null) {
+                    int r = (item.color() >> 16) & 0xFF;
+                    int g = (item.color() >> 8) & 0xFF;
+                    int b = item.color() & 0xFF;
+                    String style = "-fx-pie-color: rgb(" + r + "," + g + "," + b + ");";
+                    // Node may not exist yet if chart hasn't been laid out
+                    if (data.getNode() != null) {
+                        data.getNode().setStyle(style);
+                    }
+                    data.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                        if (newNode != null) newNode.setStyle(style);
+                    });
+                }
+            }
+        }
+
+        private void rebalanceClassWeights() {
+            List<ClassItem> selected = classListView.getItems().stream()
+                    .filter(item -> item.selected().get())
+                    .collect(Collectors.toList());
+
+            if (selected.isEmpty()) return;
+
+            // Collect non-zero areas and sort for median calculation
+            List<Double> areas = selected.stream()
+                    .map(ClassItem::annotationArea)
+                    .filter(a -> a > 0)
+                    .sorted()
+                    .collect(Collectors.toList());
+
+            if (areas.isEmpty()) return;
+
+            // Compute median area
+            double median;
+            int n = areas.size();
+            if (n % 2 == 0) {
+                median = (areas.get(n / 2 - 1) + areas.get(n / 2)) / 2.0;
+            } else {
+                median = areas.get(n / 2);
+            }
+
+            // Set inverse-frequency weights clamped to spinner range [0.1, 10.0]
+            for (ClassItem item : selected) {
+                double area = item.annotationArea();
+                double weight;
+                if (area > 0) {
+                    weight = Math.max(0.1, Math.min(10.0, median / area));
+                } else {
+                    weight = 1.0;
+                }
+                item.weightMultiplier().set(weight);
+            }
+
+            // Refresh list view to update spinner displays
+            classListView.refresh();
+
+            // Log the rebalanced weights
+            StringBuilder sb = new StringBuilder("Rebalanced class weights:");
+            for (ClassItem item : selected) {
+                sb.append(" ").append(item.name())
+                  .append("=").append(String.format("%.2f", item.weightMultiplier().get()));
+            }
+            logger.info(sb.toString());
         }
 
         private TrainingDialogResult buildResult() {
@@ -1342,11 +1472,13 @@ public class TrainingDialog {
      */
     private record ClassItem(String name, Integer color,
                               javafx.beans.property.BooleanProperty selected,
-                              javafx.beans.property.DoubleProperty weightMultiplier) {
-        public ClassItem(String name, Integer color, boolean selected) {
+                              javafx.beans.property.DoubleProperty weightMultiplier,
+                              double annotationArea) {
+        public ClassItem(String name, Integer color, boolean selected, double annotationArea) {
             this(name, color,
                     new javafx.beans.property.SimpleBooleanProperty(selected),
-                    new javafx.beans.property.SimpleDoubleProperty(1.0));
+                    new javafx.beans.property.SimpleDoubleProperty(1.0),
+                    annotationArea);
         }
     }
 
