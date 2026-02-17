@@ -87,6 +87,7 @@ public class ApposeService {
             // Build the pixi environment (downloads deps on first run)
             environment = Appose.pixi()
                     .content(pixiToml)
+                    .scheme("pixi.toml")
                     .name(ENV_NAME)
                     .logDebug()
                     .build();
