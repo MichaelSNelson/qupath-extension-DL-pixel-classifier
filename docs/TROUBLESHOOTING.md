@@ -2,7 +2,35 @@
 
 Common issues and solutions for the DL Pixel Classifier extension.
 
-## Server Issues
+## Environment Setup Issues (Appose Mode)
+
+### Setup dialog shows an error
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Network error during setup | No internet connection | Connect to the internet and click **Retry** |
+| Download stalls or times out | Slow/unstable connection | Cancel and retry; the ~2-4 GB download may take several minutes |
+| "Resource not found" | JAR may be corrupted | Re-build the extension with `./gradlew build` and reinstall |
+
+### Menu items don't appear after setup
+
+1. Verify the environment directory exists: `~/.appose/pixi/dl-pixel-classifier/.pixi/`
+2. Close and reopen QuPath
+3. Check the QuPath log (**View > Show log**) for errors
+
+### Environment seems corrupted
+
+Use **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to delete the environment and re-run setup.
+
+### Only "Setup DL Environment..." is visible
+
+This is normal on first launch before the environment has been set up. Click it to begin the setup wizard.
+
+If you want to use an external Python server instead, disable Appose in **Edit > Preferences > DL Pixel Classifier** (uncheck "Use Appose"). All workflow menu items will appear immediately.
+
+## HTTP Server Issues (External Server Mode)
+
+> These issues only apply when Appose is **disabled** and you are connecting to an external Python server.
 
 ### Server won't start
 
@@ -119,14 +147,20 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 
 ## Extension Issues
 
-### Menu items are grayed out
+### Menu items are hidden (not visible)
 
-Menu items require an open image. Open an image first, then the menu items will become active.
+- **First launch (Appose mode):** Only **Setup DL Environment...** and **Utilities > Server Settings** are visible until you complete the environment setup
+- **After setup completes:** All workflow items should appear. If not, restart QuPath
+- **HTTP mode:** Disable Appose in preferences to see all menu items immediately
+
+### Menu items are grayed out (visible but disabled)
+
+Menu items like Train and Apply require an open image/project. Open an image first, then the menu items will become active.
 
 ### "No classifiers available"
 
 - Train a classifier first, or check that classifiers are saved in the project's `classifiers/` directory
-- Verify the server is running and the model storage path is accessible
+- Verify the backend is running and the model storage path is accessible
 
 ### Preferences not saving
 

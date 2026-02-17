@@ -41,8 +41,8 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 ## Requirements
 
 - QuPath 0.6.0+, Java 21+
-- Python 3.10+, PyTorch 2.1+
 - CUDA-capable GPU recommended (CPU and Apple Silicon MPS also supported)
+- Internet connection for first-time environment setup (~2-4 GB download)
 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full setup instructions.
 
@@ -52,13 +52,15 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full setup instructions.
 # Build Java extension
 ./gradlew build
 # Copy JAR from build/libs/ to QuPath extensions directory
-
-# Set up Python server
-cd python_server && pip install -e ".[cuda]"
-dlclassifier-server
 ```
 
-Then in QuPath: **Extensions > DL Pixel Classifier > Train Classifier...**
+Then in QuPath:
+
+1. **Extensions > DL Pixel Classifier > Setup DL Environment...** (first time only)
+2. Click **Begin Setup** to download the Python environment (~2-4 GB)
+3. Once complete, **Train Classifier...** and other menu items appear automatically
+
+The extension uses [Appose](https://github.com/apposed/appose) to manage an embedded Python environment with PyTorch -- no separate Python installation or server management required.
 
 See [QUICKSTART.md](QUICKSTART.md) for the complete walkthrough.
 
@@ -80,12 +82,36 @@ pytest tests/ -v
 
 Current status: **78 tests passing, 5 skipped**
 
+## Backend Modes
+
+The extension supports two backend modes for running the Python deep learning engine:
+
+### Appose (Default -- Embedded Python)
+
+The default mode uses [Appose](https://github.com/apposed/appose) to manage an embedded Python environment with PyTorch, eliminating the need for a separate Python installation or server process.
+
+- **First-time setup**: A guided setup wizard (**Extensions > DL Pixel Classifier > Setup DL Environment...**) downloads and configures the environment (~2-4 GB). ONNX export support can be optionally excluded to reduce download size.
+- **Environment location**: `~/.appose/pixi/dl-pixel-classifier/`
+- **Recovery**: Use **Utilities > Rebuild DL Environment...** to delete and re-download the environment if it becomes corrupted.
+- Communication uses Appose's shared-memory IPC (no network sockets).
+
+### HTTP (External Server)
+
+For advanced setups (e.g., remote GPU workstations), disable Appose in **Edit > Preferences > DL Pixel Classifier** and run the Python server separately:
+
+```bash
+cd python_server && pip install -e ".[cuda]"
+dlclassifier-server
+```
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full HTTP server setup instructions.
+
 ## Architecture
 
 ```
 qupath-extension-DL-pixel-classifier/
 ├── src/main/java/qupath/ext/dlclassifier/
-│   ├── SetupDLClassifier.java       # Extension entry point
+│   ├── SetupDLClassifier.java       # Extension entry point & menu management
 │   ├── classifier/                   # Classifier type system
 │   │   ├── ClassifierHandler.java
 │   │   ├── ClassifierRegistry.java
@@ -96,7 +122,9 @@ qupath-extension-DL-pixel-classifier/
 │   │   ├── TrainingWorkflow.java
 │   │   └── InferenceWorkflow.java
 │   ├── service/                      # Backend services
-│   │   ├── ClassifierClient.java    # HTTP client
+│   │   ├── ApposeService.java       # Appose embedded Python management
+│   │   ├── ClassifierClient.java    # HTTP client (external server mode)
+│   │   ├── BackendFactory.java      # Backend selection (Appose vs HTTP)
 │   │   ├── ModelManager.java
 │   │   └── OverlayService.java
 │   ├── model/                        # Data objects
@@ -109,13 +137,16 @@ qupath-extension-DL-pixel-classifier/
 │   │   ├── TileProcessor.java
 │   │   ├── ChannelNormalizer.java
 │   │   └── OutputGenerator.java
+│   ├── ui/                           # UI components
+│   │   ├── SetupEnvironmentDialog.java  # First-time setup wizard
+│   │   └── TooltipHelper.java
 │   ├── scripting/
 │   │   ├── DLClassifierScripts.java  # Groovy API
 │   │   └── ScriptGenerator.java      # Dialog-to-script generation
 │   └── preferences/
 │       └── DLClassifierPreferences.java
 │
-├── python_server/                    # Python DL server
+├── python_server/                    # Python DL server (HTTP mode)
 │   └── dlclassifier_server/
 │       ├── main.py                   # FastAPI application
 │       ├── routers/                  # API endpoints

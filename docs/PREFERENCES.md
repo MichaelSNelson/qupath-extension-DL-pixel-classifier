@@ -10,16 +10,19 @@ Preferences are stored using QuPath's persistent preference system (`PathPrefs`)
 - **Server preferences** are editable in Edit > Preferences under "DL Pixel Classifier"
 - All preference keys are prefixed with `dlclassifier.`
 
-## Server & Processing Preferences
+## Backend & Server Preferences
 
 These appear in **Edit > Preferences > DL Pixel Classifier**.
 
 | Preference | Key | Default | Description |
 |-----------|-----|---------|-------------|
-| DL Server Host | `dlclassifier.serverHost` | `localhost` | Hostname or IP of the Python server |
-| DL Server Port | `dlclassifier.serverPort` | `8765` | Port of the Python server |
+| Use Appose (Embedded Python) | `dlclassifier.useAppose` | `true` | Use Appose for embedded Python execution. When enabled, the extension manages its own Python environment (~2-4 GB, downloaded on first use). When disabled, connects to an external Python server. |
+| DL Server Host | `dlclassifier.serverHost` | `localhost` | Hostname or IP of the Python server (HTTP mode only) |
+| DL Server Port | `dlclassifier.serverPort` | `8765` | Port of the Python server (HTTP mode only) |
 | Overlay Reflection Padding | `dlclassifier.overlayReflectionPadding` | `32` | Pixels of reflection padding per tile to reduce edge artifacts. Set to 0 to disable. |
 | Use GPU for Inference | `dlclassifier.useGPU` | `true` | Use GPU acceleration when available |
+
+> **Note:** Toggling "Use Appose" immediately updates menu visibility. When Appose is enabled and the environment hasn't been set up, only "Setup DL Environment..." is visible. When Appose is disabled, all workflow items appear immediately (they connect to the external HTTP server).
 
 ## Tile Settings
 

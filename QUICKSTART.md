@@ -2,10 +2,6 @@
 
 Get from zero to your first trained pixel classifier in about 10 minutes.
 
-This guide covers both halves of the system:
-- **Java extension** (runs inside QuPath)
-- **Python server** (runs the deep learning backend)
-
 ---
 
 ## Prerequisites
@@ -14,8 +10,10 @@ This guide covers both halves of the system:
 |-----------|-------------|
 | QuPath | 0.6.0 or later |
 | Java JDK | 21+ (for building the extension) |
-| Python | 3.10+ |
 | GPU | NVIDIA GPU with CUDA recommended; Apple Silicon (MPS) also works; CPU fallback available |
+| Internet | Required for first-time environment setup (~2-4 GB download) |
+
+> **Note:** A separate Python installation is **not** required. The extension manages its own embedded Python environment via [Appose](https://github.com/apposed/appose).
 
 ---
 
@@ -46,83 +44,22 @@ Alternatively, in QuPath: **Edit > Preferences > Extensions** shows the extensio
 
 ---
 
-## Step 3: Set Up the Python Server
+## Step 3: Set Up the Python Environment
 
-### 3a. Create a virtual environment
+On first launch after installing the extension, only **Setup DL Environment...** will be visible in the menu.
 
-**Windows (Command Prompt):**
-```cmd
-cd python_server
-python -m venv venv
-venv\Scripts\activate.bat
-```
+1. Go to **Extensions > DL Pixel Classifier > Setup DL Environment...**
+2. Review the download size warning (~2-4 GB)
+3. Optionally uncheck **ONNX export support** (~200 MB savings) if you don't need it
+4. Click **Begin Setup**
+5. Wait for the download and configuration to complete (the dialog shows progress)
+6. Click **Close** when done
 
-**Windows (PowerShell):**
-```powershell
-cd python_server
-python -m venv venv
-venv\Scripts\Activate.ps1
-```
+The training and inference menu items now appear automatically. On subsequent launches, the environment is detected on disk and everything is ready immediately.
 
-> If PowerShell blocks activation, run:
-> `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
-
-**macOS / Linux:**
-```bash
-cd python_server
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### 3b. Install dependencies
-
-**With NVIDIA GPU (recommended):**
-```bash
-pip install -e ".[cuda]"
-```
-
-**CPU only or Apple Silicon:**
-```bash
-pip install -e .
-```
-
-> **Specific CUDA version?** Install PyTorch first, then the server package:
-> ```bash
-> pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-> pip install -e .
-> ```
-
-### 3c. Start the server
-
-```bash
-dlclassifier-server
-```
-
-You should see output like:
-```
-INFO:     Started server process
-INFO:     Uvicorn running on http://0.0.0.0:8765
-```
-
-### 3d. Verify it works
-
-Open a second terminal and run:
-
-```bash
-curl http://localhost:8765/api/v1/health
-```
-
-Expected response:
-```json
-{"status": "healthy"}
-```
-
-Check GPU detection:
-```bash
-curl http://localhost:8765/api/v1/gpu
-```
-
-> **Windows without curl:** Open `http://localhost:8765/docs` in a browser for the interactive Swagger UI.
+> **Alternative: External Python Server**
+>
+> If you prefer to run the Python backend on a separate machine (e.g., a GPU workstation), disable Appose in **Edit > Preferences > DL Pixel Classifier** and set up the server manually. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for details.
 
 ---
 
@@ -207,12 +144,12 @@ qupath-extension-DL-pixel-classifier/
 |   |-- main/java/qupath/ext/dlclassifier/
 |       |-- controller/       # Workflow orchestration
 |       |-- model/            # Data objects (TrainingConfig, etc.)
-|       |-- service/          # ClassifierClient (HTTP), ModelManager
-|       |-- ui/               # Dialogs and progress UI
+|       |-- service/          # ApposeService, ClassifierClient, ModelManager
+|       |-- ui/               # Dialogs, setup wizard, progress UI
 |       |-- utilities/        # AnnotationExtractor, TileProcessor
 |       +-- scripting/        # Groovy API, script generation
 |
-|-- python_server/            # Python backend
+|-- python_server/            # Python backend (HTTP mode only)
 |   |-- dlclassifier_server/
 |       |-- main.py           # FastAPI app
 |       |-- routers/          # API endpoints
@@ -229,10 +166,11 @@ qupath-extension-DL-pixel-classifier/
 
 The extension stores preferences via QuPath's preference system. Defaults:
 
-**Server & Processing:**
+**Backend & Server:**
 
 | Preference | Default | Where to change |
 |-----------|---------|-----------------|
+| Use Appose (Embedded Python) | `true` | Edit > Preferences > DL Pixel Classifier |
 | Server host | `localhost` | Extensions > DL Pixel Classifier > Utilities > Server Settings |
 | Server port | `8765` | Extensions > DL Pixel Classifier > Utilities > Server Settings |
 | Default tile size | `512` | Training / Inference dialog |
@@ -305,19 +243,14 @@ See `scripts/examples/` for more examples.
 
 ## Troubleshooting
 
-### Server won't start
+### Environment setup fails or stalls
 
 | Symptom | Fix |
 |---------|-----|
-| `ModuleNotFoundError: No module named 'torch'` | Activate your venv first, then `pip install -e .` |
-| Port 8765 already in use | Kill the other process, or start with `dlclassifier-server --port 8766` and update QuPath's Server Settings |
-| `externally-managed-environment` | Use a virtual environment (Step 3a) |
-
-### QuPath can't connect to server
-
-1. Verify the server is running (`curl http://localhost:8765/api/v1/health`)
-2. Check Server Settings in QuPath match the server's host and port
-3. If the server is on another machine, check firewall rules
+| Setup dialog shows error | Check internet connection; try again with **Retry** |
+| Download is very slow | The initial download is ~2-4 GB; expect several minutes on slower connections |
+| Environment corrupted | Use **Utilities > Rebuild DL Environment...** to delete and re-download |
+| Menu items don't appear after setup | Close and reopen QuPath; verify `~/.appose/pixi/dl-pixel-classifier/.pixi/` exists |
 
 ### Training fails immediately
 
@@ -331,11 +264,13 @@ See `scripts/examples/` for more examples.
 - Use a smaller backbone (`mobilenet_v2` instead of `resnet50`)
 - Reduce **tile size** (256 instead of 512)
 
-### Verify your Python environment
+### HTTP mode: Server won't start
 
-```bash
-python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
-```
+| Symptom | Fix |
+|---------|-----|
+| `ModuleNotFoundError: No module named 'torch'` | Activate your venv first, then `pip install -e .` |
+| Port 8765 already in use | Kill the other process, or start with `dlclassifier-server --port 8766` and update QuPath's Server Settings |
+| QuPath can't connect | Verify server is running, check Server Settings, check firewall rules |
 
 ---
 
