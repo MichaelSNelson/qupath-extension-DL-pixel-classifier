@@ -14,7 +14,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -65,6 +68,29 @@ public class ApposeService {
     }
 
     /**
+     * Checks if the Appose pixi environment appears to be built on disk.
+     * This is a fast filesystem check -- it does NOT trigger any downloads.
+     *
+     * @return true if the environment directory exists and appears installed
+     */
+    public static boolean isEnvironmentBuilt() {
+        Path envDir = Path.of(System.getProperty("user.home"),
+                ".appose", "pixi", ENV_NAME);
+        // pixi creates .pixi/ subdirectory when environment is installed
+        return Files.isDirectory(envDir.resolve(".pixi"));
+    }
+
+    /**
+     * Returns the path where the Appose pixi environment is stored.
+     *
+     * @return the environment directory path
+     */
+    public static Path getEnvironmentPath() {
+        return Path.of(System.getProperty("user.home"),
+                ".appose", "pixi", ENV_NAME);
+    }
+
+    /**
      * Builds the pixi environment and starts the Python service.
      * <p>
      * This is slow the first time (downloads ~2-4 GB of dependencies)
@@ -74,21 +100,47 @@ public class ApposeService {
      * @throws IOException if resource loading or environment build fails
      */
     public synchronized void initialize() throws IOException {
+        initialize(null, true);
+    }
+
+    /**
+     * Builds the pixi environment and starts the Python service with
+     * status reporting and optional ONNX support.
+     * <p>
+     * The statusCallback receives human-readable progress messages suitable
+     * for display in a setup dialog. Pass null for no status reporting.
+     *
+     * @param statusCallback optional callback for progress messages (may be null)
+     * @param includeOnnx    if false, strips ONNX dependencies from the environment
+     * @throws IOException if resource loading or environment build fails
+     */
+    public synchronized void initialize(Consumer<String> statusCallback,
+                                         boolean includeOnnx) throws IOException {
         if (initialized) {
+            report(statusCallback, "Already initialized");
             return;
         }
 
         try {
+            report(statusCallback, "Loading environment configuration...");
             logger.info("Initializing Appose environment...");
 
             // Load pixi.toml from JAR resources
             String pixiToml = loadResource(PIXI_TOML_RESOURCE);
+
+            // Optionally strip ONNX dependencies to reduce download size
+            if (!includeOnnx) {
+                pixiToml = stripOnnxDependencies(pixiToml);
+                logger.info("ONNX dependencies excluded from environment");
+            }
 
             // Set context classloader so ServiceLoader discovers Appose's
             // Scheme implementations from the extension shadow JAR.
             // QuPath's extension classloader doesn't propagate to thread context.
             ClassLoader original = Thread.currentThread().getContextClassLoader();
             Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+
+            report(statusCallback, "Building pixi environment (this may take several minutes)...");
 
             // Build the pixi environment (downloads deps on first run)
             try {
@@ -103,6 +155,7 @@ public class ApposeService {
             }
 
             logger.info("Appose environment built successfully");
+            report(statusCallback, "Starting Python service...");
 
             // Create Python service (lazy - subprocess starts on first task)
             pythonService = environment.python();
@@ -110,8 +163,12 @@ public class ApposeService {
             // Register debug output handler
             pythonService.debug(msg -> logger.debug("[Appose Python] {}", msg));
 
+            report(statusCallback, "Importing core libraries...");
+
             // Pre-warm NumPy to avoid Windows hang (known Appose gotcha)
             pythonService.init("import numpy");
+
+            report(statusCallback, "Initializing inference engine...");
 
             // Initialize persistent services in the worker
             String initScript = loadScript("init_services.py");
@@ -119,6 +176,7 @@ public class ApposeService {
 
             initialized = true;
             initError = null;
+            report(statusCallback, "Setup complete!");
             logger.info("Appose Python service initialized");
 
         } catch (Exception e) {
@@ -264,6 +322,39 @@ public class ApposeService {
      */
     public String getInitError() {
         return initError;
+    }
+
+    // ==================== Internal Helpers ====================
+
+    /**
+     * Sends a status message to the callback, if present.
+     */
+    private static void report(Consumer<String> callback, String message) {
+        if (callback != null) {
+            callback.accept(message);
+        }
+    }
+
+    /**
+     * Strips ONNX-related lines from a pixi.toml string.
+     * Removes lines containing 'onnx' or 'onnxruntime' dependency declarations.
+     */
+    private static String stripOnnxDependencies(String pixiToml) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : pixiToml.split("\n")) {
+            String trimmed = line.trim().toLowerCase();
+            // Skip lines that are ONNX dependency declarations
+            if (trimmed.startsWith("onnx ") || trimmed.startsWith("onnx=")
+                    || trimmed.startsWith("onnxruntime ") || trimmed.startsWith("onnxruntime=")) {
+                continue;
+            }
+            // Also skip comment lines immediately preceding ONNX deps
+            if (trimmed.startsWith("# onnx")) {
+                continue;
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
     }
 
     // ==================== Resource Loading ====================

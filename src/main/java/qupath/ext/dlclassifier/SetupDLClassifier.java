@@ -2,6 +2,9 @@ package qupath.ext.dlclassifier;
 
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.beans.binding.BooleanBinding;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
@@ -19,6 +22,7 @@ import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.ui.SetupEnvironmentDialog;
 import qupath.ext.dlclassifier.ui.TooltipHelper;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
@@ -28,8 +32,13 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.images.ImageData;
 
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
-
 import java.util.ResourceBundle;
 
 /**
@@ -62,7 +71,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     private static final GitHubRepo EXTENSION_REPOSITORY =
             GitHubRepo.create(EXTENSION_NAME, "uw-loci", "qupath-extension-DL-pixel-classifier");
 
-    /** True if the server connection passed validation. */
+    /**
+     * Observable property tracking whether the DL environment is ready for use.
+     * When true, workflow menu items are visible. When false, only the setup item is shown.
+     */
+    private final BooleanProperty environmentReady = new SimpleBooleanProperty(false);
+
+    /** True if the backend (Appose or HTTP) has been initialized and is available. */
     private boolean serverAvailable;
 
     @Override
@@ -92,62 +107,88 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         // Register persistent preferences
         DLClassifierPreferences.installPreferences(qupath);
 
-        // Check server availability (non-blocking)
-        checkServerAvailability();
+        // Fast filesystem check to determine environment state (no downloads)
+        updateEnvironmentState();
+
+        // Listen for useAppose preference changes to reactively update menu visibility
+        DLClassifierPreferences.useApposeProperty().addListener((obs, oldVal, newVal) ->
+                Platform.runLater(this::updateEnvironmentState));
 
         // Build menu on the FX thread
         Platform.runLater(() -> addMenuItem(qupath));
+
+        // If environment is already built, start background initialization of Python service
+        if (environmentReady.get() && DLClassifierPreferences.isUseAppose()) {
+            startBackgroundInitialization();
+        }
     }
 
     /**
-     * Checks if the classification backend is available.
+     * Determines the current environment state based on preferences and filesystem.
      * <p>
-     * When Appose is enabled, attempts to initialize the Appose environment.
-     * Falls back to HTTP server health check if Appose fails or is disabled.
-     * This is done asynchronously to avoid blocking extension load.
+     * Three states:
+     * <ul>
+     *   <li>useAppose=false (HTTP mode) -> environmentReady=true immediately</li>
+     *   <li>useAppose=true, env built -> environmentReady=true</li>
+     *   <li>useAppose=true, env NOT built -> environmentReady=false</li>
+     * </ul>
      */
-    private void checkServerAvailability() {
-        // Initial state - will be updated by background check
-        serverAvailable = false;
+    private void updateEnvironmentState() {
+        if (!DLClassifierPreferences.isUseAppose()) {
+            // HTTP mode - no environment needed
+            environmentReady.set(true);
+            logger.debug("HTTP backend mode - environment check skipped");
+        } else if (ApposeService.isEnvironmentBuilt()) {
+            environmentReady.set(true);
+            logger.debug("Appose environment found on disk");
+        } else {
+            environmentReady.set(false);
+            logger.info("Appose environment not found - setup required");
+        }
+    }
 
-        // Perform async health check
-        Thread healthThread = new Thread(() -> {
+    /**
+     * Starts background initialization of the Appose service when the environment
+     * is already built. This pre-warms the Python subprocess so it is ready when
+     * the user clicks a workflow item.
+     */
+    private void startBackgroundInitialization() {
+        Thread initThread = new Thread(() -> {
             try {
-                if (DLClassifierPreferences.isUseAppose()) {
-                    try {
-                        ApposeService.getInstance().initialize();
-                        serverAvailable = true;
-                        logger.info("Appose backend initialized successfully");
-                    } catch (Exception e) {
-                        logger.warn("Appose init failed, trying HTTP fallback: {}", e.getMessage());
-                        serverAvailable = DLClassifierChecks.checkServerHealth();
-                    }
-                } else {
-                    serverAvailable = DLClassifierChecks.checkServerHealth();
-                }
-                if (!serverAvailable) {
-                    Platform.runLater(() ->
-                            Dialogs.showWarningNotification(
-                                    EXTENSION_NAME,
-                                    "Classification backend not available.\n" +
-                                            "Check Appose settings or start the Python server."
-                            )
-                    );
-                }
+                ApposeService.getInstance().initialize();
+                serverAvailable = true;
+                logger.info("Appose backend initialized successfully (background)");
             } catch (Exception e) {
-                logger.debug("Backend health check failed: {}", e.getMessage());
+                logger.warn("Background Appose init failed: {}", e.getMessage());
                 serverAvailable = false;
+                // Don't show a warning notification - user hasn't tried to use it yet
             }
-        }, "DLClassifier-HealthCheck");
-        healthThread.setDaemon(true);
-        healthThread.start();
+        }, "DLClassifier-BackgroundInit");
+        initThread.setDaemon(true);
+        initThread.start();
     }
 
     private void addMenuItem(QuPathGUI qupath) {
         // Create the top level Extensions > DL Pixel Classifier menu
         var extensionMenu = qupath.getMenu("Extensions>" + EXTENSION_NAME, true);
 
-        // === MAIN WORKFLOW MENU ITEMS ===
+        // === SETUP MENU ITEM (visible only when environment not ready AND useAppose is on) ===
+        MenuItem setupItem = new MenuItem(res.getString("menu.setupEnvironment"));
+        TooltipHelper.installOnMenuItem(setupItem,
+                "Download and configure the Python deep learning environment.\n" +
+                        "Required for first-time use. Downloads approximately 2-4 GB.");
+        setupItem.setOnAction(e -> showSetupDialog(qupath));
+
+        // Binding: visible when environment is NOT ready AND Appose mode is on
+        BooleanBinding showSetup = environmentReady.not()
+                .and(DLClassifierPreferences.useApposeProperty());
+        setupItem.visibleProperty().bind(showSetup);
+
+        // Setup separator - visible only with setup item
+        SeparatorMenuItem setupSeparator = new SeparatorMenuItem();
+        setupSeparator.visibleProperty().bind(showSetup);
+
+        // === MAIN WORKFLOW MENU ITEMS (visible when environmentReady) ===
 
         // 1) Train Classifier - create a new classifier from annotations
         MenuItem trainOption = new MenuItem(res.getString("menu.training"));
@@ -162,6 +203,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 )
         );
         trainOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("training"));
+        trainOption.visibleProperty().bind(environmentReady);
 
         // 2) Apply Classifier - run inference on current image
         MenuItem inferenceOption = new MenuItem(res.getString("menu.inference"));
@@ -176,6 +218,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 )
         );
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
+        inferenceOption.visibleProperty().bind(environmentReady);
+
+        // Separator between train/inference and live prediction
+        SeparatorMenuItem sep1 = new SeparatorMenuItem();
+        sep1.visibleProperty().bind(environmentReady);
 
         // 3) Live DL Prediction - toggle live tile classification on/off
         //    When checked and no overlay exists, prompts user to select a classifier
@@ -209,6 +256,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         qupath.imageDataProperty()
                 )
         );
+        livePredictionOption.visibleProperty().bind(environmentReady);
 
         // 4) Remove Overlay - fully remove and clean up resources
         MenuItem removeOverlayOption = new MenuItem(res.getString("menu.removeOverlay"));
@@ -219,6 +267,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             overlayService.removeOverlay();
             Dialogs.showInfoNotification(EXTENSION_NAME, "Classification overlay removed.");
         });
+        removeOverlayOption.visibleProperty().bind(environmentReady);
+
+        // Separator before models
+        SeparatorMenuItem sep2 = new SeparatorMenuItem();
+        sep2.visibleProperty().bind(environmentReady);
 
         // 5) Manage Models - browse and manage saved classifiers
         MenuItem modelsOption = new MenuItem(res.getString("menu.manageModels"));
@@ -226,18 +279,24 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Browse, import, export, and delete saved classifiers.\n" +
                         "View model metadata, training configuration, and class mappings.");
         modelsOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("modelManagement"));
+        modelsOption.visibleProperty().bind(environmentReady);
+
+        // Separator before utilities
+        SeparatorMenuItem sep3 = new SeparatorMenuItem();
+        sep3.visibleProperty().bind(environmentReady);
 
         // === UTILITIES SUBMENU ===
         Menu utilitiesMenu = new Menu("Utilities");
+        // Utilities submenu is always visible (contains Server Settings which is always available)
 
-        // Server Settings
+        // Server Settings - always visible
         MenuItem serverOption = new MenuItem(res.getString("menu.serverSettings"));
         TooltipHelper.installOnMenuItem(serverOption,
                 "Configure the connection to the Python classification server.\n" +
                         "Test connectivity, view GPU availability, and check server version.");
         serverOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("serverSettings"));
 
-        // Free GPU Memory
+        // Free GPU Memory - visible when environment ready
         MenuItem freeGpuOption = new MenuItem("Free GPU Memory");
         TooltipHelper.installOnMenuItem(freeGpuOption,
                 "Force-clear all GPU memory held by the classification server.\n" +
@@ -270,23 +329,112 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             clearThread.setDaemon(true);
             clearThread.start();
         });
+        freeGpuOption.visibleProperty().bind(environmentReady);
 
-        utilitiesMenu.getItems().addAll(serverOption, freeGpuOption);
+        // Rebuild DL Environment - visible when env is built AND useAppose is on
+        MenuItem rebuildItem = new MenuItem(res.getString("menu.rebuildEnvironment"));
+        TooltipHelper.installOnMenuItem(rebuildItem,
+                "Delete and re-download the Python deep learning environment.\n" +
+                        "Use this if the environment becomes corrupted or you want a fresh install.");
+        rebuildItem.setOnAction(e -> rebuildEnvironment(qupath));
+        rebuildItem.visibleProperty().bind(
+                environmentReady.and(DLClassifierPreferences.useApposeProperty()));
+
+        utilitiesMenu.getItems().addAll(serverOption, freeGpuOption, rebuildItem);
 
         // === BUILD FINAL MENU ===
         extensionMenu.getItems().addAll(
+                setupItem,
+                setupSeparator,
                 trainOption,
                 inferenceOption,
-                new SeparatorMenuItem(),
+                sep1,
                 livePredictionOption,
                 removeOverlayOption,
-                new SeparatorMenuItem(),
+                sep2,
                 modelsOption,
-                new SeparatorMenuItem(),
+                sep3,
                 utilitiesMenu
         );
 
         logger.info("Menu items added for extension: {}", EXTENSION_NAME);
+    }
+
+    /**
+     * Shows the setup environment dialog for first-time installation.
+     */
+    private void showSetupDialog(QuPathGUI qupath) {
+        SetupEnvironmentDialog dialog = new SetupEnvironmentDialog(
+                qupath.getStage(),
+                () -> {
+                    environmentReady.set(true);
+                    serverAvailable = true;
+                    logger.info("Environment setup completed via dialog");
+                }
+        );
+        dialog.show();
+    }
+
+    /**
+     * Rebuilds the DL environment by shutting down, deleting, and re-setting up.
+     */
+    private void rebuildEnvironment(QuPathGUI qupath) {
+        boolean confirm = Dialogs.showConfirmDialog(
+                res.getString("menu.rebuildEnvironment"),
+                "This will shut down the Python service, delete the current environment,\n" +
+                        "and re-download all dependencies (~2-4 GB).\n\n" +
+                        "Continue?");
+        if (!confirm) {
+            return;
+        }
+
+        // Shut down the running service
+        try {
+            ApposeService.getInstance().shutdown();
+        } catch (Exception e) {
+            logger.warn("Error shutting down Appose service: {}", e.getMessage());
+        }
+
+        // Delete the environment directory
+        Path envPath = ApposeService.getEnvironmentPath();
+        if (Files.exists(envPath)) {
+            try {
+                deleteDirectoryRecursively(envPath);
+                logger.info("Deleted environment directory: {}", envPath);
+            } catch (IOException e) {
+                logger.error("Failed to delete environment directory", e);
+                Dialogs.showErrorNotification(EXTENSION_NAME,
+                        "Failed to delete environment: " + e.getMessage());
+                return;
+            }
+        }
+
+        // Update state and show setup dialog
+        environmentReady.set(false);
+        serverAvailable = false;
+        showSetupDialog(qupath);
+    }
+
+    /**
+     * Recursively deletes a directory and all its contents.
+     */
+    private static void deleteDirectoryRecursively(Path directory) throws IOException {
+        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                    throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc)
+                    throws IOException {
+                if (exc != null) throw exc;
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     /**
