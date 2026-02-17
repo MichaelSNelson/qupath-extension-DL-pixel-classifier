@@ -149,14 +149,10 @@ public class LayerFreezePanel extends VBox {
 
     /**
      * Loads layers for the specified architecture and encoder.
-     *
-     * @param architecture model architecture (e.g., "unet")
-     * @param encoder      encoder name (e.g., "resnet34")
-     * @param numChannels  number of input channels
-     * @param numClasses   number of output classes
-     */
-    /**
-     * Loads layers for the specified architecture and encoder.
+     * <p>
+     * Tries the Python server first for accurate parameter counts.
+     * If the server is unavailable, uses a local fallback with known
+     * layer structures for common encoders.
      * <p>
      * This method may be called from a background thread. All UI updates
      * are dispatched to the FX application thread via {@code Platform.runLater}.
@@ -175,38 +171,199 @@ public class LayerFreezePanel extends VBox {
             statusLabel.setText("Loading layer structure...");
         });
 
-        if (client == null) {
-            Platform.runLater(() -> statusLabel.setText("No server connection"));
-            return;
+        // Try server first for accurate parameter counts
+        if (client != null) {
+            try {
+                List<ClassifierClient.LayerInfo> layerInfos = client.getModelLayers(
+                        architecture, encoder, numChannels, numClasses);
+
+                if (layerInfos != null && !layerInfos.isEmpty()) {
+                    Platform.runLater(() -> {
+                        for (ClassifierClient.LayerInfo info : layerInfos) {
+                            LayerItem item = new LayerItem(
+                                    info.name(),
+                                    info.displayName(),
+                                    info.paramCount(),
+                                    info.isEncoder(),
+                                    info.depth(),
+                                    info.recommendedFreeze(),
+                                    info.description()
+                            );
+                            item.setFrozen(info.recommendedFreeze());
+                            layers.add(item);
+                        }
+                        updateStatus();
+                    });
+                    logger.info("Loaded {} layers from server for {}/{}",
+                            layerInfos.size(), architecture, encoder);
+                    return;
+                }
+            } catch (Exception e) {
+                logger.debug("Server layer loading failed for {}/{}: {}",
+                        architecture, encoder, e.getMessage());
+            }
         }
 
-        try {
-            List<ClassifierClient.LayerInfo> layerInfos = client.getModelLayers(
-                    architecture, encoder, numChannels, numClasses);
-
+        // Fallback: use local layer structure definitions
+        List<LayerItem> localLayers = buildLocalLayerStructure(encoder);
+        if (!localLayers.isEmpty()) {
             Platform.runLater(() -> {
-                for (ClassifierClient.LayerInfo info : layerInfos) {
-                    LayerItem item = new LayerItem(
-                            info.name(),
-                            info.displayName(),
-                            info.paramCount(),
-                            info.isEncoder(),
-                            info.depth(),
-                            info.recommendedFreeze(),
-                            info.description()
-                    );
-                    item.setFrozen(info.recommendedFreeze());
-                    layers.add(item);
-                }
-
+                layers.addAll(localLayers);
                 updateStatus();
             });
-            logger.info("Loaded {} layers for {}/{}", layerInfos.size(), architecture, encoder);
-
-        } catch (Exception e) {
-            logger.warn("Failed to load model layers for {}/{}: {}", architecture, encoder, e.getMessage());
-            Platform.runLater(() -> statusLabel.setText("Could not load layers: " + e.getMessage()));
+            logger.info("Loaded {} layers from local fallback for {}/{}",
+                    localLayers.size(), architecture, encoder);
+        } else {
+            Platform.runLater(() ->
+                    statusLabel.setText("Unknown encoder: " + encoder));
         }
+    }
+
+    /**
+     * Builds layer structure from local knowledge of common encoder families.
+     * Used as fallback when the Python server is not available.
+     */
+    private List<LayerItem> buildLocalLayerStructure(String encoder) {
+        List<LayerItem> result = new ArrayList<>();
+        boolean isHistology = encoder != null && encoder.contains("_") &&
+                (encoder.contains("lunit") || encoder.contains("kather") || encoder.contains("tcga"));
+        // Resolve the base encoder family
+        String family = resolveEncoderFamily(encoder);
+
+        if ("resnet".equals(family)) {
+            // ResNet family (resnet18, resnet34, resnet50, resnet101, + histology variants)
+            boolean isResnet50Plus = encoder != null &&
+                    (encoder.contains("50") || encoder.contains("101"));
+            result.add(makeLayer("encoder.conv1", "Encoder: Initial Conv", 0, true,
+                    isResnet50Plus ? 9_408 : 9_408, true, isHistology));
+            result.add(makeLayer("encoder.layer1", "Encoder: Block 1 (64 filters)", 1, true,
+                    isResnet50Plus ? 215_808 : 73_984, true, isHistology));
+            result.add(makeLayer("encoder.layer2", "Encoder: Block 2 (128 filters)", 2, true,
+                    isResnet50Plus ? 1_219_584 : 295_424, true, isHistology));
+            result.add(makeLayer("encoder.layer3", "Encoder: Block 3 (256 filters)", 3, true,
+                    isResnet50Plus ? 7_098_368 : 1_180_672, false, isHistology));
+            result.add(makeLayer("encoder.layer4", "Encoder: Block 4 (512 filters)", 4, true,
+                    isResnet50Plus ? 14_964_736 : 4_720_640, false, isHistology));
+        } else if ("efficientnet".equals(family)) {
+            result.add(makeLayer("encoder._conv_stem", "Encoder: Stem Conv", 0, true,
+                    864, true, false));
+            result.add(makeLayer("encoder._blocks[0:4]", "Encoder: Blocks 0-3", 1, true,
+                    15_000, true, false));
+            result.add(makeLayer("encoder._blocks[4:10]", "Encoder: Blocks 4-9", 2, true,
+                    60_000, true, false));
+            result.add(makeLayer("encoder._blocks[10:18]", "Encoder: Blocks 10-17", 3, true,
+                    300_000, false, false));
+            result.add(makeLayer("encoder._blocks[18:]", "Encoder: Blocks 18+", 4, true,
+                    500_000, false, false));
+        } else if ("densenet".equals(family)) {
+            result.add(makeLayer("encoder.features.conv0", "Encoder: Initial Conv", 0, true,
+                    9_408, true, false));
+            result.add(makeLayer("encoder.features.denseblock1", "Encoder: Dense Block 1", 1, true,
+                    340_000, true, false));
+            result.add(makeLayer("encoder.features.denseblock2", "Encoder: Dense Block 2", 2, true,
+                    920_000, true, false));
+            result.add(makeLayer("encoder.features.denseblock3", "Encoder: Dense Block 3", 3, true,
+                    2_800_000, false, false));
+            result.add(makeLayer("encoder.features.denseblock4", "Encoder: Dense Block 4", 4, true,
+                    2_000_000, false, false));
+        } else if ("vgg".equals(family)) {
+            result.add(makeLayer("encoder.features[0:7]", "Encoder: Layers 1-2 (64 filters)", 0, true,
+                    38_720, true, false));
+            result.add(makeLayer("encoder.features[7:14]", "Encoder: Layers 3-4 (128 filters)", 1, true,
+                    221_440, true, false));
+            result.add(makeLayer("encoder.features[14:24]", "Encoder: Layers 5-7 (256 filters)", 2, true,
+                    1_475_328, true, false));
+            result.add(makeLayer("encoder.features[24:34]", "Encoder: Layers 8-10 (512 filters)", 3, true,
+                    5_899_776, false, false));
+            result.add(makeLayer("encoder.features[34:]", "Encoder: Layers 11-13 (512 filters)", 4, true,
+                    5_899_776, false, false));
+        } else if ("mobilenet".equals(family)) {
+            result.add(makeLayer("encoder.features[0:2]", "Encoder: Initial Conv", 0, true,
+                    1_200, true, false));
+            result.add(makeLayer("encoder.features[2:5]", "Encoder: Blocks 1-3", 1, true,
+                    15_000, true, false));
+            result.add(makeLayer("encoder.features[5:9]", "Encoder: Blocks 4-7", 2, true,
+                    100_000, true, false));
+            result.add(makeLayer("encoder.features[9:14]", "Encoder: Blocks 8-12", 3, true,
+                    500_000, false, false));
+            result.add(makeLayer("encoder.features[14:]", "Encoder: Blocks 13+", 4, true,
+                    1_200_000, false, false));
+        } else if ("se_resnet".equals(family)) {
+            result.add(makeLayer("encoder.layer0", "Encoder: Initial Conv", 0, true,
+                    9_408, true, false));
+            result.add(makeLayer("encoder.layer1", "Encoder: SE Block 1 (64 filters)", 1, true,
+                    300_000, true, false));
+            result.add(makeLayer("encoder.layer2", "Encoder: SE Block 2 (128 filters)", 2, true,
+                    1_500_000, true, false));
+            result.add(makeLayer("encoder.layer3", "Encoder: SE Block 3 (256 filters)", 3, true,
+                    8_500_000, false, false));
+            result.add(makeLayer("encoder.layer4", "Encoder: SE Block 4 (512 filters)", 4, true,
+                    17_000_000, false, false));
+        } else {
+            // Generic fallback for unknown encoders
+            result.add(makeLayer("encoder.layer_early", "Encoder: Early Layers", 0, true,
+                    0, true, false));
+            result.add(makeLayer("encoder.layer_mid", "Encoder: Middle Layers", 2, true,
+                    0, false, false));
+            result.add(makeLayer("encoder.layer_late", "Encoder: Late Layers", 4, true,
+                    0, false, false));
+        }
+
+        // Add decoder and segmentation head (always present)
+        result.add(new LayerItem("decoder", "Decoder (all layers)", 0,
+                false, 5, false,
+                "Task-specific layers - should always be trained"));
+        result.add(new LayerItem("segmentation_head", "Segmentation Head", 0,
+                false, 6, false,
+                "Final classification layer - must be trained"));
+
+        return result;
+    }
+
+    private String resolveEncoderFamily(String encoder) {
+        if (encoder == null) return "unknown";
+        // Histology variants are resnet50-based
+        if (encoder.contains("lunit") || encoder.contains("kather") || encoder.contains("tcga")) {
+            return "resnet";
+        }
+        if (encoder.startsWith("resnet")) return "resnet";
+        if (encoder.startsWith("efficientnet")) return "efficientnet";
+        if (encoder.startsWith("densenet")) return "densenet";
+        if (encoder.startsWith("vgg")) return "vgg";
+        if (encoder.startsWith("mobilenet")) return "mobilenet";
+        if (encoder.startsWith("se_resnet")) return "se_resnet";
+        return "unknown";
+    }
+
+    private LayerItem makeLayer(String name, String displayName, int depth,
+                                 boolean isEncoder, int paramCount,
+                                 boolean recommendedFreeze, boolean isHistology) {
+        String description = getLayerDescription(depth, isHistology);
+        LayerItem item = new LayerItem(name, displayName, paramCount,
+                isEncoder, depth, recommendedFreeze, description);
+        item.setFrozen(recommendedFreeze);
+        return item;
+    }
+
+    private String getLayerDescription(int depth, boolean isHistology) {
+        if (isHistology) {
+            return switch (depth) {
+                case 0 -> "Basic tissue textures - already tissue-aware, safe to freeze";
+                case 1 -> "Cell-level patterns - tissue-relevant, freeze for small datasets";
+                case 2 -> "Tissue microstructure - already captures histology patterns";
+                case 3 -> "Tissue architecture features - train for best adaptation";
+                case 4 -> "High-level tissue semantics - fine-tune for your task";
+                default -> "Deep features - likely need retraining";
+            };
+        }
+        return switch (depth) {
+            case 0 -> "Edges, gradients, basic textures - universal features, freeze";
+            case 1 -> "Low-level patterns - transfer well across domains, freeze";
+            case 2 -> "Texture combinations - partial transfer, consider fine-tuning";
+            case 3 -> "Mid-level shapes - limited transfer to histopathology, train";
+            case 4 -> "High-level semantic features - must retrain for histopathology";
+            default -> "Deep features - likely need retraining";
+        };
     }
 
     /**
@@ -227,7 +384,7 @@ public class LayerFreezePanel extends VBox {
     }
 
     private void applyPreset() {
-        if (client == null || layers.isEmpty()) return;
+        if (layers.isEmpty()) return;
 
         String selection = presetCombo.getValue();
         String datasetSize;
@@ -242,25 +399,66 @@ public class LayerFreezePanel extends VBox {
             return; // Custom - don't change
         }
 
-        try {
-            Map<Integer, Boolean> recommendations = client.getFreezeRecommendations(
-                    datasetSize, currentEncoder);
+        Map<Integer, Boolean> recommendations = null;
 
-            for (LayerItem layer : layers) {
-                Boolean freeze = recommendations.get(layer.getDepth());
-                if (freeze != null) {
-                    layer.setFrozen(freeze);
-                }
+        // Try server first
+        if (client != null) {
+            try {
+                recommendations = client.getFreezeRecommendations(
+                        datasetSize, currentEncoder);
+            } catch (Exception e) {
+                logger.debug("Server freeze recommendations unavailable: {}", e.getMessage());
             }
-
-            layerListView.refresh();
-            updateStatus();
-            logger.info("Applied {} preset for encoder {}: {} layers frozen",
-                    datasetSize, currentEncoder, getFrozenLayerNames().size());
-
-        } catch (Exception e) {
-            logger.error("Failed to get recommendations", e);
         }
+
+        // Local fallback
+        if (recommendations == null) {
+            recommendations = getLocalFreezeRecommendations(datasetSize, currentEncoder);
+        }
+
+        for (LayerItem layer : layers) {
+            Boolean freeze = recommendations.get(layer.getDepth());
+            if (freeze != null) {
+                layer.setFrozen(freeze);
+            }
+        }
+
+        layerListView.refresh();
+        updateStatus();
+        logger.info("Applied {} preset for encoder {}: {} layers frozen",
+                datasetSize, currentEncoder, getFrozenLayerNames().size());
+    }
+
+    /**
+     * Local fallback for freeze recommendations when the server is unavailable.
+     * Mirrors the logic in pretrained_models.py.
+     */
+    private Map<Integer, Boolean> getLocalFreezeRecommendations(String datasetSize,
+                                                                  String encoder) {
+        boolean isHistology = encoder != null &&
+                (encoder.contains("lunit") || encoder.contains("kather") || encoder.contains("tcga"));
+
+        Map<Integer, Boolean> recs = new java.util.HashMap<>();
+        if (isHistology) {
+            switch (datasetSize) {
+                case "small" -> { recs.put(0, true); recs.put(1, true);
+                    recs.put(2, false); recs.put(3, false); recs.put(4, false); }
+                case "medium" -> { recs.put(0, true); recs.put(1, false);
+                    recs.put(2, false); recs.put(3, false); recs.put(4, false); }
+                default -> { recs.put(0, false); recs.put(1, false);
+                    recs.put(2, false); recs.put(3, false); recs.put(4, false); }
+            }
+        } else {
+            switch (datasetSize) {
+                case "small" -> { recs.put(0, true); recs.put(1, true);
+                    recs.put(2, true); recs.put(3, true); recs.put(4, false); }
+                case "medium" -> { recs.put(0, true); recs.put(1, true);
+                    recs.put(2, true); recs.put(3, false); recs.put(4, false); }
+                default -> { recs.put(0, true); recs.put(1, true);
+                    recs.put(2, false); recs.put(3, false); recs.put(4, false); }
+            }
+        }
+        return recs;
     }
 
     private void applyRecommended() {

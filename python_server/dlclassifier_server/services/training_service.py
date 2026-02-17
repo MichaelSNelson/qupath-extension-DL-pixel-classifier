@@ -298,10 +298,11 @@ class SegmentationDataset(Dataset):
         self.input_config = input_config
         self.augment = augment and ALBUMENTATIONS_AVAILABLE
 
-        # Find all images
+        # Find all images (including raw float32 files from N-channel export)
         self.image_files = sorted(list(self.images_dir.glob("*.tiff")) +
                                   list(self.images_dir.glob("*.tif")) +
-                                  list(self.images_dir.glob("*.png")))
+                                  list(self.images_dir.glob("*.png")) +
+                                  list(self.images_dir.glob("*.raw")))
         logger.info(f"Found {len(self.image_files)} images in {images_dir}")
 
         # Setup augmentation
@@ -325,10 +326,9 @@ class SegmentationDataset(Dataset):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        # Load image
+        # Load image (supports TIFF, PNG, and raw float32 files)
         img_path = self.image_files[idx]
-        img = Image.open(img_path)
-        img_array = np.array(img, dtype=np.float32)
+        img_array = self._load_patch(img_path)
 
         # Handle channels
         if img_array.ndim == 2:
@@ -377,6 +377,35 @@ class SegmentationDataset(Dataset):
             img = self._normalize_single(img, norm_config, strategy)
 
         return img
+
+    @staticmethod
+    def _load_patch(img_path: Path) -> np.ndarray:
+        """Load a training patch from file.
+
+        Supports:
+        - .raw: N-channel float32 (12-byte header: H,W,C as int32 + float32 data)
+        - .tif/.tiff: Multi-channel TIFF via tifffile (falls back to PIL)
+        - .png and others: Standard formats via PIL
+        """
+        suffix = img_path.suffix.lower()
+        if suffix == '.raw':
+            with open(img_path, 'rb') as f:
+                header = np.frombuffer(f.read(12), dtype=np.int32)
+                h, w, c = int(header[0]), int(header[1]), int(header[2])
+                data = np.frombuffer(f.read(), dtype=np.float32)
+            return data.reshape(h, w, c)
+        if suffix in ('.tif', '.tiff'):
+            try:
+                import tifffile
+                arr = tifffile.imread(str(img_path)).astype(np.float32)
+                # tifffile may return (C,H,W) for multi-channel; convert to HWC
+                if arr.ndim == 3 and arr.shape[0] < arr.shape[2]:
+                    arr = arr.transpose(1, 2, 0)
+                return arr
+            except ImportError:
+                pass  # fall through to PIL
+        img = Image.open(img_path)
+        return np.array(img, dtype=np.float32)
 
     def _normalize_single(
         self,

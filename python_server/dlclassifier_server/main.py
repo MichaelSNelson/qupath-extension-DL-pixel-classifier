@@ -33,6 +33,13 @@ async def lifespan(app: FastAPI):
     job_manager = JobManager(model_registry=model_registry)
     app.state.job_manager = job_manager
 
+    # Persistent inference service -- avoids model reload per request
+    from .services.inference_service import InferenceService
+    inference_service = InferenceService(device="auto", gpu_manager=gpu_manager)
+    app.state.inference_service = inference_service
+    logger.info("Persistent InferenceService created on device: %s",
+                inference_service._device_str)
+
     yield
 
     logger.info("Shutting down DL Classifier Server...")

@@ -15,7 +15,11 @@ import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBuffer;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -853,10 +857,53 @@ public class AnnotationExtractor {
     }
 
     /**
-     * Saves a patch image.
+     * Saves a patch image. Uses TIFF for simple 8-bit images (<=4 bands)
+     * and a raw float32 format for multi-channel or high-bit-depth images.
      */
     private void savePatch(BufferedImage image, Path path) throws IOException {
-        ImageIO.write(image, "TIFF", path.toFile());
+        int numBands = image.getRaster().getNumBands();
+        int dataType = image.getRaster().getDataBuffer().getDataType();
+        if (numBands <= 4 && dataType == DataBuffer.TYPE_BYTE) {
+            ImageIO.write(image, "TIFF", path.toFile());
+        } else {
+            // N-channel or high-bit-depth: write as raw float32 with header
+            Path rawPath = path.resolveSibling(
+                    path.getFileName().toString()
+                            .replaceFirst("\\.(tiff?|png)$", ".raw"));
+            writeRawFloat(BitDepthConverter.toFloatArray(image), rawPath);
+        }
+    }
+
+    /**
+     * Writes float data as a raw binary file with a 12-byte header.
+     * <p>
+     * Format: 3 x int32 (height, width, channels) followed by
+     * H*W*C float32 values in HWC order, all little-endian.
+     *
+     * @param data    float array [height][width][channels]
+     * @param outPath output file path
+     * @throws IOException if writing fails
+     */
+    static void writeRawFloat(float[][][] data, Path outPath) throws IOException {
+        int h = data.length;
+        int w = data[0].length;
+        int c = data[0][0].length;
+        ByteBuffer header = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        header.putInt(h);
+        header.putInt(w);
+        header.putInt(c);
+        ByteBuffer body = ByteBuffer.allocate(h * w * c * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                for (int ch = 0; ch < c; ch++) {
+                    body.putFloat(data[y][x][ch]);
+                }
+            }
+        }
+        try (OutputStream os = Files.newOutputStream(outPath)) {
+            os.write(header.array());
+            os.write(body.array());
+        }
     }
 
     /**

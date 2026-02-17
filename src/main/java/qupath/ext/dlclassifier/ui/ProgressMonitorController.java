@@ -130,9 +130,11 @@ public class ProgressMonitorController {
 
         lossChart = new LineChart<>(xAxis, yAxis);
         lossChart.setTitle("Training Progress");
-        lossChart.setCreateSymbols(false);
+        lossChart.setCreateSymbols(true);
         lossChart.setAnimated(false);
         lossChart.setPrefHeight(200);
+        lossChart.setLegendVisible(true);
+        lossChart.setLegendSide(javafx.geometry.Side.BOTTOM);
 
         trainLossSeries = new XYChart.Series<>();
         trainLossSeries.setName("Train Loss");
@@ -313,9 +315,14 @@ public class ProgressMonitorController {
                                        Map<String, Double> perClassIoU,
                                        Map<String, Double> perClassLoss) {
         Platform.runLater(() -> {
-            trainLossSeries.getData().add(new XYChart.Data<>(epoch, trainLoss));
+            var trainPoint = new XYChart.Data<Number, Number>(epoch, trainLoss);
+            trainLossSeries.getData().add(trainPoint);
+            installDataPointTooltip(trainPoint, "Train Loss", epoch, trainLoss);
+
             if (!Double.isNaN(valLoss)) {
-                valLossSeries.getData().add(new XYChart.Data<>(epoch, valLoss));
+                var valPoint = new XYChart.Data<Number, Number>(epoch, valLoss);
+                valLossSeries.getData().add(valPoint);
+                installDataPointTooltip(valPoint, "Val Loss", epoch, valLoss);
             }
 
             // Update per-class IoU chart
@@ -579,6 +586,28 @@ public class ProgressMonitorController {
                 }
             }
         });
+    }
+
+    /**
+     * Installs a tooltip on a chart data point showing series name, epoch, and value.
+     * Must be called on the FX application thread.
+     */
+    private void installDataPointTooltip(XYChart.Data<Number, Number> data,
+                                          String seriesName, int epoch, double value) {
+        javafx.scene.Node node = data.getNode();
+        if (node != null) {
+            Tooltip.install(node, new Tooltip(
+                    String.format("%s\nEpoch: %d\nValue: %.4f", seriesName, epoch, value)));
+            node.setStyle("-fx-background-radius: 3px; -fx-padding: 2px;");
+        } else {
+            data.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    Tooltip.install(newNode, new Tooltip(
+                            String.format("%s\nEpoch: %d\nValue: %.4f", seriesName, epoch, value)));
+                    newNode.setStyle("-fx-background-radius: 3px; -fx-padding: 2px;");
+                }
+            });
+        }
     }
 
     private void startTimeUpdater() {

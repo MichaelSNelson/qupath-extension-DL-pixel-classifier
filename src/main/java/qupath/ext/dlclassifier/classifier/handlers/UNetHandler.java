@@ -266,8 +266,8 @@ public class UNetHandler implements ClassifierHandler {
             root.setVgap(10);
             root.setPadding(new Insets(10));
 
-            // Backbone selection
-            Label backboneLabel = new Label("Backbone:");
+            // Encoder selection
+            Label backboneLabel = new Label("Encoder:");
             backboneCombo = new ComboBox<>(FXCollections.observableArrayList(BACKBONES));
             backboneCombo.setValue("resnet34");
             backboneCombo.setMaxWidth(Double.MAX_VALUE);

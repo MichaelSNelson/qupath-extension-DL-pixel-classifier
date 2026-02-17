@@ -3,7 +3,11 @@
 Supports:
 - CUDA, Apple MPS, and CPU inference
 - ONNX and PyTorch model loading with caching
+- GPU-batched inference for maximum throughput
+- FP16 mixed precision on CUDA
+- torch.compile() for kernel fusion speedup
 - Batch and pixel-level inference modes
+- Binary buffer input for zero-copy tile transfer
 - Multiple normalization strategies
 """
 
@@ -23,6 +27,9 @@ from .gpu_manager import GPUManager, get_gpu_manager
 
 logger = logging.getLogger(__name__)
 
+# Default GPU batch size for batched inference
+DEFAULT_GPU_BATCH_SIZE = 16
+
 
 class InferenceService:
     """Service for running model inference.
@@ -30,6 +37,9 @@ class InferenceService:
     Features:
     - Automatic device selection (CUDA > MPS > CPU)
     - Model caching for efficient batch processing
+    - GPU-batched inference (configurable batch size)
+    - FP16 mixed precision on CUDA via torch.amp.autocast
+    - torch.compile() for PyTorch 2.x kernel fusion
     - ONNX inference with appropriate execution providers
     - PyTorch inference as fallback
     - Multiple normalization strategies
@@ -56,9 +66,11 @@ class InferenceService:
             self.device = torch.device(device)
 
         self._model_cache: Dict[str, Tuple[str, Any]] = {}
+        # Track which models have been compiled to avoid recompilation
+        self._compiled_models: set = set()
         self._onnx_providers = self._get_onnx_providers()
 
-        logger.info(f"InferenceService initialized on device: {self._device_str}")
+        logger.info("InferenceService initialized on device: %s", self._device_str)
 
     def _get_onnx_providers(self) -> List[str]:
         """Get available ONNX execution providers based on device.
@@ -81,46 +93,59 @@ class InferenceService:
 
         return ["CPUExecutionProvider"]
 
+    # ==================== Public API ====================
+
     def run_batch(
         self,
         model_path: str,
         tiles: List[Dict[str, Any]],
-        input_config: Dict[str, Any]
+        input_config: Dict[str, Any],
+        gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
+        use_amp: bool = True,
+        compile_model: bool = True,
     ) -> Dict[str, List[float]]:
-        """Run inference on a batch of tiles.
+        """Run inference on a batch of tiles with GPU batching.
+
+        Tiles are loaded, normalized, then processed in GPU batches for
+        maximum throughput. Each GPU batch is a single forward pass.
 
         Args:
             model_path: Path to the model directory
             tiles: List of tile dictionaries with 'id' and 'data' keys
             input_config: Input configuration (channels, normalization)
+            gpu_batch_size: Max tiles per GPU forward pass (default 16)
+            use_amp: Use FP16 mixed precision on CUDA (default True)
+            compile_model: Use torch.compile on PyTorch models (default True)
 
         Returns:
             Dict mapping tile_id to list of per-class probabilities
         """
-        # Load model
-        model = self._load_model(model_path)
+        model_tuple = self._load_model(model_path, compile_model=compile_model)
 
-        # Process tiles
-        predictions = {}
+        # Pre-process all tiles: load, normalize, select channels
+        tile_ids = []
+        preprocessed = []
+        selected = input_config.get("selected_channels")
 
         for tile in tiles:
-            tile_id = tile["id"]
-            tile_data = tile["data"]
-
-            # Decode tile data
-            img_array = self._load_tile_data(tile_data)
-
-            # Normalize
+            tile_ids.append(tile["id"])
+            img_array = self._load_tile_data(tile["data"])
             img_array = self._normalize(img_array, input_config)
-
-            # Select channels if needed
-            selected = input_config.get("selected_channels")
             if selected:
                 img_array = img_array[:, :, selected]
+            preprocessed.append(img_array)
 
-            # Run inference
-            probs = self._infer_tile(model, img_array)
-            predictions[tile_id] = probs.tolist()
+        # Batched inference -> list of per-tile probability maps (C, H, W)
+        all_prob_maps = self._infer_batch_spatial(
+            model_tuple, preprocessed,
+            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+        )
+
+        # Average spatial dimensions to get per-class probabilities
+        predictions = {}
+        for tile_id, prob_map in zip(tile_ids, all_prob_maps):
+            class_probs = prob_map.mean(axis=(1, 2))
+            predictions[tile_id] = class_probs.tolist()
 
         return predictions
 
@@ -130,7 +155,10 @@ class InferenceService:
         tiles: List[Dict[str, Any]],
         input_config: Dict[str, Any],
         output_dir: str,
-        reflection_padding: int = 0
+        reflection_padding: int = 0,
+        gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
+        use_amp: bool = True,
+        compile_model: bool = True,
     ) -> Dict[str, str]:
         """Run inference returning per-pixel probability maps saved as files.
 
@@ -142,43 +170,210 @@ class InferenceService:
             tiles: List of tile data dicts with 'id' and 'data' (file path or base64)
             input_config: Input configuration (channels, normalization)
             output_dir: Directory to save probability map files
+            reflection_padding: Pixels of reflection padding to add around tiles
+            gpu_batch_size: Max tiles per GPU forward pass (default 16)
+            use_amp: Use FP16 mixed precision on CUDA (default True)
+            compile_model: Use torch.compile on PyTorch models (default True)
 
         Returns:
             Dict mapping tile_id to output file path
         """
-        model = self._load_model(model_path)
+        model_tuple = self._load_model(model_path, compile_model=compile_model)
         os.makedirs(output_dir, exist_ok=True)
 
-        output_paths = {}
+        # Pre-process all tiles
+        tile_ids = []
+        preprocessed = []
+        selected = input_config.get("selected_channels")
 
         for tile in tiles:
-            tile_id = tile["id"]
-            tile_data = tile["data"]
-
-            # Load tile image
-            img_array = self._load_tile_data(tile_data)
-
-            # Normalize
+            tile_ids.append(tile["id"])
+            img_array = self._load_tile_data(tile["data"])
             img_array = self._normalize(img_array, input_config)
-
-            # Select channels if needed
-            selected = input_config.get("selected_channels")
             if selected:
                 img_array = img_array[:, :, selected]
+            preprocessed.append(img_array)
 
-            # Run inference - get full spatial probability map
-            prob_map = self._infer_tile_spatial(model, img_array,
-                                                reflection_padding=reflection_padding)
+        # Batched inference with reflection padding
+        all_prob_maps = self._infer_batch_spatial(
+            model_tuple, preprocessed,
+            reflection_padding=reflection_padding,
+            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+        )
 
-            # Save as raw float32 binary (C, H, W order) for easy Java reading
-            output_path = os.path.join(output_dir, f"{tile_id}.bin")
+        # Save each probability map to disk
+        output_paths = {}
+        for tile_id, prob_map in zip(tile_ids, all_prob_maps):
+            output_path = os.path.join(output_dir, "%s.bin" % tile_id)
             prob_map.astype(np.float32).tofile(output_path)
             output_paths[tile_id] = output_path
 
         # Clear GPU cache after batch
         self._cleanup_after_inference()
 
-        logger.info(f"Pixel inference complete: {len(output_paths)} tiles -> {output_dir}")
+        logger.info("Pixel inference complete: %d tiles -> %s",
+                     len(output_paths), output_dir)
+        return output_paths
+
+    def run_batch_from_buffer(
+        self,
+        model_path: str,
+        raw_bytes: bytes,
+        tile_ids: List[str],
+        tile_height: int,
+        tile_width: int,
+        num_channels: int,
+        input_config: Dict[str, Any],
+        gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
+        use_amp: bool = True,
+        compile_model: bool = True,
+    ) -> Dict[str, List[float]]:
+        """Run inference on tiles from a raw binary buffer.
+
+        Tiles are packed as raw uint8 RGB in a single contiguous buffer,
+        avoiding PNG/Base64 encode/decode overhead.
+
+        Args:
+            model_path: Path to the model directory
+            raw_bytes: Concatenated raw tile pixels (uint8, HWC per tile)
+            tile_ids: List of tile IDs matching the order in raw_bytes
+            tile_height: Height of each tile in pixels
+            tile_width: Width of each tile in pixels
+            num_channels: Number of channels per tile
+            input_config: Input configuration (channels, normalization)
+            gpu_batch_size: Max tiles per GPU forward pass
+            use_amp: Use FP16 mixed precision on CUDA
+            compile_model: Use torch.compile on PyTorch models
+
+        Returns:
+            Dict mapping tile_id to list of per-class probabilities
+        """
+        model_tuple = self._load_model(model_path, compile_model=compile_model)
+
+        # Determine dtype from metadata (default uint8 for backward compat)
+        dtype_str = input_config.get("dtype", "uint8")
+        np_dtype = np.float32 if dtype_str == "float32" else np.uint8
+        bytes_per_element = 4 if np_dtype == np.float32 else 1
+
+        # Reshape entire buffer into tiles at once
+        num_tiles = len(tile_ids)
+        expected_size = (num_tiles * tile_height * tile_width
+                         * num_channels * bytes_per_element)
+        if len(raw_bytes) != expected_size:
+            raise ValueError(
+                "Buffer size mismatch: expected %d bytes "
+                "(%d tiles x %d x %d x %d x %d bytes/elem) but got %d bytes"
+                % (expected_size, num_tiles, tile_height, tile_width,
+                   num_channels, bytes_per_element, len(raw_bytes)))
+
+        all_tiles = np.frombuffer(raw_bytes, dtype=np_dtype).reshape(
+            num_tiles, tile_height, tile_width, num_channels
+        )
+        if np_dtype != np.float32:
+            all_tiles = all_tiles.astype(np.float32)
+
+        # Normalize and select channels
+        preprocessed = []
+        selected = input_config.get("selected_channels")
+        for i in range(num_tiles):
+            img_array = self._normalize(all_tiles[i], input_config)
+            if selected:
+                img_array = img_array[:, :, selected]
+            preprocessed.append(img_array)
+
+        # Batched inference
+        all_prob_maps = self._infer_batch_spatial(
+            model_tuple, preprocessed,
+            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+        )
+
+        predictions = {}
+        for tile_id, prob_map in zip(tile_ids, all_prob_maps):
+            class_probs = prob_map.mean(axis=(1, 2))
+            predictions[tile_id] = class_probs.tolist()
+
+        return predictions
+
+    def run_pixel_inference_from_buffer(
+        self,
+        model_path: str,
+        raw_bytes: bytes,
+        tile_ids: List[str],
+        tile_height: int,
+        tile_width: int,
+        num_channels: int,
+        input_config: Dict[str, Any],
+        output_dir: str,
+        reflection_padding: int = 0,
+        gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
+        use_amp: bool = True,
+        compile_model: bool = True,
+    ) -> Dict[str, str]:
+        """Run pixel-level inference on tiles from a raw binary buffer.
+
+        Args:
+            model_path: Path to the model directory
+            raw_bytes: Concatenated raw tile pixels (uint8 or float32, HWC per tile)
+            tile_ids: List of tile IDs
+            tile_height: Height of each tile in pixels
+            tile_width: Width of each tile in pixels
+            num_channels: Number of channels per tile
+            input_config: Input configuration (channels, normalization, dtype)
+            output_dir: Directory to save probability map files
+            reflection_padding: Pixels of reflection padding
+            gpu_batch_size: Max tiles per GPU forward pass
+            use_amp: Use FP16 mixed precision on CUDA
+            compile_model: Use torch.compile on PyTorch models
+
+        Returns:
+            Dict mapping tile_id to output file path
+        """
+        model_tuple = self._load_model(model_path, compile_model=compile_model)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Determine dtype from metadata (default uint8 for backward compat)
+        dtype_str = input_config.get("dtype", "uint8")
+        np_dtype = np.float32 if dtype_str == "float32" else np.uint8
+        bytes_per_element = 4 if np_dtype == np.float32 else 1
+
+        num_tiles = len(tile_ids)
+        expected_size = (num_tiles * tile_height * tile_width
+                         * num_channels * bytes_per_element)
+        if len(raw_bytes) != expected_size:
+            raise ValueError(
+                "Buffer size mismatch: expected %d bytes but got %d bytes" % (
+                    expected_size, len(raw_bytes)))
+
+        all_tiles = np.frombuffer(raw_bytes, dtype=np_dtype).reshape(
+            num_tiles, tile_height, tile_width, num_channels
+        )
+        if np_dtype != np.float32:
+            all_tiles = all_tiles.astype(np.float32)
+
+        preprocessed = []
+        selected = input_config.get("selected_channels")
+        for i in range(num_tiles):
+            img_array = self._normalize(all_tiles[i], input_config)
+            if selected:
+                img_array = img_array[:, :, selected]
+            preprocessed.append(img_array)
+
+        all_prob_maps = self._infer_batch_spatial(
+            model_tuple, preprocessed,
+            reflection_padding=reflection_padding,
+            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+        )
+
+        output_paths = {}
+        for tile_id, prob_map in zip(tile_ids, all_prob_maps):
+            output_path = os.path.join(output_dir, "%s.bin" % tile_id)
+            prob_map.astype(np.float32).tofile(output_path)
+            output_paths[tile_id] = output_path
+
+        self._cleanup_after_inference()
+
+        logger.info("Pixel inference (binary) complete: %d tiles -> %s",
+                     len(output_paths), output_dir)
         return output_paths
 
     def run_batch_files(
@@ -195,40 +390,190 @@ class InferenceService:
         Returns:
             List of result dictionaries with path and probabilities
         """
-        model = self._load_model(model_path)
+        model_tuple = self._load_model(model_path)
 
-        results = []
+        # Pre-process all tiles
+        preprocessed = []
         for path in tile_paths:
             img_array = self._load_image(path)
-
-            # Basic normalization
             img_array = img_array.astype(np.float32) / 255.0
+            preprocessed.append(img_array)
 
-            probs = self._infer_tile(model, img_array)
+        # Batched inference
+        all_prob_maps = self._infer_batch_spatial(model_tuple, preprocessed)
 
+        results = []
+        for path, prob_map in zip(tile_paths, all_prob_maps):
+            class_probs = prob_map.mean(axis=(1, 2))
             results.append({
                 "path": path,
-                "probabilities": probs.tolist()
+                "probabilities": class_probs.tolist()
             })
 
         return results
+
+    # ==================== Batched Inference Core ====================
+
+    def _infer_batch_spatial(
+        self,
+        model_tuple: Tuple[str, Any],
+        images: List[np.ndarray],
+        reflection_padding: int = 0,
+        gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
+        use_amp: bool = True,
+    ) -> List[np.ndarray]:
+        """Run batched inference on a list of preprocessed images.
+
+        Groups images into GPU batches, runs a single forward pass per batch,
+        and returns per-tile spatial probability maps.
+
+        Args:
+            model_tuple: (model_type, model) from _load_model
+            images: List of normalized image arrays (H, W, C)
+            reflection_padding: Pixels of reflection padding to add
+            gpu_batch_size: Max images per forward pass
+            use_amp: Use FP16 mixed precision on CUDA
+
+        Returns:
+            List of probability maps, each with shape (C, H, W)
+        """
+        if not images:
+            return []
+
+        model_type, model = model_tuple
+
+        # Apply reflection padding and convert HWC -> CHW for all tiles
+        pad = reflection_padding
+        tensors_nchw = []
+        for img_array in images:
+            if pad > 0:
+                max_pad = min(img_array.shape[0], img_array.shape[1]) // 2
+                effective_pad = min(pad, max_pad)
+                if img_array.ndim == 2:
+                    img_array = np.pad(img_array,
+                                       ((effective_pad, effective_pad),
+                                        (effective_pad, effective_pad)),
+                                       mode='reflect')
+                else:
+                    img_array = np.pad(img_array,
+                                       ((effective_pad, effective_pad),
+                                        (effective_pad, effective_pad),
+                                        (0, 0)),
+                                       mode='reflect')
+
+            if img_array.ndim == 2:
+                img_array = img_array[..., np.newaxis]
+
+            # HWC -> CHW, float32
+            chw = img_array.transpose(2, 0, 1).astype(np.float32)
+            tensors_nchw.append(chw)
+
+        # Process in GPU batches
+        all_probs = []
+
+        for batch_start in range(0, len(tensors_nchw), gpu_batch_size):
+            batch_end = min(batch_start + gpu_batch_size, len(tensors_nchw))
+            batch_arrays = tensors_nchw[batch_start:batch_end]
+
+            # Stack into (N, C, H, W) batch
+            batch_np = np.stack(batch_arrays, axis=0)
+
+            if model_type == "onnx":
+                input_name = model.get_inputs()[0].name
+                outputs = model.run(None, {input_name: batch_np})
+                batch_logits = outputs[0]  # (N, C, H, W)
+            else:
+                # PyTorch inference with optional AMP
+                batch_tensor = torch.from_numpy(batch_np).to(self.device)
+                with torch.no_grad():
+                    if use_amp and self._device_str == "cuda":
+                        with torch.amp.autocast("cuda", dtype=torch.float16):
+                            outputs = model(batch_tensor)
+                    else:
+                        outputs = model(batch_tensor)
+                    batch_logits = outputs.cpu().numpy()
+
+            # Softmax per-tile and collect
+            for i in range(batch_logits.shape[0]):
+                probs = self._softmax(batch_logits[i])
+                # Crop reflection padding from output
+                if pad > 0:
+                    effective_pad = min(pad,
+                                        min(images[batch_start + i].shape[0],
+                                            images[batch_start + i].shape[1]) // 2)
+                    if effective_pad > 0:
+                        probs = probs[:, effective_pad:-effective_pad,
+                                      effective_pad:-effective_pad]
+                all_probs.append(probs)
+
+        return all_probs
+
+    # ==================== Single-tile inference (legacy compat) ====================
+
+    def _infer_tile(self, model_tuple: Tuple[str, Any], img_array: np.ndarray) -> np.ndarray:
+        """Run inference on a single tile, returning per-class average probabilities.
+
+        Args:
+            model_tuple: (model_type, model) from _load_model
+            img_array: Image array (H, W, C) normalized
+
+        Returns:
+            Per-class average probabilities
+        """
+        results = self._infer_batch_spatial(model_tuple, [img_array])
+        return results[0].mean(axis=(1, 2))
+
+    def _infer_tile_spatial(
+        self,
+        model_tuple: Tuple[str, Any],
+        img_array: np.ndarray,
+        reflection_padding: int = 0
+    ) -> np.ndarray:
+        """Run inference on a single tile, returning full spatial probability map.
+
+        Args:
+            model_tuple: (model_type, model) from _load_model
+            img_array: Image array (H, W, C) normalized
+            reflection_padding: Pixels of reflection padding
+
+        Returns:
+            Probability map with shape (C, H, W) where C is num_classes
+        """
+        results = self._infer_batch_spatial(
+            model_tuple, [img_array],
+            reflection_padding=reflection_padding
+        )
+        return results[0]
+
+    # ==================== Model Loading ====================
 
     def _cleanup_after_inference(self) -> None:
         """Clear GPU cache after inference batch."""
         self.gpu_manager.clear_cache()
 
-    def _load_model(self, model_path: str) -> Tuple[str, Any]:
+    def _load_model(
+        self,
+        model_path: str,
+        compile_model: bool = True,
+    ) -> Tuple[str, Any]:
         """Load a model from disk.
 
         Prefers ONNX models for inference efficiency, falls back to PyTorch.
+        Applies torch.compile() to PyTorch models on CUDA for kernel fusion.
 
         Args:
             model_path: Path to model directory
+            compile_model: Whether to apply torch.compile (PyTorch + CUDA only)
 
         Returns:
             Tuple of (model_type, model) where model_type is "onnx" or "pytorch"
         """
         if model_path in self._model_cache:
+            model_tuple = self._model_cache[model_path]
+            # Apply torch.compile if requested and not yet compiled
+            if (compile_model and model_tuple[0] == "pytorch"
+                    and model_path not in self._compiled_models):
+                self._try_compile_model(model_path, model_tuple)
             return self._model_cache[model_path]
 
         model_dir = Path(model_path)
@@ -237,7 +582,7 @@ class InferenceService:
         onnx_path = model_dir / "model.onnx"
         if onnx_path.exists():
             try:
-                logger.info(f"Loading ONNX model from {onnx_path}")
+                logger.info("Loading ONNX model from %s", onnx_path)
                 import onnxruntime as ort
 
                 session = ort.InferenceSession(
@@ -247,12 +592,12 @@ class InferenceService:
                 self._model_cache[model_path] = ("onnx", session)
                 return ("onnx", session)
             except Exception as e:
-                logger.warning(f"ONNX loading failed, trying PyTorch: {e}")
+                logger.warning("ONNX loading failed, trying PyTorch: %s", e)
 
         # Try PyTorch
         pt_path = model_dir / "model.pt"
         if pt_path.exists():
-            logger.info(f"Loading PyTorch model from {pt_path}")
+            logger.info("Loading PyTorch model from %s", pt_path)
 
             # Load metadata for model creation
             metadata_path = model_dir / "metadata.json"
@@ -296,82 +641,45 @@ class InferenceService:
             model.eval()
 
             self._model_cache[model_path] = ("pytorch", model)
-            return ("pytorch", model)
 
-        raise FileNotFoundError(f"No model found at {model_path}")
+            # Apply torch.compile if requested
+            if compile_model:
+                self._try_compile_model(model_path, ("pytorch", model))
 
-    def _infer_tile(self, model_tuple: Tuple[str, Any], img_array: np.ndarray) -> np.ndarray:
-        """Run inference on a single tile, returning per-class average probabilities.
+            return self._model_cache[model_path]
 
-        Args:
-            model_tuple: (model_type, model) from _load_model
-            img_array: Image array (H, W, C) normalized
+        raise FileNotFoundError("No model found at %s" % model_path)
 
-        Returns:
-            Per-class average probabilities
-        """
-        prob_map = self._infer_tile_spatial(model_tuple, img_array)
-        # Average over spatial dimensions to get per-class probabilities
-        class_probs = prob_map.mean(axis=(1, 2))
-        return class_probs
+    def _try_compile_model(self, model_path: str,
+                           model_tuple: Tuple[str, Any]) -> None:
+        """Attempt to apply torch.compile() to a PyTorch model.
 
-    def _infer_tile_spatial(
-        self,
-        model_tuple: Tuple[str, Any],
-        img_array: np.ndarray,
-        reflection_padding: int = 0
-    ) -> np.ndarray:
-        """Run inference on a single tile, returning full spatial probability map.
+        Only applies on CUDA with PyTorch 2.x+. Compilation cost is paid
+        once; subsequent inference calls benefit from kernel fusion.
 
         Args:
-            model_tuple: (model_type, model) from _load_model
-            img_array: Image array (H, W, C) normalized
-            reflection_padding: Pixels of reflection padding to add around the tile
-                before inference. Reduces edge artifacts from zero padding in
-                convolutional layers. The output is cropped back to original size.
-
-        Returns:
-            Probability map with shape (C, H, W) where C is num_classes
+            model_path: Cache key for the model
+            model_tuple: (model_type, model) tuple
         """
+        if self._device_str != "cuda":
+            return
+        if not hasattr(torch, "compile"):
+            return
+
         model_type, model = model_tuple
+        if model_type != "pytorch":
+            return
 
-        # Apply reflection padding to reduce tile edge artifacts
-        pad = reflection_padding
-        if pad > 0:
-            max_pad = min(img_array.shape[0], img_array.shape[1]) // 2
-            pad = min(pad, max_pad)
-            if img_array.ndim == 2:
-                img_array = np.pad(img_array, ((pad, pad), (pad, pad)), mode='reflect')
-            else:
-                img_array = np.pad(img_array, ((pad, pad), (pad, pad), (0, 0)), mode='reflect')
+        try:
+            compiled = torch.compile(model, mode="reduce-overhead")
+            self._model_cache[model_path] = ("pytorch", compiled)
+            self._compiled_models.add(model_path)
+            logger.info("Model compiled with torch.compile() for %s", model_path)
+        except Exception as e:
+            logger.warning("torch.compile failed, using eager mode: %s", e)
+            self._compiled_models.add(model_path)  # Don't retry
 
-        # Convert to tensor (HWC -> NCHW)
-        if img_array.ndim == 2:
-            img_array = img_array[..., np.newaxis]
-
-        img_tensor = img_array.transpose(2, 0, 1)[np.newaxis, ...]
-        img_tensor = img_tensor.astype(np.float32)
-
-        if model_type == "onnx":
-            # ONNX inference
-            input_name = model.get_inputs()[0].name
-            outputs = model.run(None, {input_name: img_tensor})
-            logits = outputs[0]
-        else:
-            # PyTorch inference
-            with torch.no_grad():
-                tensor = torch.from_numpy(img_tensor).to(self.device)
-                outputs = model(tensor)
-                logits = outputs.cpu().numpy()
-
-        # Softmax to get probabilities (C, H, W)
-        probs = self._softmax(logits[0])
-
-        # Crop out the reflection padding from the output
-        if pad > 0:
-            probs = probs[:, pad:-pad, pad:-pad]
-
-        return probs
+    # ==================== Utilities ====================
 
     def _softmax(self, x: np.ndarray, axis: int = 0) -> np.ndarray:
         """Compute softmax.
@@ -406,8 +714,8 @@ class InferenceService:
             return self._load_image(tile_data)
 
         raise ValueError(
-            f"Tile data is neither a data URL (data:...) nor an existing file: "
-            f"{tile_data[:80]}..."
+            "Tile data is neither a data URL (data:...) nor an existing file: "
+            "%s..." % tile_data[:80]
         )
 
     def _decode_base64(self, data: str) -> np.ndarray:
@@ -430,14 +738,45 @@ class InferenceService:
     def _load_image(self, path: str) -> np.ndarray:
         """Load image from file.
 
+        Supports standard image formats via PIL as well as multi-channel
+        TIFF files (>4 bands, 16-bit) via tifffile, and raw float32 files
+        exported by the Java training pipeline.
+
         Args:
             path: Path to image file
 
         Returns:
-            Image as numpy array
+            Image as numpy array (HWC float32)
         """
+        if path.endswith('.raw'):
+            return self._load_raw_tile(path)
+        if path.endswith(('.tif', '.tiff')):
+            try:
+                import tifffile
+                arr = tifffile.imread(path).astype(np.float32)
+                # tifffile may return (C,H,W) for multi-channel; convert to HWC
+                if arr.ndim == 3 and arr.shape[0] < arr.shape[2]:
+                    arr = arr.transpose(1, 2, 0)
+                elif arr.ndim == 2:
+                    arr = arr[..., np.newaxis]
+                return arr
+            except ImportError:
+                pass  # fall through to PIL
         img = Image.open(path)
         return np.array(img, dtype=np.float32)
+
+    @staticmethod
+    def _load_raw_tile(path: str) -> np.ndarray:
+        """Load a raw float32 tile exported by the Java training pipeline.
+
+        File format: 12-byte header (3x int32: height, width, channels)
+        followed by H*W*C float32 values in HWC order, all little-endian.
+        """
+        with open(path, 'rb') as f:
+            header = np.frombuffer(f.read(12), dtype=np.int32)
+            h, w, c = int(header[0]), int(header[1]), int(header[2])
+            data = np.frombuffer(f.read(), dtype=np.float32)
+        return data.reshape(h, w, c)
 
     def _normalize(self, img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
         """Normalize image data.
@@ -511,5 +850,6 @@ class InferenceService:
     def clear_model_cache(self) -> None:
         """Clear the model cache to free memory."""
         self._model_cache.clear()
+        self._compiled_models.clear()
         self._cleanup_after_inference()
         logger.info("Model cache cleared")

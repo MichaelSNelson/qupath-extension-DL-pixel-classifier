@@ -2,6 +2,7 @@ package qupath.ext.dlclassifier.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.controller.InferenceWorkflow;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
@@ -20,15 +21,12 @@ import qupath.lib.regions.RegionRequest;
 
 import javafx.application.Platform;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -138,25 +136,48 @@ public class DLPixelClassifier implements PixelClassifier {
             throw new IOException("Failed to read tile at " + request);
         }
 
-        // Encode tile as base64 PNG
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageIO.write(tileImage, "png", baos);
-        String encoded = "data:image/png;base64," +
-                Base64.getEncoder().encodeToString(baos.toByteArray());
+        // Encode tile as raw binary (uint8 fast path for simple RGB, float32 for N-channel)
+        String dtype;
+        byte[] rawBytes;
+        int numChannels;
+        if (InferenceWorkflow.isSimpleRgb(tileImage)) {
+            dtype = "uint8";
+            rawBytes = InferenceWorkflow.encodeTileRaw(tileImage);
+            numChannels = 3;
+        } else {
+            dtype = "float32";
+            rawBytes = InferenceWorkflow.encodeTileRawFloat(tileImage,
+                    channelConfig.getSelectedChannels());
+            numChannels = channelConfig.getSelectedChannels().isEmpty()
+                    ? tileImage.getRaster().getNumBands()
+                    : channelConfig.getSelectedChannels().size();
+        }
 
-        // Create tile data for server
         String tileId = String.format("%d_%d_%d_%d",
                 request.getX(), request.getY(), request.getWidth(), request.getHeight());
-        List<ClassifierClient.TileData> tiles = List.of(
-                new ClassifierClient.TileData(tileId, encoded, request.getX(), request.getY())
-        );
 
         try {
-            // Use pixel inference to get per-pixel probability maps (shared temp dir + cached client)
+            // Use binary pixel inference (single-tile batch)
             int reflectionPadding = DLClassifierPreferences.getOverlayReflectionPadding();
-            ClassifierClient.PixelInferenceResult result = client.runPixelInference(
-                    modelDirPath, tiles, channelConfig, inferenceConfig, sharedTempDir,
+            ClassifierClient.PixelInferenceResult result = client.runPixelInferenceBinary(
+                    modelDirPath, rawBytes, List.of(tileId),
+                    tileImage.getHeight(), tileImage.getWidth(), numChannels,
+                    dtype, channelConfig, inferenceConfig, sharedTempDir,
                     reflectionPadding);
+
+            // Fall back to JSON/PNG path if binary endpoint unavailable
+            if (result == null) {
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                javax.imageio.ImageIO.write(tileImage, "png", baos);
+                String encoded = "data:image/png;base64," +
+                        java.util.Base64.getEncoder().encodeToString(baos.toByteArray());
+                List<ClassifierClient.TileData> tiles = List.of(
+                        new ClassifierClient.TileData(tileId, encoded,
+                                request.getX(), request.getY()));
+                result = client.runPixelInference(
+                        modelDirPath, tiles, channelConfig, inferenceConfig,
+                        sharedTempDir, reflectionPadding);
+            }
 
             if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
                 throw new IOException("No inference result returned for tile");

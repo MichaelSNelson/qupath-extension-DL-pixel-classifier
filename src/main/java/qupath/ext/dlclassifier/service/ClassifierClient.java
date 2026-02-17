@@ -745,6 +745,188 @@ public class ClassifierClient {
         return result;
     }
 
+    // ==================== Binary Inference ====================
+
+    /**
+     * Runs inference using binary tile transfer (multipart/form-data).
+     * <p>
+     * Tiles are sent as raw bytes in a single binary blob. For 8-bit RGB images
+     * the bytes are uint8; for multi-channel or high-bit-depth images they are
+     * little-endian float32.
+     *
+     * @param modelPath       path to the trained model
+     * @param rawTileBytes    concatenated tile pixels (HWC order, uint8 or float32)
+     * @param tileIds         ordered list of tile IDs matching byte order
+     * @param tileHeight      height of each tile in pixels
+     * @param tileWidth       width of each tile in pixels
+     * @param numChannels     number of channels per tile
+     * @param dtype           data type of raw bytes ("uint8" or "float32")
+     * @param channelConfig   channel configuration
+     * @param inferenceConfig inference configuration
+     * @return inference results, or null if binary endpoint is unavailable
+     * @throws IOException if communication fails for non-404 errors
+     */
+    public InferenceResult runInferenceBinary(String modelPath,
+                                              byte[] rawTileBytes,
+                                              List<String> tileIds,
+                                              int tileHeight,
+                                              int tileWidth,
+                                              int numChannels,
+                                              String dtype,
+                                              ChannelConfiguration channelConfig,
+                                              InferenceConfig inferenceConfig) throws IOException {
+        // Build metadata JSON
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("model_path", modelPath);
+        meta.put("tile_ids", tileIds);
+        meta.put("tile_height", tileHeight);
+        meta.put("tile_width", tileWidth);
+        meta.put("num_channels", numChannels);
+        meta.put("dtype", dtype);
+
+        Map<String, Object> inputConfig = new HashMap<>();
+        inputConfig.put("num_channels", channelConfig.getNumChannels());
+        inputConfig.put("selected_channels", channelConfig.getSelectedChannels());
+        Map<String, Object> normalization = new HashMap<>();
+        normalization.put("strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
+        normalization.put("per_channel", channelConfig.isPerChannelNormalization());
+        normalization.put("clip_percentile", channelConfig.getClipPercentile());
+        inputConfig.put("normalization", normalization);
+        meta.put("input_config", inputConfig);
+
+        Map<String, Object> options = new HashMap<>();
+        options.put("use_gpu", inferenceConfig.isUseGPU());
+        options.put("blend_mode", inferenceConfig.getBlendMode().name().toLowerCase());
+        meta.put("options", options);
+
+        String metadataJson = gson.toJson(meta);
+
+        RequestBody body = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("metadata", metadataJson)
+                .addFormDataPart("tiles", "tiles.bin",
+                        RequestBody.create(rawTileBytes, MediaType.get("application/octet-stream")))
+                .build();
+
+        Request request = new Request.Builder()
+                .url(baseUrl + "/inference/binary")
+                .post(body)
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (response.code() == 404) {
+                // Binary endpoint not available, caller should fall back
+                logger.debug("Binary inference endpoint not available, will use JSON fallback");
+                return null;
+            }
+            if (!response.isSuccessful()) {
+                String error = response.body() != null ? response.body().string() : "Unknown error";
+                throw new IOException("Binary inference request failed: " + error);
+            }
+
+            JsonObject result = JsonParser.parseString(response.body().string()).getAsJsonObject();
+            Map<String, float[]> predictions = new HashMap<>();
+            JsonObject predObj = result.getAsJsonObject("predictions");
+            for (String tileId : predObj.keySet()) {
+                var arr = predObj.getAsJsonArray(tileId);
+                float[] probs = new float[arr.size()];
+                for (int i = 0; i < arr.size(); i++) {
+                    probs[i] = arr.get(i).getAsFloat();
+                }
+                predictions.put(tileId, probs);
+            }
+            return new InferenceResult(predictions);
+        }
+    }
+
+    /**
+     * Runs pixel-level inference using binary tile transfer.
+     *
+     * @param modelPath         path to the trained model
+     * @param rawTileBytes      concatenated tile pixels (HWC order, uint8 or float32)
+     * @param tileIds           ordered list of tile IDs
+     * @param tileHeight        height of each tile in pixels
+     * @param tileWidth         width of each tile in pixels
+     * @param numChannels       number of channels per tile
+     * @param dtype             data type of raw bytes ("uint8" or "float32")
+     * @param channelConfig     channel configuration
+     * @param inferenceConfig   inference configuration
+     * @param outputDir         directory for probability map files
+     * @param reflectionPadding reflection padding pixels
+     * @return pixel inference result, or null if binary endpoint unavailable
+     * @throws IOException if communication fails for non-404 errors
+     */
+    public PixelInferenceResult runPixelInferenceBinary(String modelPath,
+                                                         byte[] rawTileBytes,
+                                                         List<String> tileIds,
+                                                         int tileHeight,
+                                                         int tileWidth,
+                                                         int numChannels,
+                                                         String dtype,
+                                                         ChannelConfiguration channelConfig,
+                                                         InferenceConfig inferenceConfig,
+                                                         Path outputDir,
+                                                         int reflectionPadding) throws IOException {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("model_path", modelPath);
+        meta.put("output_dir", outputDir.toString());
+        meta.put("tile_ids", tileIds);
+        meta.put("tile_height", tileHeight);
+        meta.put("tile_width", tileWidth);
+        meta.put("num_channels", numChannels);
+        meta.put("dtype", dtype);
+
+        Map<String, Object> inputConfig = new HashMap<>();
+        inputConfig.put("num_channels", channelConfig.getNumChannels());
+        inputConfig.put("selected_channels", channelConfig.getSelectedChannels());
+        Map<String, Object> normalization = new HashMap<>();
+        normalization.put("strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
+        normalization.put("per_channel", channelConfig.isPerChannelNormalization());
+        normalization.put("clip_percentile", channelConfig.getClipPercentile());
+        inputConfig.put("normalization", normalization);
+        meta.put("input_config", inputConfig);
+
+        Map<String, Object> options = new HashMap<>();
+        options.put("use_gpu", inferenceConfig.isUseGPU());
+        options.put("blend_mode", inferenceConfig.getBlendMode().name().toLowerCase());
+        options.put("reflection_padding", reflectionPadding);
+        meta.put("options", options);
+
+        String metadataJson = gson.toJson(meta);
+
+        RequestBody body = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("metadata", metadataJson)
+                .addFormDataPart("tiles", "tiles.bin",
+                        RequestBody.create(rawTileBytes, MediaType.get("application/octet-stream")))
+                .build();
+
+        Request request = new Request.Builder()
+                .url(baseUrl + "/inference/pixel/binary")
+                .post(body)
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (response.code() == 404) {
+                logger.debug("Binary pixel inference endpoint not available, will use JSON fallback");
+                return null;
+            }
+            if (!response.isSuccessful()) {
+                String error = response.body() != null ? response.body().string() : "Unknown error";
+                throw new IOException("Binary pixel inference request failed: " + error);
+            }
+
+            JsonObject result = JsonParser.parseString(response.body().string()).getAsJsonObject();
+            Map<String, String> outputPaths = new HashMap<>();
+            JsonObject pathsObj = result.getAsJsonObject("output_paths");
+            for (String tileId : pathsObj.keySet()) {
+                outputPaths.put(tileId, pathsObj.get(tileId).getAsString());
+            }
+            int numClasses = result.get("num_classes").getAsInt();
+            return new PixelInferenceResult(outputPaths, numClasses);
+        }
+    }
+
     // ==================== Pretrained Models ====================
 
     /**

@@ -31,7 +31,13 @@ import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
 
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBuffer;
+import java.awt.image.DataBufferByte;
+import java.awt.image.DataBufferInt;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,6 +48,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Workflow for applying a trained classifier to images.
@@ -549,10 +558,15 @@ public class InferenceWorkflow {
         // OBJECTS needs full pixel-level probability maps
         boolean usePixelInference = inferenceConfig.getOutputType() != InferenceConfig.OutputType.MEASUREMENTS;
 
-        // Process in batches
+        // Process in batches with parallel tile preparation
         int batchSize = tileProcessor.getMaxTilesInMemory();
         List<float[][][]> allResults = new ArrayList<>();
         Path tempDir = null;
+        int tileSize = inferenceConfig.getTileSize();
+
+        // Thread pool for parallel tile reading -- overlaps I/O with GPU inference
+        int poolSize = Math.min(4, Runtime.getRuntime().availableProcessors());
+        ExecutorService tilePool = Executors.newFixedThreadPool(poolSize);
 
         try {
             if (usePixelInference) {
@@ -560,66 +574,82 @@ public class InferenceWorkflow {
                 logger.info("Using pixel-level inference, temp dir: {}", tempDir);
             }
 
+            // Double-buffered pipeline: prepare next batch while current batch infers
+            PreparedBatch nextPrepared = null;
+
             for (int i = 0; i < tileSpecs.size(); i += batchSize) {
                 if (progress != null && progress.isCancelled()) {
                     return i;
                 }
 
                 int end = Math.min(i + batchSize, tileSpecs.size());
-                List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
 
                 if (progress != null) {
-                    progress.setDetail(String.format("Processing tiles %d-%d of %d", i + 1, end, tileSpecs.size()));
+                    progress.setDetail(String.format("Processing tiles %d-%d of %d",
+                            i + 1, end, tileSpecs.size()));
                     progress.setCurrentProgress((double) i / tileSpecs.size());
                 }
 
-                // Read and encode tiles
-                List<ClassifierClient.TileData> tileDataList = new ArrayList<>();
-                for (TileProcessor.TileSpec spec : batch) {
-                    BufferedImage tileImage = tileProcessor.readTile(spec, server);
-                    String encoded = encodeTile(tileImage);
-                    tileDataList.add(new ClassifierClient.TileData(
-                            String.valueOf(spec.index()),
-                            encoded,
-                            spec.x(),
-                            spec.y()
-                    ));
+                // Get current batch -- either from pre-prepared or prepare now
+                PreparedBatch currentBatch;
+                if (nextPrepared != null) {
+                    currentBatch = nextPrepared;
+                    nextPrepared = null;
+                } else {
+                    List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
+                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool);
                 }
 
+                // Start preparing NEXT batch in parallel while we send current to server
+                int nextStart = i + batchSize;
+                Future<PreparedBatch> nextBatchFuture = null;
+                if (nextStart < tileSpecs.size()) {
+                    int nextEnd = Math.min(nextStart + batchSize, tileSpecs.size());
+                    List<TileProcessor.TileSpec> nextBatchSpecs = tileSpecs.subList(nextStart, nextEnd);
+                    nextBatchFuture = tilePool.submit(() ->
+                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool));
+                }
+
+                // Send current batch to server for inference
                 if (usePixelInference) {
-                    // Pixel-level inference: get full probability maps for each tile
-                    ClassifierClient.PixelInferenceResult pixelResult = client.runPixelInference(
-                            modelDirPath,
-                            tileDataList,
-                            channelConfig,
-                            inferenceConfig,
-                            tempDir,
-                            0
-                    );
+                    ClassifierClient.PixelInferenceResult pixelResult =
+                            client.runPixelInferenceBinary(
+                                    modelDirPath, currentBatch.rawBytes(), currentBatch.tileIds(),
+                                    tileSize, tileSize, currentBatch.numChannels(),
+                                    currentBatch.dtype(),
+                                    channelConfig, inferenceConfig, tempDir, 0);
+
+                    if (pixelResult == null) {
+                        pixelResult = client.runPixelInference(
+                                modelDirPath, currentBatch.tileDataList(), channelConfig,
+                                inferenceConfig, tempDir, 0);
+                    }
 
                     if (pixelResult != null && pixelResult.outputPaths() != null) {
-                        int tileSize = inferenceConfig.getTileSize();
-                        for (ClassifierClient.TileData tile : tileDataList) {
+                        for (ClassifierClient.TileData tile : currentBatch.tileDataList()) {
                             String outputPath = pixelResult.outputPaths().get(tile.id());
                             if (outputPath != null) {
                                 float[][][] probMap = ClassifierClient.readProbabilityMap(
                                         Path.of(outputPath),
                                         pixelResult.numClasses(),
-                                        tileSize,
-                                        tileSize
-                                );
+                                        tileSize, tileSize);
                                 allResults.add(probMap);
                             }
                         }
                     }
                 } else {
-                    // Aggregated tile-level inference for MEASUREMENTS output
-                    ClassifierClient.InferenceResult result = client.runInference(
-                            modelDirPath,
-                            tileDataList,
-                            channelConfig,
-                            inferenceConfig
-                    );
+                    ClassifierClient.InferenceResult result =
+                            client.runInferenceBinary(
+                                    modelDirPath, currentBatch.rawBytes(), currentBatch.tileIds(),
+                                    tileSize, tileSize, currentBatch.numChannels(),
+                                    currentBatch.dtype(),
+                                    channelConfig, inferenceConfig);
+
+                    if (result == null) {
+                        result = client.runInference(
+                                modelDirPath, currentBatch.tileDataList(), channelConfig,
+                                inferenceConfig);
+                    }
 
                     if (result != null && result.predictions() != null) {
                         for (float[] probs : result.predictions().values()) {
@@ -627,6 +657,16 @@ public class InferenceWorkflow {
                             tileResult[0][0] = probs;
                             allResults.add(tileResult);
                         }
+                    }
+                }
+
+                // Collect the pre-prepared next batch (blocks until ready)
+                if (nextBatchFuture != null) {
+                    try {
+                        nextPrepared = nextBatchFuture.get();
+                    } catch (Exception e) {
+                        logger.warn("Parallel tile prep failed, will prepare sequentially", e);
+                        nextPrepared = null;
                     }
                 }
             }
@@ -669,6 +709,9 @@ public class InferenceWorkflow {
 
             return tileSpecs.size();
         } finally {
+            // Shut down tile preparation thread pool
+            tilePool.shutdownNow();
+
             // Clean up temp directory for pixel inference
             if (tempDir != null) {
                 try {
@@ -735,13 +778,194 @@ public class InferenceWorkflow {
     }
 
     /**
-     * Encodes a tile image to base64.
+     * Pre-prepared batch containing both raw binary and base64-encoded tile data.
+     *
+     * @param rawBytes     concatenated tile pixels (uint8 or float32 depending on dtype)
+     * @param tileIds      ordered tile IDs matching byte order
+     * @param tileDataList base64 tile data for JSON fallback path
+     * @param dtype        "uint8" for 8-bit RGB fast path, "float32" for N-channel path
+     * @param numChannels  number of channels per tile in the raw bytes
+     */
+    private record PreparedBatch(
+            byte[] rawBytes,
+            List<String> tileIds,
+            List<ClassifierClient.TileData> tileDataList,
+            String dtype,
+            int numChannels
+    ) {}
+
+    /**
+     * Prepares a batch of tiles for inference by reading images and encoding
+     * them in both raw binary and base64 formats.
+     * <p>
+     * Tile reading is parallelized across the provided thread pool for I/O overlap.
+     *
+     * @param batch         tile specs for this batch
+     * @param tileProcessor tile processor for reading tiles
+     * @param server        image server
+     * @param tilePool      thread pool for parallel reading
+     * @return prepared batch data
+     * @throws IOException if tile reading fails
+     */
+    private static PreparedBatch prepareBatch(
+            List<TileProcessor.TileSpec> batch,
+            TileProcessor tileProcessor,
+            ImageServer<BufferedImage> server,
+            ExecutorService tilePool) throws IOException {
+
+        // Read all tiles in parallel
+        List<Future<BufferedImage>> futures = new ArrayList<>();
+        for (TileProcessor.TileSpec spec : batch) {
+            futures.add(tilePool.submit(() -> tileProcessor.readTile(spec, server)));
+        }
+
+        List<String> tileIds = new ArrayList<>();
+        ByteArrayOutputStream rawBuffer = new ByteArrayOutputStream();
+        List<ClassifierClient.TileData> tileDataList = new ArrayList<>();
+
+        // Determine encoding path from first tile (all tiles in a batch share
+        // the same image type since they come from the same server)
+        String dtype = null;
+        int rawChannels = 0;
+
+        for (int j = 0; j < batch.size(); j++) {
+            TileProcessor.TileSpec spec = batch.get(j);
+            String tileId = String.valueOf(spec.index());
+            tileIds.add(tileId);
+
+            BufferedImage tileImage;
+            try {
+                tileImage = futures.get(j).get();
+            } catch (Exception e) {
+                throw new IOException("Failed to read tile " + tileId, e);
+            }
+
+            // Decide encoding on first tile
+            if (dtype == null) {
+                if (isSimpleRgb(tileImage)) {
+                    dtype = "uint8";
+                    rawChannels = 3;
+                } else {
+                    dtype = "float32";
+                    rawChannels = tileImage.getRaster().getNumBands();
+                }
+            }
+
+            // Raw bytes for binary transfer
+            byte[] rawBytes;
+            if ("uint8".equals(dtype)) {
+                rawBytes = encodeTileRaw(tileImage);
+            } else {
+                rawBytes = encodeTileRawFloat(tileImage, null);
+            }
+            rawBuffer.write(rawBytes);
+
+            // Base64 for fallback
+            String encoded = encodeTile(tileImage);
+            tileDataList.add(new ClassifierClient.TileData(
+                    tileId, encoded, spec.x(), spec.y()));
+        }
+
+        return new PreparedBatch(rawBuffer.toByteArray(), tileIds, tileDataList,
+                dtype != null ? dtype : "uint8", rawChannels);
+    }
+
+    /**
+     * Encodes a tile image to base64 PNG (legacy format for JSON endpoints).
      */
     private static String encodeTile(BufferedImage image) throws IOException {
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
         javax.imageio.ImageIO.write(image, "png", baos);
         return "data:image/png;base64," +
                 Base64.getEncoder().encodeToString(baos.toByteArray());
+    }
+
+    /**
+     * Encodes a tile image as raw RGB bytes for binary transfer.
+     * <p>
+     * Extracts pixel data as a flat byte array in RGB/HWC order.
+     * This avoids PNG compression overhead (~0.1ms vs ~5ms per tile).
+     *
+     * @param image the tile image
+     * @return raw pixel bytes in RGB order (H * W * 3)
+     */
+    public static byte[] encodeTileRaw(BufferedImage image) {
+        int w = image.getWidth();
+        int h = image.getHeight();
+        int numChannels = 3; // Always extract as RGB
+        byte[] result = new byte[h * w * numChannels];
+
+        int type = image.getType();
+        if (type == BufferedImage.TYPE_3BYTE_BGR) {
+            // Fast path: extract BGR bytes and swap to RGB
+            byte[] pixels = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
+            for (int i = 0; i < h * w; i++) {
+                result[i * 3]     = pixels[i * 3 + 2]; // R
+                result[i * 3 + 1] = pixels[i * 3 + 1]; // G
+                result[i * 3 + 2] = pixels[i * 3];     // B
+            }
+        } else if (type == BufferedImage.TYPE_INT_RGB || type == BufferedImage.TYPE_INT_ARGB) {
+            // Extract from int[] pixel data
+            int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+            for (int i = 0; i < h * w; i++) {
+                int px = pixels[i];
+                result[i * 3]     = (byte) ((px >> 16) & 0xFF); // R
+                result[i * 3 + 1] = (byte) ((px >> 8) & 0xFF);  // G
+                result[i * 3 + 2] = (byte) (px & 0xFF);         // B
+            }
+        } else {
+            // Generic fallback using getRGB
+            int[] rgbPixels = image.getRGB(0, 0, w, h, null, 0, w);
+            for (int i = 0; i < h * w; i++) {
+                int px = rgbPixels[i];
+                result[i * 3]     = (byte) ((px >> 16) & 0xFF);
+                result[i * 3 + 1] = (byte) ((px >> 8) & 0xFF);
+                result[i * 3 + 2] = (byte) (px & 0xFF);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Encodes a tile image as float32 bytes for binary transfer of N-channel data.
+     * <p>
+     * Uses {@link BitDepthConverter#toFloatArray} to handle any bit depth and band count,
+     * then writes as little-endian float32 in HWC order. Optionally extracts a subset
+     * of channels via {@link BitDepthConverter#extractChannels}.
+     *
+     * @param image            the tile image (any bit depth, any number of bands)
+     * @param selectedChannels channel indices to extract, or null for all channels
+     * @return raw pixel bytes as little-endian float32 (H * W * C * 4 bytes)
+     */
+    public static byte[] encodeTileRawFloat(BufferedImage image, List<Integer> selectedChannels) {
+        float[][][] data = BitDepthConverter.toFloatArray(image);
+        if (selectedChannels != null && !selectedChannels.isEmpty()) {
+            int[] indices = selectedChannels.stream().mapToInt(Integer::intValue).toArray();
+            data = BitDepthConverter.extractChannels(data, indices);
+        }
+        int h = data.length;
+        int w = data[0].length;
+        int c = data[0][0].length;
+        ByteBuffer buf = ByteBuffer.allocate(h * w * c * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                for (int ch = 0; ch < c; ch++) {
+                    buf.putFloat(data[y][x][ch]);
+                }
+            }
+        }
+        return buf.array();
+    }
+
+    /**
+     * Returns true if the image is a simple 8-bit image with 3 or fewer bands,
+     * suitable for the fast uint8 encoding path.
+     */
+    public static boolean isSimpleRgb(BufferedImage image) {
+        int numBands = image.getRaster().getNumBands();
+        int dataType = image.getRaster().getDataBuffer().getDataType();
+        return numBands <= 3 && dataType == DataBuffer.TYPE_BYTE;
     }
 
     /**
