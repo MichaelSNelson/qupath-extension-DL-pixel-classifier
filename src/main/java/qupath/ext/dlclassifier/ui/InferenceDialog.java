@@ -29,6 +29,7 @@ import java.awt.image.BufferedImage;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 /**
  * Dialog for configuring deep learning classifier inference.
@@ -110,6 +111,7 @@ public class InferenceDialog {
 
         // Channel configuration
         private ChannelSelectionPanel channelPanel;
+        private VBox channelMappingPanel;
 
         // Processing options
         private Spinner<Integer> tileSizeSpinner;
@@ -372,7 +374,14 @@ public class InferenceDialog {
             channelPanel = new ChannelSelectionPanel();
             channelPanel.validProperty().addListener((obs, old, valid) -> updateValidation());
 
-            channelSectionPane = new TitledPane("CHANNEL MAPPING", channelPanel);
+            channelMappingPanel = new VBox(5);
+            channelMappingPanel.setPadding(new Insets(5, 0, 0, 0));
+            channelMappingPanel.setVisible(false);
+            channelMappingPanel.setManaged(false);
+
+            VBox channelContent = new VBox(5, channelPanel, channelMappingPanel);
+
+            channelSectionPane = new TitledPane("CHANNEL MAPPING", channelContent);
             channelSectionPane.setExpanded(true);
             channelSectionPane.setStyle("-fx-font-weight: bold;");
             channelSectionPane.setTooltip(TooltipHelper.create(
@@ -581,10 +590,11 @@ public class InferenceDialog {
             ImageData<BufferedImage> imageData = QP.getCurrentImageData();
             if (imageData != null) {
                 channelPanel.setImageData(imageData);
+                channelPanel.autoConfigureForImageType(imageData.getImageType(),
+                        imageData.getServer().nChannels());
 
-                // Auto-select all channels and collapse section for brightfield images
+                // Collapse channel section for brightfield images
                 if (isBrightfield(imageData)) {
-                    channelPanel.selectAllChannels();
                     channelSectionPane.setExpanded(false);
                 }
             }
@@ -602,6 +612,8 @@ public class InferenceDialog {
                 classifierInfoLabel.setText("Select a classifier to see details");
                 classifierInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
                 channelPanel.setRequiredChannelCount(-1);
+                channelMappingPanel.setVisible(false);
+                channelMappingPanel.setManaged(false);
                 okButton.setDisable(true);
                 return;
             }
@@ -631,7 +643,137 @@ public class InferenceDialog {
             // Update tile size to match classifier
             tileSizeSpinner.getValueFactory().setValue(classifier.getInputWidth());
 
+            // Show channel mapping visualization
+            updateChannelMappingDisplay(classifier);
+
             updateValidation();
+        }
+
+        private void updateChannelMappingDisplay(ClassifierMetadata classifier) {
+            channelMappingPanel.getChildren().clear();
+
+            List<String> expected = classifier.getExpectedChannelNames();
+            if (expected == null || expected.isEmpty()) {
+                channelMappingPanel.setVisible(false);
+                channelMappingPanel.setManaged(false);
+                return;
+            }
+
+            List<String> available = getAvailableChannelNames();
+
+            // Build grid: [Expected] -> [Mapped To] [Status] [Override]
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(4);
+            grid.setPadding(new Insets(5));
+
+            // Header row
+            Label headerExpected = new Label("Expected");
+            headerExpected.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            Label headerMapped = new Label("Mapped To");
+            headerMapped.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            Label headerStatus = new Label("Status");
+            headerStatus.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            grid.addRow(0, headerExpected, new Label("->"), headerMapped, headerStatus);
+
+            int unmatchedCount = 0;
+
+            for (int i = 0; i < expected.size(); i++) {
+                String name = expected.get(i);
+                String match = findBestMatch(name, available);
+
+                Label expectedLabel = new Label(name);
+                Label arrowLabel = new Label("->");
+                arrowLabel.setStyle("-fx-text-fill: #999;");
+
+                Label mappedLabel;
+                Label statusIndicator;
+
+                if (match != null && match.equalsIgnoreCase(name)) {
+                    // Exact match
+                    mappedLabel = new Label(match);
+                    statusIndicator = new Label("[OK]");
+                    statusIndicator.setStyle("-fx-text-fill: #388E3C; -fx-font-weight: bold;");
+                    grid.addRow(i + 1, expectedLabel, arrowLabel, mappedLabel, statusIndicator);
+                } else if (match != null) {
+                    // Fuzzy match -- show with ComboBox override
+                    mappedLabel = new Label(match);
+                    mappedLabel.setStyle("-fx-text-fill: #F57C00;");
+                    statusIndicator = new Label("[?]");
+                    statusIndicator.setStyle("-fx-text-fill: #F57C00; -fx-font-weight: bold;");
+
+                    ComboBox<String> overrideCombo = createOverrideComboBox(available, match, i);
+                    grid.addRow(i + 1, expectedLabel, arrowLabel, mappedLabel, statusIndicator, overrideCombo);
+                } else {
+                    // No match
+                    mappedLabel = new Label("(unmapped)");
+                    mappedLabel.setStyle("-fx-text-fill: #D32F2F;");
+                    statusIndicator = new Label("[X]");
+                    statusIndicator.setStyle("-fx-text-fill: #D32F2F; -fx-font-weight: bold;");
+                    unmatchedCount++;
+
+                    ComboBox<String> overrideCombo = createOverrideComboBox(available, null, i);
+                    grid.addRow(i + 1, expectedLabel, arrowLabel, mappedLabel, statusIndicator, overrideCombo);
+                }
+            }
+
+            // Summary label
+            Label summaryLabel = new Label();
+            summaryLabel.setPadding(new Insets(5, 0, 0, 0));
+            if (unmatchedCount == 0) {
+                summaryLabel.setText("All channels matched");
+                summaryLabel.setStyle("-fx-text-fill: #388E3C;");
+            } else {
+                summaryLabel.setText(unmatchedCount + " channel(s) need manual mapping");
+                summaryLabel.setStyle("-fx-text-fill: #D32F2F; -fx-font-weight: bold;");
+            }
+
+            Label titleLabel = new Label("Channel Mapping:");
+            titleLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+
+            channelMappingPanel.getChildren().addAll(titleLabel, grid, summaryLabel);
+            channelMappingPanel.setVisible(true);
+            channelMappingPanel.setManaged(true);
+        }
+
+        private ComboBox<String> createOverrideComboBox(List<String> available, String currentMatch, int position) {
+            ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList(available));
+            combo.setPromptText("Select channel...");
+            combo.setPrefWidth(160);
+            if (currentMatch != null) {
+                combo.setValue(currentMatch);
+            }
+            combo.valueProperty().addListener((obs, old, newVal) -> {
+                if (newVal != null) {
+                    channelPanel.setSelectedChannelByName(position, newVal);
+                }
+            });
+            return combo;
+        }
+
+        private List<String> getAvailableChannelNames() {
+            ImageData<BufferedImage> imageData = QP.getCurrentImageData();
+            if (imageData == null || imageData.getServer() == null) {
+                return Collections.emptyList();
+            }
+            return imageData.getServer().getMetadata().getChannels().stream()
+                    .map(ch -> ch.getName())
+                    .collect(Collectors.toList());
+        }
+
+        private String findBestMatch(String expectedName, List<String> available) {
+            // 1. Exact case-insensitive match
+            for (String name : available) {
+                if (name.equalsIgnoreCase(expectedName)) return name;
+            }
+            // 2. Substring match (e.g., "DAPI" in "Channel_DAPI_01")
+            for (String name : available) {
+                if (name.toLowerCase().contains(expectedName.toLowerCase())
+                        || expectedName.toLowerCase().contains(name.toLowerCase())) {
+                    return name;
+                }
+            }
+            return null;
         }
 
         private void updateOutputOptions(InferenceConfig.OutputType outputType) {

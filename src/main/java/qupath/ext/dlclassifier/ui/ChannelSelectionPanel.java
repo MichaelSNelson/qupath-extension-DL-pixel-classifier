@@ -4,6 +4,7 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
@@ -20,6 +21,8 @@ import qupath.lib.images.servers.ImageServer;
 
 import java.awt.image.BufferedImage;
 import java.util.*;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -29,8 +32,10 @@ import java.util.stream.IntStream;
  * This component provides:
  * <ul>
  *   <li>Multi-select channel list with color indicators</li>
+ *   <li>Search/filter bar and bulk select for large channel counts</li>
  *   <li>Channel reordering with up/down buttons</li>
  *   <li>Normalization strategy selection per channel</li>
+ *   <li>Per-channel normalization toggle for fluorescence images</li>
  *   <li>Real-time validation and feedback</li>
  * </ul>
  *
@@ -41,11 +46,23 @@ public class ChannelSelectionPanel extends VBox {
 
     private static final Logger logger = LoggerFactory.getLogger(ChannelSelectionPanel.class);
 
+    /** Threshold above which the search/filter toolbar is shown */
+    private static final int SEARCH_BAR_THRESHOLD = 8;
+
     private final ListView<ChannelItem> availableList;
     private final ListView<ChannelItem> selectedList;
     private final ComboBox<ChannelConfiguration.NormalizationStrategy> normalizationCombo;
+    private final CheckBox perChannelNormCheck;
     private final Label statusLabel;
     private final BooleanProperty validProperty = new SimpleBooleanProperty(false);
+
+    // Search/filter toolbar components
+    private final HBox searchToolbar;
+    private final TextField searchField;
+
+    // Master list backing the available channels (FilteredList wraps this)
+    private final ObservableList<ChannelItem> masterAvailableList = FXCollections.observableArrayList();
+    private final FilteredList<ChannelItem> filteredAvailableList = new FilteredList<>(masterAvailableList);
 
     private ImageServer<BufferedImage> currentServer;
     private int requiredChannelCount = -1; // -1 means any count is valid
@@ -57,8 +74,8 @@ public class ChannelSelectionPanel extends VBox {
         setSpacing(10);
         setPadding(new Insets(10));
 
-        // Available channels list
-        availableList = new ListView<>();
+        // Available channels list -- backed by filtered view of master list
+        availableList = new ListView<>(filteredAvailableList);
         availableList.setCellFactory(lv -> new ChannelListCell());
         availableList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         availableList.setPrefHeight(150);
@@ -76,6 +93,47 @@ public class ChannelSelectionPanel extends VBox {
                 "Order matters: must match the order used during training.\n" +
                 "For RGB brightfield images, use Red/Green/Blue in order.\n" +
                 "For fluorescence, select only the channels relevant to your task.");
+
+        // ---- Search/filter toolbar (hidden for small channel counts) ----
+        searchField = new TextField();
+        searchField.setPromptText("Filter channels...");
+        searchField.setPrefWidth(180);
+        HBox.setHgrow(searchField, Priority.ALWAYS);
+        TooltipHelper.install(searchField,
+                "Type to filter channels by name or index.\n" +
+                "Case-insensitive substring match.");
+
+        searchField.textProperty().addListener((obs, old, text) -> {
+            filteredAvailableList.setPredicate(item -> {
+                if (text == null || text.isEmpty()) return true;
+                String lower = text.toLowerCase();
+                return item.name().toLowerCase().contains(lower)
+                        || String.valueOf(item.index()).contains(lower);
+            });
+        });
+
+        Button selectAllVisibleBtn = new Button("Select All");
+        selectAllVisibleBtn.setMinWidth(75);
+        TooltipHelper.install(selectAllVisibleBtn,
+                "Add all visible (filtered) channels to selected list");
+        selectAllVisibleBtn.setOnAction(e -> addAllVisibleChannels());
+
+        Button selectNoneBtn = new Button("Select None");
+        selectNoneBtn.setMinWidth(85);
+        TooltipHelper.install(selectNoneBtn, "Remove all channels from selected list");
+        selectNoneBtn.setOnAction(e -> removeAllChannels());
+
+        Button matchPatternBtn = new Button("Match Pattern...");
+        matchPatternBtn.setMinWidth(110);
+        TooltipHelper.install(matchPatternBtn,
+                "Open a dialog to select channels by regex pattern.\n" +
+                "Examples: CD\\d+, DAPI|CK.*");
+        matchPatternBtn.setOnAction(e -> showPatternSelectDialog());
+
+        searchToolbar = new HBox(8, searchField, selectAllVisibleBtn, selectNoneBtn, matchPatternBtn);
+        searchToolbar.setAlignment(Pos.CENTER_LEFT);
+        searchToolbar.setVisible(false);
+        searchToolbar.setManaged(false);
 
         // Transfer buttons - fixed width to prevent text truncation
         double buttonWidth = 40;
@@ -139,6 +197,18 @@ public class ChannelSelectionPanel extends VBox {
                 "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit).\n" +
                 "  Useful when consistent intensity scaling is required across images.");
 
+        // Per-channel normalization toggle (hidden for small channel counts)
+        perChannelNormCheck = new CheckBox("Per-channel normalization (normalize each channel independently)");
+        perChannelNormCheck.setSelected(true);
+        TooltipHelper.install(perChannelNormCheck,
+                "When enabled, each channel is normalized independently\n" +
+                "using its own statistics. Recommended for fluorescence images\n" +
+                "where channels have different intensity ranges.\n\n" +
+                "When disabled, the same normalization range is applied\n" +
+                "across all channels (typical for brightfield RGB).");
+        perChannelNormCheck.setVisible(false);
+        perChannelNormCheck.setManaged(false);
+
         HBox normBox = new HBox(10,
                 new Label("Normalization:"),
                 normalizationCombo);
@@ -149,7 +219,7 @@ public class ChannelSelectionPanel extends VBox {
         statusLabel.setStyle("-fx-text-fill: #666;");
 
         // Add all components
-        getChildren().addAll(listsBox, normBox, statusLabel);
+        getChildren().addAll(searchToolbar, listsBox, normBox, perChannelNormCheck, statusLabel);
 
         // Update validity when selection changes
         selectedList.getItems().addListener((javafx.collections.ListChangeListener<ChannelItem>) c -> updateValidity());
@@ -161,11 +231,13 @@ public class ChannelSelectionPanel extends VBox {
      * @param imageData the image data to get channels from
      */
     public void setImageData(ImageData<BufferedImage> imageData) {
-        availableList.getItems().clear();
+        masterAvailableList.clear();
         selectedList.getItems().clear();
+        searchField.clear();
 
         if (imageData == null || imageData.getServer() == null) {
             currentServer = null;
+            updateSearchToolbarVisibility(0);
             updateValidity();
             return;
         }
@@ -176,9 +248,10 @@ public class ChannelSelectionPanel extends VBox {
         for (int i = 0; i < channels.size(); i++) {
             ImageChannel channel = channels.get(i);
             Color color = javafxColorFromAwtColor(channel.getColor());
-            availableList.getItems().add(new ChannelItem(i, channel.getName(), color));
+            masterAvailableList.add(new ChannelItem(i, channel.getName(), color));
         }
 
+        updateSearchToolbarVisibility(channels.size());
         logger.debug("Loaded {} channels from image", channels.size());
         updateValidity();
     }
@@ -215,6 +288,7 @@ public class ChannelSelectionPanel extends VBox {
                 .channelNames(names)
                 .bitDepth(bitDepth)
                 .normalizationStrategy(normalizationCombo.getValue())
+                .perChannelNormalization(perChannelNormCheck.isSelected())
                 .build();
     }
 
@@ -231,7 +305,7 @@ public class ChannelSelectionPanel extends VBox {
         // Try to match channels by name
         selectedList.getItems().clear();
         for (String name : channelNames) {
-            for (ChannelItem item : availableList.getItems()) {
+            for (ChannelItem item : masterAvailableList) {
                 if (item.name().equalsIgnoreCase(name)) {
                     selectedList.getItems().add(item);
                     break;
@@ -254,10 +328,10 @@ public class ChannelSelectionPanel extends VBox {
     /**
      * Gets the number of available channels.
      *
-     * @return number of channels in the available list
+     * @return number of channels in the available list (total, not filtered)
      */
     public int getAvailableChannelCount() {
-        return availableList.getItems().size();
+        return masterAvailableList.size();
     }
 
     /**
@@ -287,6 +361,92 @@ public class ChannelSelectionPanel extends VBox {
         return selectedList.getItems().size();
     }
 
+    /**
+     * Auto-configures the panel based on detected image type and channel count.
+     * <ul>
+     *   <li>channelCount &lt;= 8: hides search bar, auto-selects all channels</li>
+     *   <li>Brightfield: hides per-channel checkbox, unchecks per-channel norm</li>
+     *   <li>Fluorescence/other with &gt;8 channels: shows search bar, per-channel checked</li>
+     * </ul>
+     *
+     * @param imageType the image type from QuPath
+     * @param channelCount total number of channels in the image
+     */
+    public void autoConfigureForImageType(ImageData.ImageType imageType, int channelCount) {
+        boolean isBrightfield = imageType == ImageData.ImageType.BRIGHTFIELD_H_E
+                || imageType == ImageData.ImageType.BRIGHTFIELD_H_DAB
+                || imageType == ImageData.ImageType.BRIGHTFIELD_OTHER;
+
+        // Search toolbar visibility based on channel count
+        updateSearchToolbarVisibility(channelCount);
+
+        // Per-channel normalization: show for >3 channels, hide for brightfield
+        if (isBrightfield || channelCount <= 3) {
+            perChannelNormCheck.setSelected(false);
+            perChannelNormCheck.setVisible(false);
+            perChannelNormCheck.setManaged(false);
+        } else {
+            perChannelNormCheck.setSelected(true);
+            perChannelNormCheck.setVisible(true);
+            perChannelNormCheck.setManaged(true);
+        }
+
+        // Auto-select all channels for small channel counts
+        if (channelCount <= SEARCH_BAR_THRESHOLD) {
+            addAllChannels();
+        }
+
+        logger.debug("Auto-configured for imageType={}, channelCount={}: searchBar={}, perChannel={}",
+                imageType, channelCount, channelCount > SEARCH_BAR_THRESHOLD,
+                perChannelNormCheck.isSelected());
+    }
+
+    /**
+     * Sets a specific channel at a given position in the selected list by name.
+     * Used by the InferenceDialog channel mapping to manually override a mapping.
+     *
+     * @param position zero-based position in the selected list
+     * @param channelName name of the channel to place at that position
+     */
+    public void setSelectedChannelByName(int position, String channelName) {
+        if (position < 0 || position >= selectedList.getItems().size()) {
+            logger.warn("Invalid position {} for setSelectedChannelByName", position);
+            return;
+        }
+
+        // Find the channel in the master list
+        ChannelItem replacement = null;
+        for (ChannelItem item : masterAvailableList) {
+            if (item.name().equals(channelName)) {
+                replacement = item;
+                break;
+            }
+        }
+
+        if (replacement == null) {
+            logger.warn("Channel '{}' not found in available channels", channelName);
+            return;
+        }
+
+        // Remove duplicates of this channel if already selected elsewhere
+        selectedList.getItems().remove(replacement);
+
+        // Ensure position is still valid after potential removal
+        if (position >= selectedList.getItems().size()) {
+            selectedList.getItems().add(replacement);
+        } else {
+            selectedList.getItems().set(position, replacement);
+        }
+    }
+
+    // ---- Private helper methods ----
+
+    private void updateSearchToolbarVisibility(int channelCount) {
+        boolean show = channelCount > SEARCH_BAR_THRESHOLD;
+        searchToolbar.setVisible(show);
+        searchToolbar.setManaged(show);
+    }
+
     private void addSelectedChannels() {
         List<ChannelItem> toAdd = new ArrayList<>(availableList.getSelectionModel().getSelectedItems());
         for (ChannelItem item : toAdd) {
@@ -302,7 +462,18 @@ public class ChannelSelectionPanel extends VBox {
     }
 
     private void addAllChannels() {
-        for (ChannelItem item : availableList.getItems()) {
+        for (ChannelItem item : masterAvailableList) {
+            if (!selectedList.getItems().contains(item)) {
+                selectedList.getItems().add(item);
+            }
+        }
+    }
+
+    /**
+     * Adds all currently visible (filtered) channels to the selected list.
+     */
+    private void addAllVisibleChannels() {
+        for (ChannelItem item : filteredAvailableList) {
             if (!selectedList.getItems().contains(item)) {
                 selectedList.getItems().add(item);
             }
@@ -332,24 +503,56 @@ public class ChannelSelectionPanel extends VBox {
     }
 
     private void updateValidity() {
-        int count = selectedList.getItems().size();
+        int selected = selectedList.getItems().size();
+        int total = masterAvailableList.size();
         boolean valid;
 
-        if (count == 0) {
+        if (selected == 0) {
             statusLabel.setText("Please select at least one channel");
             statusLabel.setStyle("-fx-text-fill: #cc0000;");
             valid = false;
-        } else if (requiredChannelCount > 0 && count != requiredChannelCount) {
-            statusLabel.setText(String.format("Selected %d channels (classifier expects %d)", count, requiredChannelCount));
+        } else if (requiredChannelCount > 0 && selected != requiredChannelCount) {
+            statusLabel.setText(String.format("Selected %d channels (classifier expects %d)", selected, requiredChannelCount));
             statusLabel.setStyle("-fx-text-fill: #cc0000;");
             valid = false;
         } else {
-            statusLabel.setText(String.format("%d channel(s) selected", count));
+            // Show "X of Y" when there are more available than selected
+            if (total > selected) {
+                statusLabel.setText(String.format("%d of %d channels selected", selected, total));
+            } else {
+                statusLabel.setText(String.format("%d channel(s) selected", selected));
+            }
             statusLabel.setStyle("-fx-text-fill: #006600;");
             valid = true;
         }
 
         validProperty.set(valid);
+    }
+
+    private void showPatternSelectDialog() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("Select by Pattern");
+        dialog.setHeaderText("Enter a regex pattern to match channel names");
+        dialog.setContentText("Pattern:");
+        dialog.showAndWait().ifPresent(patternStr -> {
+            if (patternStr.isEmpty()) return;
+            try {
+                Pattern regex = Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE);
+                int matched = 0;
+                for (ChannelItem item : masterAvailableList) {
+                    if (regex.matcher(item.name()).find()
+                            && !selectedList.getItems().contains(item)) {
+                        selectedList.getItems().add(item);
+                        matched++;
+                    }
+                }
+                statusLabel.setText(String.format("Pattern matched %d new channel(s)", matched));
+                statusLabel.setStyle("-fx-text-fill: #006600;");
+            } catch (PatternSyntaxException e) {
+                statusLabel.setText("Invalid regex: " + e.getMessage());
+                statusLabel.setStyle("-fx-text-fill: #cc0000;");
+            }
+        });
     }
 
     private Color javafxColorFromAwtColor(Integer argb) {

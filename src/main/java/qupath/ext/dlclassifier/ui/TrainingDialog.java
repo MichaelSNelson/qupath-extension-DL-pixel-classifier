@@ -1008,9 +1008,18 @@ public class TrainingDialog {
                 // Set up channels
                 channelPanel.setImageData(imageData);
 
-                // Auto-select RGB for 3-channel images
-                if (imageData.getServer().nChannels() == 3) {
-                    // Pre-select all channels for RGB
+                // Auto-configure channel panel based on image type and channel count
+                channelPanel.autoConfigureForImageType(imageData.getImageType(),
+                        imageData.getServer().nChannels());
+
+                // Auto-disable color jitter for non-brightfield images
+                if (!isBrightfield(imageData)) {
+                    colorJitterCheck.setSelected(false);
+                    colorJitterCheck.setDisable(true);
+                    TooltipHelper.install(colorJitterCheck,
+                            "Color jitter is disabled for non-brightfield images.\n" +
+                            "This augmentation perturbs brightness/contrast/saturation\n" +
+                            "which could corrupt quantitative fluorescence intensity data.");
                 }
 
                 // Populate class list from image annotations, accumulating area per class
@@ -1041,6 +1050,13 @@ public class TrainingDialog {
             classifierNameField.setText("Classifier_" + timestamp);
 
             updateValidation();
+        }
+
+        private boolean isBrightfield(ImageData<BufferedImage> imageData) {
+            ImageData.ImageType type = imageData.getImageType();
+            return type == ImageData.ImageType.BRIGHTFIELD_H_E
+                    || type == ImageData.ImageType.BRIGHTFIELD_H_DAB
+                    || type == ImageData.ImageType.BRIGHTFIELD_OTHER;
         }
 
         private void updateBackboneOptions(String architecture) {

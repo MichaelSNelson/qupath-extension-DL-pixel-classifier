@@ -322,8 +322,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         }
         ChannelConfiguration channelConfig = ChannelConfiguration.builder()
                 .selectedChannels(selectedChannels)
-                .channelNames(expectedChannels.isEmpty()
-                        ? List.of("Red", "Green", "Blue") : expectedChannels)
+                .channelNames(expectedChannels)
                 .bitDepth(metadata.getBitDepthTrained())
                 .normalizationStrategy(metadata.getNormalizationStrategy())
                 .build();
