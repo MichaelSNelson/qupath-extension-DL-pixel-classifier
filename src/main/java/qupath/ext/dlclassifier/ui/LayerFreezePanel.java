@@ -13,6 +13,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 
 import java.util.ArrayList;
@@ -42,7 +43,7 @@ public class LayerFreezePanel extends VBox {
 
     private String currentArchitecture;
     private String currentEncoder;
-    private ClassifierClient client;
+    private ClassifierBackend backend;
 
     /**
      * Creates a new layer freeze panel.
@@ -141,10 +142,22 @@ public class LayerFreezePanel extends VBox {
     }
 
     /**
-     * Sets the classifier client for fetching layer information.
+     * Sets the classifier backend for fetching layer information.
      */
+    public void setBackend(ClassifierBackend backend) {
+        this.backend = backend;
+    }
+
+    /**
+     * Sets the classifier client for fetching layer information.
+     * @deprecated Use {@link #setBackend(ClassifierBackend)} instead.
+     */
+    @Deprecated
     public void setClient(ClassifierClient client) {
-        this.client = client;
+        // Wrap in HttpClassifierBackend for backward compatibility
+        this.backend = new qupath.ext.dlclassifier.service.HttpClassifierBackend(
+                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getServerHost(),
+                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getServerPort());
     }
 
     /**
@@ -171,10 +184,10 @@ public class LayerFreezePanel extends VBox {
             statusLabel.setText("Loading layer structure...");
         });
 
-        // Try server first for accurate parameter counts
-        if (client != null) {
+        // Try backend first for accurate parameter counts
+        if (backend != null) {
             try {
-                List<ClassifierClient.LayerInfo> layerInfos = client.getModelLayers(
+                List<ClassifierClient.LayerInfo> layerInfos = backend.getModelLayers(
                         architecture, encoder, numChannels, numClasses);
 
                 if (layerInfos != null && !layerInfos.isEmpty()) {
@@ -401,13 +414,13 @@ public class LayerFreezePanel extends VBox {
 
         Map<Integer, Boolean> recommendations = null;
 
-        // Try server first
-        if (client != null) {
+        // Try backend first
+        if (backend != null) {
             try {
-                recommendations = client.getFreezeRecommendations(
+                recommendations = backend.getFreezeRecommendations(
                         datasetSize, currentEncoder);
             } catch (Exception e) {
-                logger.debug("Server freeze recommendations unavailable: {}", e.getMessage());
+                logger.debug("Backend freeze recommendations unavailable: {}", e.getMessage());
             }
         }
 

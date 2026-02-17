@@ -12,7 +12,9 @@ import qupath.ext.dlclassifier.controller.DLClassifierController;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
-import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.ApposeService;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
@@ -98,7 +100,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     }
 
     /**
-     * Checks if the classification server is available.
+     * Checks if the classification backend is available.
+     * <p>
+     * When Appose is enabled, attempts to initialize the Appose environment.
+     * Falls back to HTTP server health check if Appose fails or is disabled.
      * This is done asynchronously to avoid blocking extension load.
      */
     private void checkServerAvailability() {
@@ -108,18 +113,29 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         // Perform async health check
         Thread healthThread = new Thread(() -> {
             try {
-                serverAvailable = DLClassifierChecks.checkServerHealth();
+                if (DLClassifierPreferences.isUseAppose()) {
+                    try {
+                        ApposeService.getInstance().initialize();
+                        serverAvailable = true;
+                        logger.info("Appose backend initialized successfully");
+                    } catch (Exception e) {
+                        logger.warn("Appose init failed, trying HTTP fallback: {}", e.getMessage());
+                        serverAvailable = DLClassifierChecks.checkServerHealth();
+                    }
+                } else {
+                    serverAvailable = DLClassifierChecks.checkServerHealth();
+                }
                 if (!serverAvailable) {
                     Platform.runLater(() ->
                             Dialogs.showWarningNotification(
                                     EXTENSION_NAME,
-                                    "Classification server not available.\n" +
-                                            "Start the Python server to enable classification features."
+                                    "Classification backend not available.\n" +
+                                            "Check Appose settings or start the Python server."
                             )
                     );
                 }
             } catch (Exception e) {
-                logger.debug("Server health check failed: {}", e.getMessage());
+                logger.debug("Backend health check failed: {}", e.getMessage());
                 serverAvailable = false;
             }
         }, "DLClassifier-HealthCheck");
@@ -231,17 +247,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             freeGpuOption.setDisable(true);
             Thread clearThread = new Thread(() -> {
                 try {
-                    ClassifierClient client = new ClassifierClient(
-                            DLClassifierPreferences.getServerHost(),
-                            DLClassifierPreferences.getServerPort());
-                    String result = client.clearGPUMemory();
+                    ClassifierBackend backend = BackendFactory.getBackend();
+                    String result = backend.clearGPUMemory();
                     Platform.runLater(() -> {
                         freeGpuOption.setDisable(false);
                         if (result != null) {
                             Dialogs.showInfoNotification(EXTENSION_NAME, result);
                         } else {
                             Dialogs.showErrorNotification(EXTENSION_NAME,
-                                    "Failed to clear GPU memory. Is the server running?");
+                                    "Failed to clear GPU memory. Is the backend available?");
                         }
                     });
                 } catch (Exception ex) {

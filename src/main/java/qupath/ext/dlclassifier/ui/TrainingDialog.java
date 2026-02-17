@@ -21,7 +21,8 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.scripting.ScriptGenerator;
-import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.images.ImageData;
@@ -163,7 +164,7 @@ public class TrainingDialog {
         // Transfer learning
         private LayerFreezePanel layerFreezePanel;
         private CheckBox usePretrainedCheck;
-        private ClassifierClient client;
+        private ClassifierBackend backend;
 
         // Image source selection
         private RadioButton currentImageRadio;
@@ -204,14 +205,11 @@ public class TrainingDialog {
             VBox content = new VBox(10);
             content.setPadding(new Insets(10));
 
-            // Initialize client for server communication
+            // Initialize backend for server communication
             try {
-                client = new ClassifierClient(
-                        DLClassifierPreferences.getServerHost(),
-                        DLClassifierPreferences.getServerPort()
-                );
+                backend = BackendFactory.getBackend();
             } catch (Exception e) {
-                logger.warn("Could not initialize classifier client: {}", e.getMessage());
+                logger.warn("Could not initialize classifier backend: {}", e.getMessage());
             }
 
             // Create channel and class sections first so their fields exist
@@ -510,7 +508,7 @@ public class TrainingDialog {
 
             // Layer freeze panel
             layerFreezePanel = new LayerFreezePanel();
-            layerFreezePanel.setClient(client);
+            layerFreezePanel.setBackend(backend);
 
             // Bind visibility to pretrained checkbox
             layerFreezePanel.disableProperty().bind(usePretrainedCheck.selectedProperty().not());

@@ -7,6 +7,7 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
 import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
 import qupath.lib.common.ColorTools;
@@ -56,7 +57,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private final double downsample;
     private final PixelClassifierMetadata pixelMetadata;
     private final IndexColorModel colorModel;
-    private final ClassifierClient client;
+    private final ClassifierBackend backend;
     private final Path sharedTempDir;
     private final String modelDirPath;
 
@@ -90,9 +91,7 @@ public class DLPixelClassifier implements PixelClassifier {
         this.downsample = metadata.getDownsample();
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
-        this.client = new ClassifierClient(
-                DLClassifierPreferences.getServerHost(),
-                DLClassifierPreferences.getServerPort());
+        this.backend = BackendFactory.getBackend();
 
         // Resolve classifier ID to filesystem path for the Python server
         ModelManager modelManager = new ModelManager();
@@ -159,7 +158,7 @@ public class DLPixelClassifier implements PixelClassifier {
         try {
             // Use binary pixel inference (single-tile batch)
             int reflectionPadding = DLClassifierPreferences.getOverlayReflectionPadding();
-            ClassifierClient.PixelInferenceResult result = client.runPixelInferenceBinary(
+            PixelInferenceResult result = backend.runPixelInferenceBinary(
                     modelDirPath, rawBytes, List.of(tileId),
                     tileImage.getHeight(), tileImage.getWidth(), numChannels,
                     dtype, channelConfig, inferenceConfig, sharedTempDir,
@@ -174,7 +173,7 @@ public class DLPixelClassifier implements PixelClassifier {
                 List<ClassifierClient.TileData> tiles = List.of(
                         new ClassifierClient.TileData(tileId, encoded,
                                 request.getX(), request.getY()));
-                result = client.runPixelInference(
+                result = backend.runPixelInference(
                         modelDirPath, tiles, channelConfig, inferenceConfig,
                         sharedTempDir, reflectionPadding);
             }

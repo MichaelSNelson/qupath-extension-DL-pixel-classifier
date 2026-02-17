@@ -21,7 +21,11 @@ public final class DLClassifierPreferences {
 
     private static final Logger logger = LoggerFactory.getLogger(DLClassifierPreferences.class);
 
-    // Server settings
+    // Backend selection
+    private static final BooleanProperty useAppose = PathPrefs.createPersistentPreference(
+            "dlclassifier.useAppose", true);
+
+    // Server settings (HTTP backend)
     private static final StringProperty serverHost = PathPrefs.createPersistentPreference(
             "dlclassifier.serverHost", "localhost");
 
@@ -159,10 +163,19 @@ public final class DLClassifierPreferences {
                         .getPropertySheet()
                         .getItems();
 
+        items.add(new PropertyItemBuilder<>(useAppose, Boolean.class)
+                .name("Use Appose (Embedded Python)")
+                .category(CATEGORY)
+                .description("Use Appose for embedded Python execution instead of connecting " +
+                        "to an external server. Requires first-time environment setup (~2-4 GB download). " +
+                        "When disabled, connects to an external Python server at the configured host/port.")
+                .build());
+
         items.add(new PropertyItemBuilder<>(serverHost, String.class)
                 .name("DL Server Host")
                 .category(CATEGORY)
-                .description("Hostname or IP address of the Python DL classification server.")
+                .description("Hostname or IP address of the Python DL classification server. " +
+                        "Only used when Appose is disabled.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(serverPort, Integer.class)
@@ -187,7 +200,21 @@ public final class DLClassifierPreferences {
                 .build());
     }
 
-    // ==================== Server Settings ====================
+    // ==================== Backend Selection ====================
+
+    public static boolean isUseAppose() {
+        return useAppose.get();
+    }
+
+    public static void setUseAppose(boolean use) {
+        useAppose.set(use);
+    }
+
+    public static BooleanProperty useApposeProperty() {
+        return useAppose;
+    }
+
+    // ==================== Server Settings (HTTP Backend) ====================
 
     public static String getServerHost() {
         return serverHost.get();

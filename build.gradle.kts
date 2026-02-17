@@ -11,7 +11,7 @@ plugins {
 qupathExtension {
     name = "qupath-extension-DL-pixel-classifier"
     group = "io.github.uw-loci"
-    version = "0.1.1-SNAPSHOT"
+    version = "0.2.0-SNAPSHOT"
     description = "Deep learning pixel classifier for QuPath supporting multi-channel and multi-bit-depth images."
     automaticModule = "io.github.uw-loci.extension.dlclassifier"
 }
@@ -43,6 +43,9 @@ dependencies {
 
     // HTTP client for REST API communication (not provided by QuPath, must be bundled)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Appose for embedded Java-Python IPC with shared memory
+    implementation("org.apposed:appose:0.8.0")
 
     // Groovy for scripting support
     shadow(libs.bundles.groovy)

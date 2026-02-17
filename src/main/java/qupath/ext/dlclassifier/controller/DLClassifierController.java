@@ -11,6 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.DLClassifierChecks;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
+import qupath.ext.dlclassifier.service.HttpClassifierBackend;
 import qupath.lib.gui.QuPathGUI;
 
 /**
@@ -105,16 +108,16 @@ public class DLClassifierController {
 
             Thread checkThread = new Thread(() -> {
                 try {
-                    // Temporarily set the values for the check
+                    // Test connection to the specified host/port
                     String host = hostField.getText().trim();
                     int port = portSpinner.getValue();
-                    var client = new qupath.ext.dlclassifier.service.ClassifierClient(host, port);
-                    boolean healthy = client.checkHealth();
+                    HttpClassifierBackend testBackend = new HttpClassifierBackend(host, port);
+                    boolean healthy = testBackend.checkHealth();
 
                     String gpuInfo = "";
                     if (healthy) {
                         try {
-                            gpuInfo = client.getGPUInfo();
+                            gpuInfo = testBackend.getGPUInfo();
                         } catch (Exception ex) {
                             gpuInfo = "Could not retrieve GPU info";
                         }

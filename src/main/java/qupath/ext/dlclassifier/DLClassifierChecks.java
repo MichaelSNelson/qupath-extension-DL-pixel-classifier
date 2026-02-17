@@ -3,7 +3,8 @@ package qupath.ext.dlclassifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
-import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 
 /**
  * Validation utilities for the DL Pixel Classifier extension.
@@ -29,21 +30,18 @@ public final class DLClassifierChecks {
      */
     public static boolean checkServerHealth() {
         try {
-            String host = DLClassifierPreferences.getServerHost();
-            int port = DLClassifierPreferences.getServerPort();
-
-            ClassifierClient client = new ClassifierClient(host, port);
-            boolean healthy = client.checkHealth();
+            ClassifierBackend backend = BackendFactory.getBackend();
+            boolean healthy = backend.checkHealth();
 
             if (healthy) {
-                logger.info("Classification server is healthy at {}:{}", host, port);
+                logger.info("Classification backend is healthy");
             } else {
-                logger.warn("Classification server health check failed at {}:{}", host, port);
+                logger.warn("Classification backend health check failed");
             }
 
             return healthy;
         } catch (Exception e) {
-            logger.debug("Server health check exception: {}", e.getMessage());
+            logger.debug("Backend health check exception: {}", e.getMessage());
             return false;
         }
     }
@@ -99,11 +97,8 @@ public final class DLClassifierChecks {
      */
     public static String getGPUInfo() {
         try {
-            String host = DLClassifierPreferences.getServerHost();
-            int port = DLClassifierPreferences.getServerPort();
-
-            ClassifierClient client = new ClassifierClient(host, port);
-            return client.getGPUInfo();
+            ClassifierBackend backend = BackendFactory.getBackend();
+            return backend.getGPUInfo();
         } catch (Exception e) {
             logger.debug("Failed to get GPU info: {}", e.getMessage());
             return "Unknown";

@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DL Pixel Classifier Server",
     description="Deep learning pixel classification service for QuPath",
-    version="0.1.1",
+    version="0.2.0",
     lifespan=lifespan
 )
 

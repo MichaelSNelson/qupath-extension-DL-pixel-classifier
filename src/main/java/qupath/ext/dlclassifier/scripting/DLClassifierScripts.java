@@ -9,7 +9,8 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
-import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.BackendFactory;
+import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
@@ -259,30 +260,24 @@ public class DLClassifierScripts {
      */
     public static boolean isServerAvailable() {
         try {
-            ClassifierClient client = new ClassifierClient(
-                    DLClassifierPreferences.getServerHost(),
-                    DLClassifierPreferences.getServerPort()
-            );
-            return client.checkHealth();
+            ClassifierBackend backend = BackendFactory.getBackend();
+            return backend.checkHealth();
         } catch (Exception e) {
             return false;
         }
     }
 
     /**
-     * Gets GPU information from the server.
+     * Gets GPU information from the backend.
      *
      * @return GPU info string
      */
     public static String getGPUInfo() {
         try {
-            ClassifierClient client = new ClassifierClient(
-                    DLClassifierPreferences.getServerHost(),
-                    DLClassifierPreferences.getServerPort()
-            );
-            return client.getGPUInfo();
+            ClassifierBackend backend = BackendFactory.getBackend();
+            return backend.getGPUInfo();
         } catch (Exception e) {
-            return "Unknown (server unavailable)";
+            return "Unknown (backend unavailable)";
         }
     }
 

@@ -508,6 +508,38 @@ class InferenceService:
 
         return all_probs
 
+    # ==================== Single-tile Appose API ====================
+
+    def infer_single_tile(
+        self,
+        model_path: str,
+        tile_array: np.ndarray,
+        input_config: Dict[str, Any],
+        reflection_padding: int = 0,
+    ) -> np.ndarray:
+        """Run inference on a single pre-loaded tile array.
+
+        Optimized for Appose shared-memory calls where the tile is already
+        loaded as a numpy array (no base64/file I/O needed).
+
+        Args:
+            model_path: Path to model directory
+            tile_array: numpy array (H, W, C), float32, already normalized
+            input_config: dict with normalization config
+            reflection_padding: pixels of padding
+
+        Returns:
+            numpy array (C, H, W), float32 probability map
+        """
+        model_tuple = self._load_model(model_path)
+        prob_maps = self._infer_batch_spatial(
+            model_tuple,
+            [tile_array],
+            reflection_padding=reflection_padding,
+            gpu_batch_size=1
+        )
+        return prob_maps[0]  # (C, H, W)
+
     # ==================== Single-tile inference (legacy compat) ====================
 
     def _infer_tile(self, model_tuple: Tuple[str, Any], img_array: np.ndarray) -> np.ndarray:
