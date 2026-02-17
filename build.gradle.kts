@@ -45,7 +45,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Appose for embedded Java-Python IPC with shared memory
-    implementation("org.apposed:appose:0.8.0")
+    implementation("org.apposed:appose:0.9.0")
 
     // Groovy for scripting support
     shadow(libs.bundles.groovy)
