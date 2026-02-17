@@ -38,6 +38,17 @@ public final class BackendFactory {
     public static ClassifierBackend getBackend() {
         if (DLClassifierPreferences.isUseAppose()) {
             ApposeService appose = ApposeService.getInstance();
+            if (!appose.isAvailable() && appose.getInitError() == null) {
+                // Not yet initialized (background thread still running or hasn't started).
+                // Try initializing here -- synchronized, so if the background thread is
+                // already running initialize(), this blocks until it finishes.
+                try {
+                    logger.info("Appose not yet available, waiting for initialization...");
+                    appose.initialize();
+                } catch (Exception e) {
+                    logger.warn("Appose initialization failed: {}", e.getMessage());
+                }
+            }
             if (appose.isAvailable()) {
                 return new ApposeClassifierBackend();
             }

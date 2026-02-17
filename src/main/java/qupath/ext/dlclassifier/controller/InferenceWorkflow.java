@@ -265,36 +265,40 @@ public class InferenceWorkflow {
     /**
      * Starts the inference workflow.
      */
+    /**
+     * Starts the inference workflow.
+     * <p>
+     * Quick prerequisites (image check) run on the FX thread. The backend
+     * health check runs asynchronously because Appose initialization may
+     * take time on first launch.
+     */
     public void start() {
         logger.info("Starting inference workflow");
 
-        // Validate prerequisites
-        if (!validatePrerequisites()) {
+        // Quick prerequisite: image must be open (instant check on FX thread)
+        if (qupath.getImageData() == null) {
+            showError("No Image", "Please open an image before applying a classifier.");
             return;
         }
 
-        // Show inference dialog
-        Platform.runLater(this::showInferenceDialog);
-    }
+        // Backend health check may block while Appose initializes.
+        Dialogs.showInfoNotification("DL Pixel Classifier",
+                "Connecting to classification backend...");
 
-    /**
-     * Validates that all prerequisites for inference are met.
-     */
-    private boolean validatePrerequisites() {
-        ImageData<BufferedImage> imageData = qupath.getImageData();
-        if (imageData == null) {
-            showError("No Image", "Please open an image before applying a classifier.");
-            return false;
-        }
-
-        if (!DLClassifierChecks.checkServerHealth()) {
-            showError("Server Unavailable",
-                    "Cannot connect to classification server.\n" +
-                            "Please start the Python server and check settings.");
-            return false;
-        }
-
-        return true;
+        CompletableFuture.supplyAsync(() -> DLClassifierChecks.checkServerHealth())
+                .thenAcceptAsync(healthy -> {
+                    if (healthy) {
+                        showInferenceDialog();
+                    } else {
+                        showError("Server Unavailable",
+                                "Cannot connect to classification backend.\n\n" +
+                                "If this is the first launch, the Python environment\n" +
+                                "may still be downloading (~2-4 GB). Check the QuPath\n" +
+                                "log for progress and try again in a few minutes.\n\n" +
+                                "Alternatively, start the Python server manually and\n" +
+                                "disable 'Use Appose' in Edit > Preferences.");
+                    }
+                }, Platform::runLater);
     }
 
     /**

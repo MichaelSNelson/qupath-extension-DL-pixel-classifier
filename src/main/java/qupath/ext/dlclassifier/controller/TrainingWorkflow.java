@@ -243,42 +243,44 @@ public class TrainingWorkflow {
 
     /**
      * Starts the training workflow.
+     * <p>
+     * Quick prerequisites (project check) run on the FX thread. The backend
+     * health check runs asynchronously because Appose initialization may
+     * take time on first launch (building the pixi environment, importing
+     * PyTorch, etc.).
      */
     public void start() {
         logger.info("Starting training workflow");
 
-        // Validate prerequisites
-        if (!validatePrerequisites()) {
-            return;
-        }
-
-        // Show training dialog
-        Platform.runLater(this::showTrainingDialog);
-    }
-
-    /**
-     * Validates that all prerequisites for training are met.
-     */
-    private boolean validatePrerequisites() {
-        // Check project is open (required for saving classifiers and accessing image data)
+        // Quick prerequisite: project must be open (instant check on FX thread)
         if (qupath.getProject() == null) {
             showError("No Project",
                     "A QuPath project must be open to train a classifier.\n\n" +
                     "Classifiers are saved within the project, and training data\n" +
                     "is exported from project images.\n\n" +
                     "Please create or open a project first.");
-            return false;
+            return;
         }
 
-        // Check server availability
-        if (!DLClassifierChecks.checkServerHealth()) {
-            showError("Server Unavailable",
-                    "Cannot connect to classification server.\n" +
-                            "Please start the Python server and check settings.");
-            return false;
-        }
+        // Backend health check may block while Appose initializes.
+        // Run it on a background thread with a status notification.
+        Dialogs.showInfoNotification("DL Pixel Classifier",
+                "Connecting to classification backend...");
 
-        return true;
+        CompletableFuture.supplyAsync(() -> DLClassifierChecks.checkServerHealth())
+                .thenAcceptAsync(healthy -> {
+                    if (healthy) {
+                        showTrainingDialog();
+                    } else {
+                        showError("Server Unavailable",
+                                "Cannot connect to classification backend.\n\n" +
+                                "If this is the first launch, the Python environment\n" +
+                                "may still be downloading (~2-4 GB). Check the QuPath\n" +
+                                "log for progress and try again in a few minutes.\n\n" +
+                                "Alternatively, start the Python server manually and\n" +
+                                "disable 'Use Appose' in Edit > Preferences.");
+                    }
+                }, Platform::runLater);
     }
 
     /**
