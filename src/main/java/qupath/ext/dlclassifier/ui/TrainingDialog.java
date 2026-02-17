@@ -138,6 +138,7 @@ public class TrainingDialog {
         private Spinner<Integer> tileSizeSpinner;
         private Spinner<Integer> overlapSpinner;
         private ComboBox<String> downsampleCombo;
+        private ComboBox<String> contextScaleCombo;
         private Spinner<Integer> lineStrokeWidthSpinner;
 
         // Channel selection
@@ -689,6 +690,29 @@ public class TrainingDialog {
 
             grid.add(new Label("Resolution:"), 0, row);
             grid.add(downsampleCombo, 1, row);
+            row++;
+
+            // Context scale
+            contextScaleCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "None (single scale)",
+                    "2x context",
+                    "4x context (Recommended)",
+                    "8x context"
+            ));
+            contextScaleCombo.setValue("None (single scale)");
+            TooltipHelper.install(contextScaleCombo,
+                    "Multi-scale context feeds the model two views of each location:\n" +
+                    "the full-resolution tile for detail, plus a larger surrounding\n" +
+                    "region (downsampled to the same pixel size) for spatial context.\n\n" +
+                    "None: Single-scale input (current behavior).\n" +
+                    "2x: Context covers 2x the area. Moderate additional context.\n" +
+                    "4x: Context covers 4x the area. Good for tissue-level patterns.\n" +
+                    "8x: Context covers 8x the area. For large-scale classification.\n\n" +
+                    "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n" +
+                    "Modest memory increase (~5-10%). Compatible with all architectures.");
+
+            grid.add(new Label("Context Scale:"), 0, row);
+            grid.add(contextScaleCombo, 1, row);
             row++;
 
             // Overlap
@@ -1320,6 +1344,7 @@ public class TrainingDialog {
                     .tileSize(tileSizeSpinner.getValue())
                     .overlap(overlapSpinner.getValue())
                     .downsample(parseDownsample(downsampleCombo.getValue()))
+                    .contextScale(parseContextScale(contextScaleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
@@ -1380,6 +1405,17 @@ public class TrainingDialog {
             if (displayValue.startsWith("4x")) return 4.0;
             if (displayValue.startsWith("2x")) return 2.0;
             return 1.0;
+        }
+
+        /**
+         * Parses context scale value from ComboBox display string.
+         */
+        private static int parseContextScale(String displayValue) {
+            if (displayValue == null) return 1;
+            if (displayValue.startsWith("8x")) return 8;
+            if (displayValue.startsWith("4x")) return 4;
+            if (displayValue.startsWith("2x")) return 2;
+            return 1;
         }
 
         // ==================== Display/Value Mapping Helpers ====================
@@ -1449,6 +1485,7 @@ public class TrainingDialog {
                     .tileSize(tileSizeSpinner.getValue())
                     .overlap(overlapSpinner.getValue())
                     .downsample(parseDownsample(downsampleCombo.getValue()))
+                    .contextScale(parseContextScale(contextScaleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
@@ -1520,6 +1557,7 @@ public class TrainingDialog {
 
         // Track current bindings for cleanup on cell reuse
         private javafx.beans.property.BooleanProperty boundSelectedProperty;
+        private javafx.beans.value.ChangeListener<Boolean> itemToCheckboxListener;
         private javafx.beans.value.ChangeListener<Number> weightToSpinnerListener;
         private javafx.beans.value.ChangeListener<Double> spinnerToWeightListener;
         private javafx.beans.property.DoubleProperty boundWeightProperty;
@@ -1554,11 +1592,13 @@ public class TrainingDialog {
         protected void updateItem(ClassItem item, boolean empty) {
             super.updateItem(item, empty);
 
-            // Clean up previous bindings to avoid listener leaks
-            if (boundSelectedProperty != null) {
-                checkBox.selectedProperty().unbindBidirectional(boundSelectedProperty);
-                boundSelectedProperty = null;
+            // Clean up previous listeners to avoid leaks during cell reuse
+            if (boundSelectedProperty != null && itemToCheckboxListener != null) {
+                boundSelectedProperty.removeListener(itemToCheckboxListener);
             }
+            checkBox.setOnAction(null);
+            boundSelectedProperty = null;
+            itemToCheckboxListener = null;
             if (boundWeightProperty != null && weightToSpinnerListener != null) {
                 boundWeightProperty.removeListener(weightToSpinnerListener);
             }
@@ -1573,9 +1613,11 @@ public class TrainingDialog {
                 setGraphic(null);
             } else {
                 checkBox.setText(item.name());
-                checkBox.selectedProperty().set(item.selected().get());
-                checkBox.selectedProperty().bindBidirectional(item.selected());
+                checkBox.setSelected(item.selected().get());
+                checkBox.setOnAction(e -> item.selected().set(checkBox.isSelected()));
                 boundSelectedProperty = item.selected();
+                itemToCheckboxListener = (obs, oldVal, newVal) -> checkBox.setSelected(newVal);
+                boundSelectedProperty.addListener(itemToCheckboxListener);
 
                 if (item.color() != null) {
                     int r = (item.color() >> 16) & 0xFF;
@@ -1630,11 +1672,16 @@ public class TrainingDialog {
 
     /**
      * Generic checkbox list cell for items with a selected property.
+     * Uses explicit listeners instead of bidirectional binding to prevent
+     * linked checkbox behavior during ListView cell recycling.
      */
     private static class CheckBoxListCell<T> extends ListCell<T> {
         private final java.util.function.Function<T, javafx.beans.property.BooleanProperty> selectedExtractor;
         private final java.util.function.Function<T, String> textExtractor;
         private final CheckBox checkBox = new CheckBox();
+
+        private javafx.beans.property.BooleanProperty boundSelectedProperty;
+        private javafx.beans.value.ChangeListener<Boolean> itemToCheckboxListener;
 
         CheckBoxListCell(java.util.function.Function<T, javafx.beans.property.BooleanProperty> selectedExtractor,
                          java.util.function.Function<T, String> textExtractor) {
@@ -1645,12 +1692,24 @@ public class TrainingDialog {
         @Override
         protected void updateItem(T item, boolean empty) {
             super.updateItem(item, empty);
+
+            // Clean up previous listeners to avoid leaks during cell reuse
+            if (boundSelectedProperty != null && itemToCheckboxListener != null) {
+                boundSelectedProperty.removeListener(itemToCheckboxListener);
+            }
+            checkBox.setOnAction(null);
+            boundSelectedProperty = null;
+            itemToCheckboxListener = null;
+
             if (empty || item == null) {
                 setGraphic(null);
             } else {
                 checkBox.setText(textExtractor.apply(item));
-                checkBox.selectedProperty().unbind();
-                checkBox.selectedProperty().bindBidirectional(selectedExtractor.apply(item));
+                boundSelectedProperty = selectedExtractor.apply(item);
+                checkBox.setSelected(boundSelectedProperty.get());
+                checkBox.setOnAction(e -> boundSelectedProperty.set(checkBox.isSelected()));
+                itemToCheckboxListener = (obs, oldVal, newVal) -> checkBox.setSelected(newVal);
+                boundSelectedProperty.addListener(itemToCheckboxListener);
                 setGraphic(checkBox);
             }
         }
