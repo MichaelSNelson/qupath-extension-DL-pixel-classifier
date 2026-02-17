@@ -168,9 +168,10 @@ public class TrainingDialog {
         private ClassifierBackend backend;
 
         // Image source selection
-        private RadioButton currentImageRadio;
-        private RadioButton projectImagesRadio;
         private ListView<ImageSelectionItem> imageSelectionList;
+        private List<TitledPane> gatedSections = new ArrayList<>();
+        private boolean classesLoaded = false;
+        private Button loadClassesButton;
 
         // Error display
         private VBox errorSummaryPanel;
@@ -218,19 +219,39 @@ public class TrainingDialog {
             TitledPane channelSection = createChannelSection();
             TitledPane classSection = createClassSection();
 
-            // Create collapsible sections (visual order unchanged)
+            // Image source section is always enabled
+            TitledPane imageSourceSection = createImageSourceSection();
+
+            // All other sections are gated behind "Load Classes"
+            TitledPane basicInfoSection = createBasicInfoSection();
+            TitledPane modelSection = createModelSection();
+            TitledPane transferSection = createTransferLearningSection();
+            TitledPane trainingSection = createTrainingSection();
+            TitledPane strategySection = createTrainingStrategySection();
+            TitledPane augmentationSection = createAugmentationSection();
+
+            gatedSections.addAll(List.of(
+                    basicInfoSection, modelSection, transferSection,
+                    trainingSection, strategySection,
+                    channelSection, classSection, augmentationSection
+            ));
+
+            // Build layout: image source first, then gated sections, then error panel
             content.getChildren().addAll(
-                    createBasicInfoSection(),
-                    createImageSourceSection(),
-                    createModelSection(),
-                    createTransferLearningSection(),
-                    createTrainingSection(),
-                    createTrainingStrategySection(),
+                    imageSourceSection,
+                    basicInfoSection,
+                    modelSection,
+                    transferSection,
+                    trainingSection,
+                    strategySection,
                     channelSection,
                     classSection,
-                    createAugmentationSection(),
+                    augmentationSection,
                     createErrorSummaryPanel()
             );
+
+            // Disable gated sections until classes are loaded
+            setGatedSectionsEnabled(false);
 
             ScrollPane scrollPane = new ScrollPane(content);
             scrollPane.setFitToWidth(true);
@@ -239,11 +260,15 @@ public class TrainingDialog {
 
             dialog.getDialogPane().setContent(scrollPane);
 
-            // Initialize with current image
-            initializeFromCurrentImage();
+            // Generate default classifier name
+            String timestamp = java.time.LocalDate.now().toString().replace("-", "");
+            classifierNameField.setText("Classifier_" + timestamp);
 
             // Trigger initial layer load now that all UI components exist
             updateLayerFreezePanel();
+
+            // Initial validation
+            updateValidation();
 
             // Set result converter
             dialog.setResultConverter(button -> {
@@ -323,35 +348,19 @@ public class TrainingDialog {
             VBox content = new VBox(8);
             content.setPadding(new Insets(10));
 
-            ToggleGroup sourceGroup = new ToggleGroup();
-            currentImageRadio = new RadioButton("Current image only");
-            currentImageRadio.setToggleGroup(sourceGroup);
-            currentImageRadio.setSelected(true);
-            TooltipHelper.install(currentImageRadio,
-                    "Train using only annotations from the currently open image.\n" +
-                    "Simpler setup but may overfit to a single image.\n" +
-                    "Good for quick prototyping and testing.");
-
-            projectImagesRadio = new RadioButton("Selected project images");
-            projectImagesRadio.setToggleGroup(sourceGroup);
-            TooltipHelper.install(projectImagesRadio,
-                    "Train using annotations from multiple project images.\n" +
-                    "Improves generalization across different tissue regions.\n" +
-                    "Recommended for production classifiers.");
+            Label info = new Label("Select project images to include in training:");
+            info.setStyle("-fx-text-fill: #666;");
 
             imageSelectionList = new ListView<>();
             imageSelectionList.setCellFactory(lv -> new CheckBoxListCell<>(
                     item -> item.selected,
                     item -> item.imageName
             ));
-            imageSelectionList.setPrefHeight(120);
+            imageSelectionList.setPrefHeight(150);
             TooltipHelper.install(imageSelectionList,
                     "Check the project images to include in training.\n" +
                     "Only images with classified annotations are shown.\n" +
                     "Patches from all selected images are combined into one training set.");
-            imageSelectionList.setDisable(true);
-            imageSelectionList.setVisible(false);
-            imageSelectionList.setManaged(false);
 
             // Populate project images that have classified annotations
             Project<BufferedImage> project = QuPathGUI.getInstance().getProject();
@@ -364,8 +373,15 @@ public class TrainingDialog {
                                 .count();
                         data.getServer().close();
                         if (annotationCount > 0) {
-                            imageSelectionList.getItems().add(
-                                    new ImageSelectionItem(entry, annotationCount));
+                            ImageSelectionItem item = new ImageSelectionItem(entry, annotationCount);
+                            // When image selection changes, update button state and mark classes stale
+                            item.selected.addListener((obs, old, newVal) -> {
+                                updateLoadClassesButtonState();
+                                if (classesLoaded) {
+                                    markClassesStale();
+                                }
+                            });
+                            imageSelectionList.getItems().add(item);
                         }
                     } catch (Exception e) {
                         logger.debug("Could not read image '{}': {}",
@@ -374,31 +390,45 @@ public class TrainingDialog {
                 }
             }
 
-            // Disable project option if no project or no annotated images
+            // Select All / Select None buttons
+            Button selectAllImagesBtn = new Button("Select All");
+            TooltipHelper.install(selectAllImagesBtn, "Select all project images for training");
+            selectAllImagesBtn.setOnAction(e ->
+                    imageSelectionList.getItems().forEach(item -> item.selected.set(true)));
+
+            Button selectNoneImagesBtn = new Button("Select None");
+            TooltipHelper.install(selectNoneImagesBtn, "Deselect all project images");
+            selectNoneImagesBtn.setOnAction(e ->
+                    imageSelectionList.getItems().forEach(item -> item.selected.set(false)));
+
+            // Load Classes button
+            loadClassesButton = new Button("Load Classes from Selected Images");
+            loadClassesButton.setStyle("-fx-font-weight: bold;");
+            loadClassesButton.setMaxWidth(Double.MAX_VALUE);
+            TooltipHelper.install(loadClassesButton,
+                    "Read annotations from the selected images and populate\n" +
+                    "the class list with the union of all classes found.\n" +
+                    "Also initializes channel configuration from the first image.");
+            loadClassesButton.setOnAction(e -> loadClassesFromSelectedImages());
+
+            HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn);
+
+            content.getChildren().addAll(info, imageSelectionList, imageButtonBox, loadClassesButton);
+
+            // Show a message if no annotated images found
             if (imageSelectionList.getItems().isEmpty()) {
-                projectImagesRadio.setDisable(true);
-                TooltipHelper.install(projectImagesRadio,
-                        "No project images with annotations found.\n" +
-                        "Add classified annotations to project images to enable this option.");
+                Label noImagesLabel = new Label("No project images with classified annotations found.");
+                noImagesLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                content.getChildren().add(1, noImagesLabel);
             }
 
-            // Toggle image list visibility
-            sourceGroup.selectedToggleProperty().addListener((obs, old, toggle) -> {
-                boolean showList = toggle == projectImagesRadio;
-                imageSelectionList.setDisable(!showList);
-                imageSelectionList.setVisible(showList);
-                imageSelectionList.setManaged(showList);
-            });
-
-            Label info = new Label("Training data source:");
-            info.setStyle("-fx-text-fill: #666;");
-
-            content.getChildren().addAll(info, currentImageRadio, projectImagesRadio, imageSelectionList);
+            // Initialize button state
+            updateLoadClassesButtonState();
 
             TitledPane pane = new TitledPane("TRAINING DATA SOURCE", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create("Choose whether to train from one image or multiple project images"));
+            pane.setTooltip(TooltipHelper.create("Select project images and load classes for training"));
             return pane;
         }
 
@@ -1024,54 +1054,139 @@ public class TrainingDialog {
             return errorSummaryPanel;
         }
 
-        private void initializeFromCurrentImage() {
-            ImageData<BufferedImage> imageData = QP.getCurrentImageData();
-            if (imageData != null) {
-                // Set up channels
-                channelPanel.setImageData(imageData);
+        /**
+         * Loads classes from all selected project images as a union.
+         * Runs image reading on a background thread to avoid blocking the FX thread.
+         */
+        private void loadClassesFromSelectedImages() {
+            List<ImageSelectionItem> selectedItems = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get())
+                    .collect(Collectors.toList());
 
-                // Auto-configure channel panel based on image type and channel count
-                channelPanel.autoConfigureForImageType(imageData.getImageType(),
-                        imageData.getServer().nChannels());
+            if (selectedItems.isEmpty()) {
+                return;
+            }
 
-                // Auto-disable color jitter for non-brightfield images
-                if (!isBrightfield(imageData)) {
-                    colorJitterCheck.setSelected(false);
-                    colorJitterCheck.setDisable(true);
-                    TooltipHelper.install(colorJitterCheck,
-                            "Color jitter is disabled for non-brightfield images.\n" +
-                            "This augmentation perturbs brightness/contrast/saturation\n" +
-                            "which could corrupt quantitative fluorescence intensity data.");
-                }
+            loadClassesButton.setDisable(true);
+            loadClassesButton.setText("Loading classes...");
 
-                // Populate class list from image annotations, accumulating area per class
-                Set<PathClass> classes = new TreeSet<>(Comparator.comparing(PathClass::getName));
+            CompletableFuture.runAsync(() -> {
+                // Accumulate classes and areas across all selected images
+                Map<String, PathClass> classMap = new TreeMap<>();
                 Map<String, Double> classAreas = new LinkedHashMap<>();
-                for (PathObject annotation : imageData.getHierarchy().getAnnotationObjects()) {
-                    PathClass pathClass = annotation.getPathClass();
-                    if (pathClass != null && !pathClass.isDerivedClass()) {
-                        classes.add(pathClass);
-                        classAreas.merge(pathClass.getName(), annotation.getROI().getArea(), Double::sum);
+                ImageData<BufferedImage> firstImageData = null;
+
+                for (ImageSelectionItem selItem : selectedItems) {
+                    try {
+                        ImageData<BufferedImage> data = selItem.entry.readImageData();
+
+                        // Keep the first image's data for channel initialization
+                        if (firstImageData == null) {
+                            firstImageData = data;
+                        }
+
+                        for (PathObject annotation : data.getHierarchy().getAnnotationObjects()) {
+                            PathClass pathClass = annotation.getPathClass();
+                            if (pathClass != null && !pathClass.isDerivedClass()) {
+                                classMap.putIfAbsent(pathClass.getName(), pathClass);
+                                classAreas.merge(pathClass.getName(),
+                                        annotation.getROI().getArea(), Double::sum);
+                            }
+                        }
+
+                        // Close server for all images except the first
+                        // (ChannelSelectionPanel stores currentServer for lazy bit depth lookup)
+                        if (data != firstImageData) {
+                            try {
+                                data.getServer().close();
+                            } catch (Exception e) {
+                                logger.debug("Error closing image server: {}", e.getMessage());
+                            }
+                        }
+                    } catch (Exception e) {
+                        logger.warn("Could not read image '{}': {}",
+                                selItem.entry.getImageName(), e.getMessage());
                     }
                 }
 
-                for (PathClass pathClass : classes) {
-                    double area = classAreas.getOrDefault(pathClass.getName(), 0.0);
-                    ClassItem item = new ClassItem(pathClass.getName(), pathClass.getColor(), true, area);
-                    item.selected().addListener((obs, old, newVal) -> {
-                        refreshPieChart();
-                        updateValidation();
-                    });
-                    classListView.getItems().add(item);
+                final ImageData<BufferedImage> channelImageData = firstImageData;
+                final Map<String, PathClass> finalClassMap = classMap;
+                final Map<String, Double> finalClassAreas = classAreas;
+
+                Platform.runLater(() -> {
+                    // Initialize channel panel from first image
+                    if (channelImageData != null) {
+                        channelPanel.setImageData(channelImageData);
+                        channelPanel.autoConfigureForImageType(
+                                channelImageData.getImageType(),
+                                channelImageData.getServer().nChannels());
+
+                        // Auto-disable color jitter for non-brightfield images
+                        if (!isBrightfield(channelImageData)) {
+                            colorJitterCheck.setSelected(false);
+                            colorJitterCheck.setDisable(true);
+                            TooltipHelper.install(colorJitterCheck,
+                                    "Color jitter is disabled for non-brightfield images.\n" +
+                                    "This augmentation perturbs brightness/contrast/saturation\n" +
+                                    "which could corrupt quantitative fluorescence intensity data.");
+                        } else {
+                            colorJitterCheck.setDisable(false);
+                        }
+                    }
+
+                    // Populate class list with union of all classes
+                    classListView.getItems().clear();
+                    for (Map.Entry<String, PathClass> entry : finalClassMap.entrySet()) {
+                        PathClass pathClass = entry.getValue();
+                        double area = finalClassAreas.getOrDefault(entry.getKey(), 0.0);
+                        ClassItem classItem = new ClassItem(
+                                pathClass.getName(), pathClass.getColor(), true, area);
+                        classItem.selected().addListener((obs, old, newVal) -> {
+                            refreshPieChart();
+                            updateValidation();
+                        });
+                        classListView.getItems().add(classItem);
+                    }
+
+                    refreshPieChart();
+
+                    // Enable gated sections
+                    classesLoaded = true;
+                    setGatedSectionsEnabled(true);
+
+                    // Reset button state
+                    loadClassesButton.setText("Load Classes from Selected Images");
+                    updateLoadClassesButtonState();
+                    updateValidation();
+
+                    logger.info("Loaded {} classes from {} images",
+                            finalClassMap.size(), selectedItems.size());
+                });
+            });
+        }
+
+        /** Enables/disables the Load Classes button based on whether any images are checked. */
+        private void updateLoadClassesButtonState() {
+            boolean anySelected = imageSelectionList.getItems().stream()
+                    .anyMatch(item -> item.selected.get());
+            loadClassesButton.setDisable(!anySelected);
+        }
+
+        /** Visual indicator when images change after classes were already loaded. */
+        private void markClassesStale() {
+            loadClassesButton.setText("Reload Classes (images changed)");
+            loadClassesButton.setStyle(
+                    "-fx-font-weight: bold; -fx-text-fill: #cc6600;");
+        }
+
+        /** Enables or disables all gated sections (everything except image source). */
+        private void setGatedSectionsEnabled(boolean enabled) {
+            for (TitledPane pane : gatedSections) {
+                pane.setDisable(!enabled);
+                if (!enabled) {
+                    pane.setExpanded(false);
                 }
-                refreshPieChart();
             }
-
-            // Generate default name
-            String timestamp = java.time.LocalDate.now().toString().replace("-", "");
-            classifierNameField.setText("Classifier_" + timestamp);
-
-            updateValidation();
         }
 
         private boolean isBrightfield(ImageData<BufferedImage> imageData) {
@@ -1146,6 +1261,29 @@ public class TrainingDialog {
         }
 
         private void updateValidation() {
+            // Check that classes have been loaded
+            if (!classesLoaded) {
+                validationErrors.put("classesLoaded",
+                        "Select images and click 'Load Classes from Selected Images'");
+                // Clear channel/class errors since they are not relevant yet
+                validationErrors.remove("channels");
+                validationErrors.remove("classes");
+                validationErrors.remove("images");
+                updateErrorSummary();
+                return;
+            }
+            validationErrors.remove("classesLoaded");
+
+            // Check at least 1 image is selected
+            long selectedImageCount = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get())
+                    .count();
+            if (selectedImageCount < 1) {
+                validationErrors.put("images", "At least 1 image must be selected for training");
+            } else {
+                validationErrors.remove("images");
+            }
+
             // Check channels
             if (!channelPanel.isValid()) {
                 validationErrors.put("channels", "Invalid channel configuration");
@@ -1366,14 +1504,11 @@ public class TrainingDialog {
                     .map(ClassItem::name)
                     .collect(Collectors.toList());
 
-            // Get selected project images (null if current-image-only mode)
-            List<ProjectImageEntry<BufferedImage>> selectedImages = null;
-            if (projectImagesRadio.isSelected()) {
-                selectedImages = imageSelectionList.getItems().stream()
-                        .filter(item -> item.selected.get())
-                        .map(item -> item.entry)
-                        .collect(Collectors.toList());
-            }
+            // Always collect selected images from the list
+            List<ProjectImageEntry<BufferedImage>> selectedImages = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get())
+                    .map(item -> item.entry)
+                    .collect(Collectors.toList());
 
             return new TrainingDialogResult(
                     classifierNameField.getText().trim(),

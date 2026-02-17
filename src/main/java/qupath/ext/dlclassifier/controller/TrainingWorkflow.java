@@ -269,26 +269,6 @@ public class TrainingWorkflow {
             return false;
         }
 
-        // Check image is open
-        ImageData<BufferedImage> imageData = qupath.getImageData();
-        if (imageData == null) {
-            showError("No Image", "Please open an image before training a classifier.");
-            return false;
-        }
-
-        // Check for annotations
-        List<PathObject> annotations = imageData.getHierarchy().getAnnotationObjects()
-                .stream()
-                .filter(a -> a.getPathClass() != null)
-                .toList();
-
-        if (annotations.isEmpty()) {
-            showError("No Annotations",
-                    "No classified annotations found.\n" +
-                            "Please create annotations with foreground and background classes.");
-            return false;
-        }
-
         // Check server availability
         if (!DLClassifierChecks.checkServerHealth()) {
             showError("Server Unavailable",
@@ -402,7 +382,7 @@ public class TrainingWorkflow {
         CompletableFuture.runAsync(() -> {
             TrainingResult result = trainCore(classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
-                    qupath.getImageData(), selectedImages, progress, currentJobId,
+                    null, selectedImages, progress, currentJobId,
                     classColors);
 
             if (result.success()) {
