@@ -211,12 +211,38 @@ public class SetupEnvironmentDialog {
         HBox buttonBox = new HBox(8, spacer, closeButton);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
 
-        contentBox.getChildren().addAll(
-                titleLabel,
-                completeLabel,
-                detailLabel,
-                buttonBox
-        );
+        // Check if GPU was detected -- warn if CPU-only
+        boolean gpuDetected = ApposeService.getInstance().isCudaAvailable();
+
+        if (!gpuDetected) {
+            Label gpuWarning = new Label(
+                    "[!] GPU (CUDA) was not detected. Training and inference will be very slow on CPU.\n\n"
+                    + "To enable GPU acceleration:\n"
+                    + "  1. Install or update your NVIDIA GPU drivers\n"
+                    + "  2. Use Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment\n"
+                    + "     to reinstall with GPU support\n\n"
+                    + "If you do not have an NVIDIA GPU, CPU mode will still work but training\n"
+                    + "will take significantly longer.");
+            gpuWarning.setWrapText(true);
+            gpuWarning.setStyle("-fx-text-fill: #e65100; -fx-font-size: 11px; "
+                    + "-fx-border-color: #ffcc80; -fx-border-width: 1; "
+                    + "-fx-background-color: #fff3e0; -fx-padding: 8;");
+
+            contentBox.getChildren().addAll(
+                    titleLabel,
+                    completeLabel,
+                    detailLabel,
+                    gpuWarning,
+                    buttonBox
+            );
+        } else {
+            contentBox.getChildren().addAll(
+                    titleLabel,
+                    completeLabel,
+                    detailLabel,
+                    buttonBox
+            );
+        }
     }
 
     private void showErrorView(String errorMessage) {

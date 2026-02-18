@@ -49,6 +49,7 @@ public class ApposeService {
     private Environment environment;
     private Service pythonService;
     private boolean initialized;
+    private boolean cudaAvailable;
     private String initError;
     private Thread shutdownHook;
 
@@ -215,18 +216,19 @@ public class ApposeService {
                 verifyTask.waitFor();
 
                 String torchVersion = String.valueOf(verifyTask.outputs.get("torch_version"));
-                String cudaAvailable = String.valueOf(verifyTask.outputs.get("cuda_available"));
-                logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaAvailable);
+                String cudaStr = String.valueOf(verifyTask.outputs.get("cuda_available"));
+                logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaStr);
 
-                if (!"True".equalsIgnoreCase(cudaAvailable)) {
+                if (!"True".equalsIgnoreCase(cudaStr)) {
                     logger.warn("CUDA is NOT available -- training and inference will run on CPU (very slow). "
                             + "Rebuild the environment to install GPU-enabled PyTorch.");
                 }
 
                 initialized = true;
                 initError = null;
+                this.cudaAvailable = "True".equalsIgnoreCase(cudaStr);
                 registerShutdownHook();
-                String deviceNote = "True".equalsIgnoreCase(cudaAvailable) ? "GPU" : "CPU only";
+                String deviceNote = this.cudaAvailable ? "GPU" : "CPU only";
                 report(statusCallback, "Setup complete! (PyTorch " + torchVersion
                         + ", " + deviceNote + ")");
                 logger.info("Appose Python service initialized");
@@ -524,6 +526,16 @@ public class ApposeService {
      */
     public String getInitError() {
         return initError;
+    }
+
+    /**
+     * Checks whether CUDA (GPU) is available in the Python environment.
+     * Only meaningful after successful initialization.
+     *
+     * @return true if CUDA GPU acceleration is available
+     */
+    public boolean isCudaAvailable() {
+        return cudaAvailable;
     }
 
     // ==================== Classloader Workaround ====================
