@@ -33,11 +33,6 @@ import qupath.lib.images.ImageData;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.ResourceBundle;
 
@@ -399,53 +394,21 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return;
         }
 
-        // Shut down the running service
+        // Shut down the running service and delete the environment
         try {
             ApposeService.getInstance().shutdown();
+            ApposeService.getInstance().deleteEnvironment();
         } catch (Exception e) {
-            logger.warn("Error shutting down Appose service: {}", e.getMessage());
-        }
-
-        // Delete the environment directory
-        Path envPath = ApposeService.getEnvironmentPath();
-        if (Files.exists(envPath)) {
-            try {
-                deleteDirectoryRecursively(envPath);
-                logger.info("Deleted environment directory: {}", envPath);
-            } catch (IOException e) {
-                logger.error("Failed to delete environment directory", e);
-                Dialogs.showErrorNotification(EXTENSION_NAME,
-                        "Failed to delete environment: " + e.getMessage());
-                return;
-            }
+            logger.error("Failed to delete environment", e);
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Failed to delete environment: " + e.getMessage());
+            return;
         }
 
         // Update state and show setup dialog
         environmentReady.set(false);
         serverAvailable = false;
         showSetupDialog(qupath);
-    }
-
-    /**
-     * Recursively deletes a directory and all its contents.
-     */
-    private static void deleteDirectoryRecursively(Path directory) throws IOException {
-        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
-                    throws IOException {
-                Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc)
-                    throws IOException {
-                if (exc != null) throw exc;
-                Files.delete(dir);
-                return FileVisitResult.CONTINUE;
-            }
-        });
     }
 
     /**

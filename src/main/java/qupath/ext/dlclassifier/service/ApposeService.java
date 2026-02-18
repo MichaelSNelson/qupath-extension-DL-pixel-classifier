@@ -75,20 +75,33 @@ public class ApposeService {
      * @return true if the environment directory exists and appears installed
      */
     public static boolean isEnvironmentBuilt() {
-        Path envDir = Path.of(System.getProperty("user.home"),
-                ".appose", "pixi", ENV_NAME);
-        // pixi creates .pixi/ subdirectory when environment is installed
+        // If environment has been built this session, use its actual base path
+        ApposeService svc = instance;
+        if (svc != null && svc.environment != null) {
+            Path envDir = Path.of(svc.environment.base());
+            return Files.isDirectory(envDir.resolve(".pixi"));
+        }
+        // Fallback: check the default Appose data directory
+        Path envDir = getEnvironmentPath();
         return Files.isDirectory(envDir.resolve(".pixi"));
     }
 
     /**
      * Returns the path where the Appose pixi environment is stored.
+     * Uses the live environment base path if available, otherwise falls
+     * back to Appose's default data directory.
      *
      * @return the environment directory path
      */
     public static Path getEnvironmentPath() {
+        // If environment has been built this session, use its actual base path
+        ApposeService svc = instance;
+        if (svc != null && svc.environment != null) {
+            return Path.of(svc.environment.base());
+        }
+        // Appose default: ~/.local/share/appose/<env-name>
         return Path.of(System.getProperty("user.home"),
-                ".appose", "pixi", ENV_NAME);
+                ".local", "share", "appose", ENV_NAME);
     }
 
     /**
@@ -394,6 +407,63 @@ public class ApposeService {
         removeShutdownHook();
 
         logger.info("Appose service shut down");
+    }
+
+    /**
+     * Deletes the Appose pixi environment from disk.
+     * The service must be shut down first via {@link #shutdown()}.
+     * Uses the Appose Environment API if available, otherwise falls
+     * back to recursive directory deletion.
+     *
+     * @throws IOException if the environment directory cannot be deleted
+     */
+    public synchronized void deleteEnvironment() throws IOException {
+        if (pythonService != null) {
+            throw new IOException("Cannot delete environment while Python service is running. "
+                    + "Call shutdown() first.");
+        }
+        if (environment != null) {
+            try {
+                logger.info("Deleting Appose environment via API: {}", environment.base());
+                environment.delete();
+                environment = null;
+                logger.info("Appose environment deleted");
+                return;
+            } catch (Exception e) {
+                logger.warn("Appose environment.delete() failed, falling back to manual deletion: {}",
+                        e.getMessage());
+                environment = null;
+            }
+        }
+        // Fallback: manual deletion of the default path
+        Path envPath = getEnvironmentPath();
+        if (Files.exists(envPath)) {
+            logger.info("Deleting environment directory: {}", envPath);
+            deleteDirectoryRecursively(envPath);
+            logger.info("Environment directory deleted");
+        }
+    }
+
+    /**
+     * Recursively deletes a directory and all its contents.
+     */
+    private static void deleteDirectoryRecursively(Path directory) throws IOException {
+        java.nio.file.FileVisitor<Path> visitor = new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult visitFile(Path file,
+                    java.nio.file.attribute.BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+            @Override
+            public java.nio.file.FileVisitResult postVisitDirectory(Path dir,
+                    IOException exc) throws IOException {
+                if (exc != null) throw exc;
+                Files.delete(dir);
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        };
+        Files.walkFileTree(directory, visitor);
     }
 
     /**

@@ -60,13 +60,25 @@ except Exception as e:
 
 def _parent_alive(pid):
     """Check if a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)  # Signal 0 = existence check, works on Windows too
-        return True
-    except PermissionError:
-        return True  # Process exists but no permission (Windows)
-    except OSError:
-        return False  # Process does not exist
+    if sys.platform == 'win32':
+        # os.kill(pid, 0) does NOT work on Windows -- signal 0 maps to
+        # CTRL_C_EVENT which crashes the process. Use the Win32 API instead.
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    else:
+        try:
+            os.kill(pid, 0)  # Signal 0 = existence check (Unix only)
+            return True
+        except PermissionError:
+            return True  # Process exists but no permission
+        except OSError:
+            return False  # Process does not exist
 
 
 def _watch_parent():
@@ -77,15 +89,21 @@ def _watch_parent():
     logger.info("Parent process watcher started (parent PID: %d)", ppid)
     while True:
         time.sleep(3)
-        # Check 1: parent PID changed (Linux reparents to init/systemd)
-        current_ppid = os.getppid()
-        if current_ppid != ppid:
-            logger.warning("Parent process changed (%d -> %d), exiting", ppid, current_ppid)
-            os._exit(1)
-        # Check 2: parent PID no longer exists
-        if not _parent_alive(ppid):
-            logger.warning("Parent process %d no longer exists, exiting", ppid)
-            os._exit(1)
+        try:
+            # Check 1: parent PID changed (Linux reparents to init/systemd)
+            current_ppid = os.getppid()
+            if current_ppid != ppid:
+                logger.warning("Parent process changed (%d -> %d), exiting",
+                               ppid, current_ppid)
+                os._exit(1)
+            # Check 2: parent PID no longer exists
+            if not _parent_alive(ppid):
+                logger.warning("Parent process %d no longer exists, exiting",
+                               ppid)
+                os._exit(1)
+        except Exception as e:
+            # Never crash the thread -- log and keep watching
+            logger.debug("Parent watcher check error: %s", e)
 
 
 _parent_watcher = threading.Thread(target=_watch_parent, daemon=True)
