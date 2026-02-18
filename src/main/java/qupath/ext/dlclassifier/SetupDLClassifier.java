@@ -337,14 +337,14 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         });
         freeGpuOption.visibleProperty().bind(environmentReady);
 
-        // Rebuild DL Environment - visible when env is built AND useAppose is on
+        // Rebuild DL Environment - always visible in Appose mode so users can
+        // fix broken environments even when initialization has failed
         MenuItem rebuildItem = new MenuItem(res.getString("menu.rebuildEnvironment"));
         TooltipHelper.installOnMenuItem(rebuildItem,
                 "Delete and re-download the Python deep learning environment.\n" +
                         "Use this if the environment becomes corrupted or you want a fresh install.");
         rebuildItem.setOnAction(e -> rebuildEnvironment(qupath));
-        rebuildItem.visibleProperty().bind(
-                environmentReady.and(DLClassifierPreferences.useApposeProperty()));
+        rebuildItem.visibleProperty().bind(DLClassifierPreferences.useApposeProperty());
 
         utilitiesMenu.getItems().addAll(serverOption, freeGpuOption, rebuildItem);
 

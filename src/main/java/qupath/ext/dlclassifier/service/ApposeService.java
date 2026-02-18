@@ -160,6 +160,13 @@ public class ApposeService {
             Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
 
             try {
+                // Ensure the pixi.toml on disk matches the bundled content.
+                // Appose skips the build when the environment directory already
+                // exists, so a changed pixi.toml in the JAR would never be
+                // written to disk. Force-sync it here and delete the lockfile
+                // so pixi re-resolves with the new dependencies.
+                syncPixiToml(pixiToml);
+
                 report(statusCallback, "Building pixi environment (this may take several minutes)...");
 
                 // Build the pixi environment (downloads deps on first run)
@@ -631,6 +638,41 @@ public class ApposeService {
             sb.append(line).append("\n");
         }
         return sb.toString();
+    }
+
+    /**
+     * Ensures the pixi.toml on disk matches the bundled content.
+     * If the content differs (e.g. after extension update), overwrites the
+     * file and deletes pixi.lock to force pixi to re-resolve dependencies.
+     * Also deletes .pixi/ so Appose doesn't skip the build.
+     */
+    private void syncPixiToml(String expectedContent) {
+        try {
+            Path envDir = getEnvironmentPath();
+            Path pixiTomlFile = envDir.resolve("pixi.toml");
+            if (!Files.exists(pixiTomlFile)) {
+                return; // First-time install, Appose will create it
+            }
+            String existingContent = Files.readString(pixiTomlFile, StandardCharsets.UTF_8);
+            // Normalize line endings for comparison
+            String normalizedExisting = existingContent.replace("\r\n", "\n").strip();
+            String normalizedExpected = expectedContent.replace("\r\n", "\n").strip();
+            if (normalizedExisting.equals(normalizedExpected)) {
+                return; // Content matches, no sync needed
+            }
+            logger.info("pixi.toml content changed - updating and forcing environment rebuild");
+            Files.writeString(pixiTomlFile, expectedContent, StandardCharsets.UTF_8);
+            // Delete lockfile so pixi re-resolves
+            Files.deleteIfExists(envDir.resolve("pixi.lock"));
+            // Delete .pixi/ so Appose doesn't skip the build
+            Path pixiDir = envDir.resolve(".pixi");
+            if (Files.isDirectory(pixiDir)) {
+                deleteDirectoryRecursively(pixiDir);
+            }
+            logger.info("Environment sync complete - next build will re-resolve dependencies");
+        } catch (IOException e) {
+            logger.warn("Failed to sync pixi.toml (will attempt build anyway): {}", e.getMessage());
+        }
     }
 
     // ==================== Resource Loading ====================
