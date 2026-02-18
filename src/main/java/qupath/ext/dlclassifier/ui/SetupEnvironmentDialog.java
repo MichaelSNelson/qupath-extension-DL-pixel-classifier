@@ -211,18 +211,29 @@ public class SetupEnvironmentDialog {
         HBox buttonBox = new HBox(8, spacer, closeButton);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
 
-        // Check if GPU was detected -- warn if CPU-only
-        boolean gpuDetected = ApposeService.getInstance().isCudaAvailable();
+        // Check GPU status and show platform-appropriate guidance
+        ApposeService appose = ApposeService.getInstance();
+        String gpuType = appose.getGpuType();
 
-        if (!gpuDetected) {
-            Label gpuWarning = new Label(
-                    "[!] GPU (CUDA) was not detected. Training and inference will be very slow on CPU.\n\n"
-                    + "To enable GPU acceleration:\n"
-                    + "  1. Install or update your NVIDIA GPU drivers\n"
-                    + "  2. Use Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment\n"
-                    + "     to reinstall with GPU support\n\n"
-                    + "If you do not have an NVIDIA GPU, CPU mode will still work but training\n"
-                    + "will take significantly longer.");
+        if ("cpu".equals(gpuType)) {
+            // No GPU detected -- show warning with platform-appropriate instructions
+            String warningText;
+            boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
+            if (isMac) {
+                warningText = "[!] No GPU acceleration detected. Training and inference will be slow on CPU.\n\n"
+                        + "Apple MPS (Metal) was not found. If you have Apple Silicon (M1/M2/M3),\n"
+                        + "ensure you are using a compatible PyTorch version.\n\n"
+                        + "Try: Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment";
+            } else {
+                warningText = "[!] No GPU (CUDA) detected. Training and inference will be very slow on CPU.\n\n"
+                        + "To enable GPU acceleration:\n"
+                        + "  1. Install or update your NVIDIA GPU drivers\n"
+                        + "  2. Use Extensions > DL Pixel Classifier > Utilities >\n"
+                        + "     Rebuild DL Environment to reinstall with GPU support\n\n"
+                        + "If you do not have an NVIDIA GPU, CPU mode will still work\n"
+                        + "but training will take significantly longer.";
+            }
+            Label gpuWarning = new Label(warningText);
             gpuWarning.setWrapText(true);
             gpuWarning.setStyle("-fx-text-fill: #e65100; -fx-font-size: 11px; "
                     + "-fx-border-color: #ffcc80; -fx-border-width: 1; "

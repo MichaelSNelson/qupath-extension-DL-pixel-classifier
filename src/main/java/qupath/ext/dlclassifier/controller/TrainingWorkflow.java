@@ -352,22 +352,32 @@ public class TrainingWorkflow {
         // Warn user if training will run on CPU (very slow)
         try {
             ApposeService appose = ApposeService.getInstance();
-            if (appose.isAvailable() && !appose.isCudaAvailable()) {
-                boolean proceed = Dialogs.showConfirmDialog("CPU Training Warning",
-                        "No GPU (CUDA) was detected. Training on CPU will be very slow "
-                        + "(potentially hours instead of minutes).\n\n"
-                        + "To enable GPU acceleration:\n"
-                        + "  1. Install or update NVIDIA GPU drivers\n"
-                        + "  2. Use Extensions > DL Pixel Classifier > Utilities >\n"
-                        + "     Rebuild DL Environment\n\n"
-                        + "Continue training on CPU?");
+            if (appose.isAvailable() && !appose.isGpuAvailable()) {
+                boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
+                String message;
+                if (isMac) {
+                    message = "No GPU acceleration detected. Training on CPU will be very slow "
+                            + "(potentially hours instead of minutes).\n\n"
+                            + "If you have Apple Silicon, try rebuilding the DL environment\n"
+                            + "to enable MPS acceleration.\n\n"
+                            + "Continue training on CPU?";
+                } else {
+                    message = "No GPU (CUDA) detected. Training on CPU will be very slow "
+                            + "(potentially hours instead of minutes).\n\n"
+                            + "To enable GPU acceleration:\n"
+                            + "  1. Install or update NVIDIA GPU drivers\n"
+                            + "  2. Use Extensions > DL Pixel Classifier > Utilities >\n"
+                            + "     Rebuild DL Environment\n\n"
+                            + "Continue training on CPU?";
+                }
+                boolean proceed = Dialogs.showConfirmDialog("CPU Training Warning", message);
                 if (!proceed) {
                     return;
                 }
             }
         } catch (Exception e) {
             // Don't block training if we can't check GPU status
-            logger.debug("Could not check CUDA status: {}", e.getMessage());
+            logger.debug("Could not check GPU status: {}", e.getMessage());
         }
 
         // Create progress monitor

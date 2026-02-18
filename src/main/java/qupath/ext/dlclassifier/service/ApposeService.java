@@ -50,6 +50,7 @@ public class ApposeService {
     private Service pythonService;
     private boolean initialized;
     private boolean cudaAvailable;
+    private String gpuType = "cpu";  // "cuda", "mps", or "cpu"
     private String initError;
     private Thread shutdownHook;
 
@@ -211,7 +212,11 @@ public class ApposeService {
                         "import numpy\n" +
                         "import PIL\n" +
                         "task.outputs['torch_version'] = torch.__version__\n" +
-                        "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n";
+                        "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n" +
+                        "mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()\n" +
+                        "task.outputs['mps_available'] = str(mps)\n" +
+                        "task.outputs['gpu_type'] = 'cuda' if torch.cuda.is_available() " +
+                        "else ('mps' if mps else 'cpu')\n";
 
                 Task verifyTask = pythonService.task(verifyScript);
                 verifyTask.listen(event -> {
@@ -224,18 +229,27 @@ public class ApposeService {
 
                 String torchVersion = String.valueOf(verifyTask.outputs.get("torch_version"));
                 String cudaStr = String.valueOf(verifyTask.outputs.get("cuda_available"));
-                logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaStr);
+                String mpsStr = String.valueOf(verifyTask.outputs.get("mps_available"));
+                String gpuType = String.valueOf(verifyTask.outputs.get("gpu_type"));
+                logger.info("Environment verified: PyTorch {}, CUDA={}, MPS={}, gpu_type={}",
+                        torchVersion, cudaStr, mpsStr, gpuType);
 
-                if (!"True".equalsIgnoreCase(cudaStr)) {
-                    logger.warn("CUDA is NOT available -- training and inference will run on CPU (very slow). "
+                if ("cpu".equals(gpuType)) {
+                    logger.warn("No GPU available -- training and inference will run on CPU (very slow). "
                             + "Rebuild the environment to install GPU-enabled PyTorch.");
                 }
 
                 initialized = true;
                 initError = null;
                 this.cudaAvailable = "True".equalsIgnoreCase(cudaStr);
+                this.gpuType = gpuType;
                 registerShutdownHook();
-                String deviceNote = this.cudaAvailable ? "GPU" : "CPU only";
+                String deviceNote;
+                switch (gpuType) {
+                    case "cuda": deviceNote = "NVIDIA GPU"; break;
+                    case "mps": deviceNote = "Apple MPS"; break;
+                    default: deviceNote = "CPU only"; break;
+                }
                 report(statusCallback, "Setup complete! (PyTorch " + torchVersion
                         + ", " + deviceNote + ")");
                 logger.info("Appose Python service initialized");
@@ -543,6 +557,25 @@ public class ApposeService {
      */
     public boolean isCudaAvailable() {
         return cudaAvailable;
+    }
+
+    /**
+     * Returns the detected GPU type: "cuda", "mps", or "cpu".
+     * Only meaningful after successful initialization.
+     *
+     * @return the GPU type string
+     */
+    public String getGpuType() {
+        return gpuType;
+    }
+
+    /**
+     * Checks whether any GPU acceleration is available (CUDA or MPS).
+     *
+     * @return true if GPU acceleration is available
+     */
+    public boolean isGpuAvailable() {
+        return "cuda".equals(gpuType) || "mps".equals(gpuType);
     }
 
     // ==================== Classloader Workaround ====================
