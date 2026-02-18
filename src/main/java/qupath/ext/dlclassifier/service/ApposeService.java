@@ -163,20 +163,49 @@ public class ApposeService {
             // Register debug output handler
             pythonService.debug(msg -> logger.debug("[Appose Python] {}", msg));
 
-            report(statusCallback, "Importing core libraries...");
-
-            // Pre-warm NumPy to avoid Windows hang (known Appose gotcha)
-            pythonService.init("import numpy");
-
-            report(statusCallback, "Initializing inference engine...");
-
-            // Initialize persistent services in the worker
-            String initScript = loadScript("init_services.py");
+            // Set the init script that runs when the Python subprocess starts.
+            // IMPORTANT: init() can only be called ONCE -- each call replaces
+            // the previous script. We prepend "import numpy" before the main
+            // init script because NumPy must be imported BEFORE the Appose
+            // stdin reader thread starts, or it deadlocks on Windows.
+            // See: https://github.com/numpy/numpy/issues/24290
+            String initScript = "import numpy\n" + loadScript("init_services.py");
             pythonService.init(initScript);
+
+            // Force the Python subprocess to actually start and verify
+            // that all critical packages are installed and importable.
+            // pythonService.init() is lazy and queues scripts without
+            // executing them, so we must run a blocking task() to confirm
+            // the environment is truly functional.
+            report(statusCallback, "Verifying installed packages (this may take a moment)...");
+            logger.info("Running environment verification task...");
+
+            String verifyScript =
+                    "import torch\n" +
+                    "import segmentation_models_pytorch\n" +
+                    "import albumentations\n" +
+                    "import numpy\n" +
+                    "import PIL\n" +
+                    "task.outputs['torch_version'] = torch.__version__\n" +
+                    "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n";
+
+            Task verifyTask = pythonService.task(verifyScript);
+            verifyTask.listen(event -> {
+                if (event.responseType == ResponseType.FAILURE
+                        || event.responseType == ResponseType.CRASH) {
+                    logger.error("Verification task failed: {}", verifyTask.error);
+                }
+            });
+            verifyTask.waitFor();
+
+            String torchVersion = String.valueOf(verifyTask.outputs.get("torch_version"));
+            String cudaAvailable = String.valueOf(verifyTask.outputs.get("cuda_available"));
+            logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaAvailable);
 
             initialized = true;
             initError = null;
-            report(statusCallback, "Setup complete!");
+            report(statusCallback, "Setup complete! (PyTorch " + torchVersion
+                    + ", CUDA=" + cudaAvailable + ")");
             logger.info("Appose Python service initialized");
 
         } catch (Exception e) {

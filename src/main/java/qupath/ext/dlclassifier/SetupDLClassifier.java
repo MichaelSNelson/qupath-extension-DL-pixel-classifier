@@ -151,6 +151,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      * Starts background initialization of the Appose service when the environment
      * is already built. This pre-warms the Python subprocess so it is ready when
      * the user clicks a workflow item.
+     * <p>
+     * If initialization fails (e.g., packages not installed), sets
+     * environmentReady to false so the setup item reappears.
      */
     private void startBackgroundInitialization() {
         Thread initThread = new Thread(() -> {
@@ -161,7 +164,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             } catch (Exception e) {
                 logger.warn("Background Appose init failed: {}", e.getMessage());
                 serverAvailable = false;
-                // Don't show a warning notification - user hasn't tried to use it yet
+                // Environment exists on disk but isn't functional --
+                // revert to "needs setup" state so the user can fix it
+                Platform.runLater(() -> {
+                    environmentReady.set(false);
+                    Dialogs.showWarningNotification(
+                            EXTENSION_NAME,
+                            "Python environment exists but failed to initialize.\n" +
+                                    "Use Setup DL Environment or Rebuild to fix.");
+                });
             }
         }, "DLClassifier-BackgroundInit");
         initThread.setDaemon(true);
