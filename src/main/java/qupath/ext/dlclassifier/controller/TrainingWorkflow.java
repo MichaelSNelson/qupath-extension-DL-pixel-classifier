@@ -458,7 +458,7 @@ public class TrainingWorkflow {
                                     Map<String, Integer> classColors) {
         try {
             if (progress != null) {
-                progress.setStatus("Exporting training data...");
+                progress.setStatus("Exporting training patches...");
                 progress.setCurrentProgress(-1);
             }
             logger.info("Starting training for classifier: {}", classifierName);
@@ -475,6 +475,7 @@ public class TrainingWorkflow {
             if (selectedImages != null && !selectedImages.isEmpty()) {
                 // Multi-image project export
                 if (progress != null) {
+                    progress.setStatus("Exporting patches from " + selectedImages.size() + " images...");
                     progress.log("Exporting from " + selectedImages.size() + " project images...");
                 }
                 AnnotationExtractor.ExportResult exportResult = AnnotationExtractor.exportFromProject(
@@ -504,7 +505,10 @@ public class TrainingWorkflow {
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
                 patchCount = exportResult.totalPatches();
             }
-            if (progress != null) progress.log("Exported " + patchCount + " training patches");
+            if (progress != null) {
+                progress.log("Exported " + patchCount + " training patches");
+                progress.setStatus("Exported " + patchCount + " patches. Connecting to backend...");
+            }
 
             if (progress != null && progress.isCancelled()) {
                 return new TrainingResult(null, classifierName, 0, 0, 0, false,
@@ -512,12 +516,9 @@ public class TrainingWorkflow {
             }
 
             // Get appropriate backend (Appose or HTTP) and start training
-            if (progress != null) progress.setStatus("Connecting to backend...");
             ClassifierBackend backend = BackendFactory.getBackend();
             if (progress != null) {
                 progress.log("Connected to classification backend");
-                progress.setStatus("Training model...");
-                progress.setOverallProgress(0);
 
                 // Log frozen layer configuration
                 List<String> frozen = trainingConfig.getFrozenLayers();
@@ -527,6 +528,9 @@ public class TrainingWorkflow {
                 } else if (trainingConfig.isUsePretrainedWeights()) {
                     progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
                 }
+
+                progress.setStatus("Building model and starting first epoch...");
+                progress.setOverallProgress(0);
             }
 
             final AtomicInteger lastLoggedEpoch = new AtomicInteger(-1);
@@ -541,6 +545,11 @@ public class TrainingWorkflow {
                             return;
                         }
                         if (progress != null) {
+                            // Update status on first epoch to show training is actively running
+                            if (lastLoggedEpoch.get() < 0) {
+                                progress.setStatus("Training model (" + trainingProgress.totalEpochs() + " epochs)...");
+                            }
+
                             // Always update progress bar and detail text (lightweight, keeps UI responsive)
                             double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                             progress.setOverallProgress(progressValue);
