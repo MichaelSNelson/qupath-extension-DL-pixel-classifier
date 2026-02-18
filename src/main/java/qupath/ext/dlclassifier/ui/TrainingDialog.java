@@ -935,9 +935,13 @@ public class TrainingDialog {
             classListView.setCellFactory(lv -> new ClassListCell());
             classListView.setPrefHeight(120);
             TooltipHelper.install(classListView,
-                    "Annotation classes found in the current image.\n" +
+                    "Annotation classes found in the selected images.\n" +
                     "At least 2 classes must be selected for training.\n" +
                     "Each class should have representative annotations.\n\n" +
+                    "Tip: Line/polyline annotations are recommended over area\n" +
+                    "annotations. Lines focus training on class boundaries\n" +
+                    "where accuracy matters most, and avoid overtraining on\n" +
+                    "easy central regions.\n\n" +
                     "Use the weight spinner (right) to boost underrepresented\n" +
                     "classes. For example, set weight=2.0 for a rare class.");
 
@@ -955,6 +959,8 @@ public class TrainingDialog {
                     "Auto-set weight multipliers to compensate for class imbalance.\n\n" +
                     "Classes with fewer annotated pixels receive higher weights so the\n" +
                     "model pays equal attention to all classes during training.\n\n" +
+                    "Works with both area and line annotations. For lines, pixel\n" +
+                    "coverage is estimated from line length x stroke width.\n\n" +
                     "Note: Rebalancing weights helps but does NOT replace having\n" +
                     "sufficient training data. Adding more annotations for under-\n" +
                     "represented classes will produce better results than relying\n" +
@@ -1071,8 +1077,16 @@ public class TrainingDialog {
             loadClassesButton.setDisable(true);
             loadClassesButton.setText("Loading classes...");
 
+            // Capture stroke width on FX thread before async work -- used to
+            // estimate pixel coverage for line/polyline annotations
+            final int strokeWidth = lineStrokeWidthSpinner.getValue();
+
             CompletableFuture.runAsync(() -> {
-                // Accumulate classes and areas across all selected images
+                // Accumulate classes and effective pixel coverage across all selected images.
+                // For area annotations, coverage = ROI area.
+                // For line annotations, coverage = path length * stroke width.
+                // This allows rebalancing to work with line annotations, which are
+                // the recommended annotation style for boundary-focused training.
                 Map<String, PathClass> classMap = new TreeMap<>();
                 Map<String, Double> classAreas = new LinkedHashMap<>();
                 ImageData<BufferedImage> firstImageData = null;
@@ -1090,8 +1104,20 @@ public class TrainingDialog {
                             PathClass pathClass = annotation.getPathClass();
                             if (pathClass != null && !pathClass.isDerivedClass()) {
                                 classMap.putIfAbsent(pathClass.getName(), pathClass);
-                                classAreas.merge(pathClass.getName(),
-                                        annotation.getROI().getArea(), Double::sum);
+
+                                // Estimate effective pixel coverage:
+                                // - Line/polyline ROIs have getArea()=0, so use
+                                //   path length * stroke width as the pixel count
+                                // - Area ROIs use geometric area directly
+                                // - Mixed annotations (some lines, some areas) sum naturally
+                                var roi = annotation.getROI();
+                                double coverage;
+                                if (roi.isLine()) {
+                                    coverage = roi.getLength() * strokeWidth;
+                                } else {
+                                    coverage = roi.getArea();
+                                }
+                                classAreas.merge(pathClass.getName(), coverage, Double::sum);
                             }
                         }
 
@@ -1408,9 +1434,11 @@ public class TrainingDialog {
 
             if (areas.isEmpty()) {
                 Dialogs.showWarningNotification("Rebalance",
-                        "All selected classes have zero annotation area.\n" +
-                        "Ensure annotations have area (not just points) and reload classes.");
-                logger.warn("Rebalance: all selected classes have zero annotation area -- cannot compute weights");
+                        "All selected classes have zero estimated pixel coverage.\n" +
+                        "Try reloading classes (coverage is estimated from annotation\n" +
+                        "area or line length x stroke width).");
+                logger.warn("Rebalance: all selected classes have zero coverage -- cannot compute weights. " +
+                        "Are annotations point ROIs? Line/area annotations are required.");
                 return;
             }
 
