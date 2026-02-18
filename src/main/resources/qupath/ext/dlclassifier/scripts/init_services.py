@@ -11,6 +11,8 @@ Any print() call corrupts the protocol and crashes communication.
 import sys
 import os
 import logging
+import threading
+import time
 
 # Configure logging to stderr (stdout is reserved for Appose JSON protocol)
 logging.basicConfig(
@@ -49,3 +51,42 @@ except Exception as e:
     gpu_manager = None
     inference_service = None
     model_registry = None
+
+
+# --- Parent process watcher ---
+# Safety net: if QuPath is force-killed (Task Manager, kill -9), the JVM
+# shutdown hook never runs, so stdin never closes and this process lives
+# forever. This daemon thread polls the parent PID and exits if it dies.
+
+def _parent_alive(pid):
+    """Check if a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)  # Signal 0 = existence check, works on Windows too
+        return True
+    except PermissionError:
+        return True  # Process exists but no permission (Windows)
+    except OSError:
+        return False  # Process does not exist
+
+
+def _watch_parent():
+    """Exit if parent process (Java/QuPath) dies."""
+    ppid = os.getppid()
+    if ppid <= 1:
+        return  # No meaningful parent to watch (already orphaned or init)
+    logger.info("Parent process watcher started (parent PID: %d)", ppid)
+    while True:
+        time.sleep(3)
+        # Check 1: parent PID changed (Linux reparents to init/systemd)
+        current_ppid = os.getppid()
+        if current_ppid != ppid:
+            logger.warning("Parent process changed (%d -> %d), exiting", ppid, current_ppid)
+            os._exit(1)
+        # Check 2: parent PID no longer exists
+        if not _parent_alive(ppid):
+            logger.warning("Parent process %d no longer exists, exiting", ppid)
+            os._exit(1)
+
+
+_parent_watcher = threading.Thread(target=_watch_parent, daemon=True)
+_parent_watcher.start()

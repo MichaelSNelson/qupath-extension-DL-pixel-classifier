@@ -50,6 +50,7 @@ public class ApposeService {
     private Service pythonService;
     private boolean initialized;
     private String initError;
+    private Thread shutdownHook;
 
     private ApposeService() {
         // Private constructor for singleton
@@ -211,6 +212,7 @@ public class ApposeService {
 
                 initialized = true;
                 initError = null;
+                registerShutdownHook();
                 String deviceNote = "True".equalsIgnoreCase(cudaAvailable) ? "GPU" : "CPU only";
                 report(statusCallback, "Setup complete! (PyTorch " + torchVersion
                         + ", " + deviceNote + ")");
@@ -350,19 +352,90 @@ public class ApposeService {
 
     /**
      * Gracefully shuts down the Python service and environment.
+     * Closes stdin first (lets Python exit cleanly), then force-kills
+     * if the process doesn't exit within 5 seconds.
      */
     public synchronized void shutdown() {
         if (pythonService != null) {
             try {
                 logger.info("Shutting down Appose Python service...");
-                pythonService.close();
+                pythonService.close();  // closes stdin -> Python gets EOFError
+
+                // Poll up to 5 seconds for graceful exit, then force kill
+                if (pythonService.isAlive()) {
+                    long deadline = System.currentTimeMillis() + 5000;
+                    while (pythonService.isAlive() && System.currentTimeMillis() < deadline) {
+                        try {
+                            Thread.sleep(200);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                }
+                if (pythonService.isAlive()) {
+                    logger.warn("Python service did not exit gracefully, force-killing");
+                    pythonService.kill();
+                }
             } catch (Exception e) {
-                logger.warn("Error closing Python service: {}", e.getMessage());
+                // Last resort: force kill
+                try {
+                    pythonService.kill();
+                } catch (Exception ignored) {
+                    // nothing more we can do
+                }
+                logger.warn("Error during Python service shutdown: {}", e.getMessage());
             }
             pythonService = null;
         }
         initialized = false;
+
+        // Remove shutdown hook if we're not being called from it
+        removeShutdownHook();
+
         logger.info("Appose service shut down");
+    }
+
+    /**
+     * Registers a JVM shutdown hook to ensure the Python subprocess is
+     * terminated when QuPath exits (normally or via System.exit).
+     * Does NOT protect against force-kill (Task Manager) -- the Python
+     * side has its own parent-watcher for that case.
+     */
+    private void registerShutdownHook() {
+        if (shutdownHook != null) return;
+        shutdownHook = new Thread(() -> {
+            logger.info("JVM shutdown hook: cleaning up Python subprocess");
+            // Don't call shutdown() here (it tries to remove the hook)
+            Service svc = pythonService;
+            if (svc != null) {
+                try {
+                    svc.close();
+                    // Brief wait, then force kill
+                    if (svc.isAlive()) {
+                        Thread.sleep(2000);
+                    }
+                    if (svc.isAlive()) {
+                        svc.kill();
+                    }
+                } catch (Exception e) {
+                    try { svc.kill(); } catch (Exception ignored) {}
+                }
+            }
+        }, "DLClassifier-ShutdownHook");
+        shutdownHook.setDaemon(false);
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+    }
+
+    private void removeShutdownHook() {
+        if (shutdownHook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException e) {
+                // JVM is already shutting down -- expected if called from hook
+            }
+            shutdownHook = null;
+        }
     }
 
     /**
