@@ -12,12 +12,4 @@ if model_registry is None:
     task.outputs["models"] = []
 else:
     models = model_registry.list_models()
-    task.outputs["models"] = [
-        {
-            "id": m.get("id", ""),
-            "name": m.get("name", ""),
-            "type": m.get("type", ""),
-            "path": m.get("path", ""),
-        }
-        for m in models
-    ]
+    task.outputs["models"] = [m.to_dict() for m in models]
