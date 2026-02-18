@@ -25,6 +25,7 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.ui.SetupEnvironmentDialog;
 import qupath.ext.dlclassifier.ui.TooltipHelper;
 import qupath.fx.dialogs.Dialogs;
+import qupath.lib.common.GeneralTools;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.GitHubProject;
@@ -346,7 +347,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         rebuildItem.setOnAction(e -> rebuildEnvironment(qupath));
         rebuildItem.visibleProperty().bind(DLClassifierPreferences.useApposeProperty());
 
-        utilitiesMenu.getItems().addAll(serverOption, freeGpuOption, rebuildItem);
+        // System Info - visible when environment ready
+        MenuItem systemInfoOption = new MenuItem("System Info...");
+        TooltipHelper.installOnMenuItem(systemInfoOption,
+                "Show detailed system information including GPU status,\n" +
+                        "Python package versions, and platform details.\n" +
+                        "All information is copyable for bug reports.");
+        systemInfoOption.setOnAction(e -> showSystemInfo());
+        systemInfoOption.visibleProperty().bind(environmentReady);
+
+        utilitiesMenu.getItems().addAll(serverOption, freeGpuOption, systemInfoOption,
+                new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
         extensionMenu.getItems().addAll(
@@ -364,6 +375,109 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         );
 
         logger.info("Menu items added for extension: {}", EXTENSION_NAME);
+    }
+
+    /**
+     * Collects Java-side and Python-side system information and shows it
+     * in a copyable text dialog.
+     */
+    private void showSystemInfo() {
+        // Collect Java-side info immediately
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== QuPath / Extension ===\n");
+        sb.append("QuPath version: ").append(GeneralTools.getVersion()).append("\n");
+        String extVersion = GeneralTools.getPackageVersion(SetupDLClassifier.class);
+        sb.append("Extension: ").append(EXTENSION_NAME)
+                .append(extVersion != null ? " v" + extVersion : "").append("\n");
+        sb.append("Backend mode: ").append(
+                DLClassifierPreferences.isUseAppose() ? "Appose (embedded Python)" : "HTTP (external server)")
+                .append("\n");
+
+        ApposeService appose = ApposeService.getInstance();
+        if (appose.isAvailable()) {
+            sb.append("Appose status: initialized\n");
+            sb.append("GPU type: ").append(appose.getGpuType()).append("\n");
+        } else {
+            String err = appose.getInitError();
+            sb.append("Appose status: NOT available");
+            if (err != null) sb.append(" (").append(err).append(")");
+            sb.append("\n");
+        }
+        sb.append("Environment path: ").append(ApposeService.getEnvironmentPath()).append("\n");
+        sb.append("\n");
+
+        sb.append("=== Java / OS ===\n");
+        sb.append("OS: ").append(System.getProperty("os.name")).append(" ")
+                .append(System.getProperty("os.version")).append(" (")
+                .append(System.getProperty("os.arch")).append(")\n");
+        sb.append("JVM: ").append(System.getProperty("java.vm.name")).append(" ")
+                .append(System.getProperty("java.version")).append("\n");
+        sb.append("Max heap: ").append(Runtime.getRuntime().maxMemory() / (1024 * 1024)).append(" MB\n");
+        sb.append("Available processors: ").append(Runtime.getRuntime().availableProcessors()).append("\n");
+        sb.append("\n");
+
+        String javaInfo = sb.toString();
+
+        // Now run the Python system_info script for package versions & GPU details
+        if (appose.isAvailable()) {
+            Dialogs.showInfoNotification(EXTENSION_NAME, "Collecting system information...");
+            Thread infoThread = new Thread(() -> {
+                String pythonInfo;
+                try {
+                    var task = appose.runTask("system_info", java.util.Map.of());
+                    pythonInfo = String.valueOf(task.outputs.get("info_text"));
+                } catch (Exception ex) {
+                    logger.warn("Failed to collect Python system info: {}", ex.getMessage());
+                    pythonInfo = "=== Python ===\nFailed to collect: " + ex.getMessage() + "\n";
+                }
+
+                String fullInfo = javaInfo + pythonInfo;
+                Platform.runLater(() -> showSystemInfoDialog(fullInfo));
+            }, "DLClassifier-SystemInfo");
+            infoThread.setDaemon(true);
+            infoThread.start();
+        } else {
+            String fullInfo = javaInfo + "=== Python ===\nAppose service not available.\n"
+                    + "Python system info requires a working Appose environment.\n";
+            showSystemInfoDialog(fullInfo);
+        }
+    }
+
+    /**
+     * Shows the system info in a dialog with a copyable text area.
+     */
+    private void showSystemInfoDialog(String infoText) {
+        javafx.scene.control.TextArea textArea = new javafx.scene.control.TextArea(infoText);
+        textArea.setEditable(false);
+        textArea.setWrapText(false);
+        textArea.setFont(javafx.scene.text.Font.font("monospace", 12));
+        textArea.setPrefWidth(600);
+        textArea.setPrefHeight(500);
+
+        javafx.scene.control.Dialog<Void> dialog = new javafx.scene.control.Dialog<>();
+        dialog.setTitle(EXTENSION_NAME + " - System Info");
+        dialog.setHeaderText("System configuration and package versions");
+        dialog.getDialogPane().setContent(textArea);
+        dialog.getDialogPane().getButtonTypes().add(javafx.scene.control.ButtonType.CLOSE);
+        dialog.setResizable(true);
+
+        // Add a Copy button
+        javafx.scene.control.ButtonType copyType = new javafx.scene.control.ButtonType(
+                "Copy to Clipboard", javafx.scene.control.ButtonBar.ButtonData.LEFT);
+        dialog.getDialogPane().getButtonTypes().add(copyType);
+
+        // Prevent the Copy button from closing the dialog
+        dialog.getDialogPane().lookupButton(copyType).addEventFilter(
+                javafx.event.ActionEvent.ACTION, event -> {
+                    javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                    javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                    content.putString(infoText);
+                    clipboard.setContent(content);
+                    Dialogs.showInfoNotification(EXTENSION_NAME, "System info copied to clipboard.");
+                    event.consume();
+                });
+
+        dialog.showAndWait();
     }
 
     /**

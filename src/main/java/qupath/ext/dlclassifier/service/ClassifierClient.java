@@ -376,9 +376,11 @@ public class ClassifierClient {
                         Map<String, Double> perClassIoU = parseStringDoubleMap(status, "per_class_iou");
                         Map<String, Double> perClassLoss = parseStringDoubleMap(status, "per_class_loss");
 
+                        String device = status.has("device") ? status.get("device").getAsString() : null;
+                        String deviceInfo = status.has("device_info") ? status.get("device_info").getAsString() : null;
                         TrainingProgress progress = new TrainingProgress(
                                 epoch, totalEpochs, trainLoss, valLoss, accuracy,
-                                meanIoU, perClassIoU, perClassLoss);
+                                meanIoU, perClassIoU, perClassLoss, device, deviceInfo);
                         if (progressCallback != null) {
                             progressCallback.accept(progress);
                         }
@@ -1141,7 +1143,9 @@ public class ClassifierClient {
             double accuracy,
             double meanIoU,
             Map<String, Double> perClassIoU,
-            Map<String, Double> perClassLoss
+            Map<String, Double> perClassLoss,
+            String device,
+            String deviceInfo
     ) {
         public double getProgress() {
             return (double) epoch / totalEpochs;

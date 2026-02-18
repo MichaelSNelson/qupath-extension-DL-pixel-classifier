@@ -579,11 +579,14 @@ public class TrainingWorkflow {
                         if (progress != null) {
                             // Epoch 0 = pre-training status with device info (no metrics yet)
                             if (trainingProgress.epoch() == 0) {
-                                progress.setStatus("Preparing model on " +
+                                // Show device info from the Python backend
+                                String deviceMsg = formatDeviceMessage(
+                                        trainingProgress.device(), trainingProgress.deviceInfo());
+                                progress.log(deviceMsg);
+                                progress.setStatus("Building model on " +
                                         (trainingProgress.totalEpochs() > 0
                                             ? trainingProgress.totalEpochs() + " epochs..."
                                             : "backend..."));
-                                progress.log("Python backend ready, building model...");
                                 return;
                             }
 
@@ -1074,6 +1077,27 @@ public class TrainingWorkflow {
                 "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"
         };
         return palette[classIndex % palette.length];
+    }
+
+    /**
+     * Formats a user-friendly device message from the epoch-0 training progress.
+     */
+    private static String formatDeviceMessage(String device, String deviceInfo) {
+        if (device == null || device.isEmpty()) {
+            return "Python backend ready, building model...";
+        }
+        switch (device) {
+            case "cuda":
+                String gpuName = (deviceInfo != null && !deviceInfo.isEmpty() && !"CPU".equals(deviceInfo))
+                        ? deviceInfo : "NVIDIA GPU";
+                return "Training on " + gpuName + " (CUDA)";
+            case "mps":
+                return "Training on Apple Silicon (MPS)";
+            case "cpu":
+                return "Training on CPU (no GPU detected -- this will be slow)";
+            default:
+                return "Training on device: " + device;
+        }
     }
 
     /**

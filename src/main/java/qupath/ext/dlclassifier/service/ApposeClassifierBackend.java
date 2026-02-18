@@ -646,9 +646,13 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         Map<String, Double> perClassIoU = parseStringDoubleMap(obj, "per_class_iou");
         Map<String, Double> perClassLoss = parseStringDoubleMap(obj, "per_class_loss");
 
+        // Device info (present in epoch-0 pre-training update, absent in later epochs)
+        String device = obj.has("device") ? obj.get("device").getAsString() : null;
+        String deviceInfo = obj.has("device_info") ? obj.get("device_info").getAsString() : null;
+
         return new ClassifierClient.TrainingProgress(
                 epoch, totalEpochs, trainLoss, valLoss, accuracy,
-                meanIoU, perClassIoU, perClassLoss);
+                meanIoU, perClassIoU, perClassLoss, device, deviceInfo);
     }
 
     private static Map<String, Double> parseStringDoubleMap(JsonObject parent, String fieldName) {
