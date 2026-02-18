@@ -686,8 +686,11 @@ class InferenceService:
                            model_tuple: Tuple[str, Any]) -> None:
         """Attempt to apply torch.compile() to a PyTorch model.
 
-        Only applies on CUDA with PyTorch 2.x+. Compilation cost is paid
-        once; subsequent inference calls benefit from kernel fusion.
+        Only applies on CUDA with PyTorch 2.x+ when Triton is available.
+        The Inductor backend used by torch.compile requires Triton for
+        GPU kernel generation. Triton is Linux-only; on Windows,
+        torch.compile() wraps the model lazily but crashes on the first
+        forward pass with TritonMissing. We check upfront to avoid that.
 
         Args:
             model_path: Cache key for the model
@@ -696,6 +699,18 @@ class InferenceService:
         if self._device_str != "cuda":
             return
         if not hasattr(torch, "compile"):
+            return
+
+        # Triton is required by the Inductor backend for GPU kernel generation.
+        # It is Linux-only -- not available on Windows. Without this check,
+        # torch.compile() wraps the model successfully (lazy), but the first
+        # model(tensor) call raises TritonMissing at code-generation time.
+        try:
+            import triton  # noqa: F401
+        except ImportError:
+            logger.info("Triton not available -- skipping torch.compile() "
+                        "(eager mode will be used)")
+            self._compiled_models.add(model_path)  # Don't retry
             return
 
         model_type, model = model_tuple

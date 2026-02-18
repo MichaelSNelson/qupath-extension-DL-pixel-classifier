@@ -43,6 +43,13 @@ try:
     logger.info("DL classifier services initialized successfully")
     logger.info("Device: %s", inference_service._device_str)
 
+    # Threading lock for GPU operations.
+    # Appose runs each task in its own thread. Without serialization,
+    # concurrent tile inference tasks race on model loading, CUDA memory
+    # allocation, and forward passes. PyTorch CUDA ops are thread-safe
+    # but concurrent batches can OOM and torch.compile is NOT thread-safe.
+    _inference_lock = threading.Lock()
+
 except Exception as e:
     logger.error("Failed to initialize DL classifier services: %s", e)
     # Store error so tasks can report it -- imports succeeded but

@@ -32,10 +32,11 @@ try:
 except NameError:
     reflection_padding = 0
 
-# Zero-copy read from shared memory NDArray
+# Zero-copy read from shared memory NDArray.
+# Copy immediately so the shared memory segment can be reused by Java.
 tile_array = tile_nd.ndarray().reshape(tile_height, tile_width, num_channels).copy()
 
-# Normalize
+# Normalize (thread-safe, no GPU access)
 tile_array = inference_service._normalize(tile_array, input_config)
 
 # Select channels if specified
@@ -43,18 +44,24 @@ selected = input_config.get("selected_channels")
 if selected:
     tile_array = tile_array[:, :, selected]
 
-# Run inference using persistent service (model is cached)
-model_tuple = inference_service._load_model(model_path)
-prob_maps = inference_service._infer_batch_spatial(
-    model_tuple, [tile_array],
-    reflection_padding=reflection_padding,
-    gpu_batch_size=1
-)
-prob_map = prob_maps[0]  # (C, H, W) float32
+# Serialize GPU access. Appose runs each task in its own thread, so
+# without this lock, 10+ overlay threads would race on model loading,
+# CUDA memory, and forward passes simultaneously. The GPU can only run
+# one batch at a time anyway, so serializing here prevents OOM and
+# thread-safety issues (torch.compile is NOT thread-safe).
+with _inference_lock:
+    model_tuple = inference_service._load_model(model_path)
+    prob_maps = inference_service._infer_batch_spatial(
+        model_tuple, [tile_array],
+        reflection_padding=reflection_padding,
+        gpu_batch_size=1
+    )
+    prob_map = prob_maps[0]  # (C, H, W) float32
+    inference_service._cleanup_after_inference()
 
 num_classes = prob_map.shape[0]
 
-# Write result to shared memory NDArray
+# Write result to shared memory NDArray (outside lock -- no GPU needed)
 from appose import NDArray as PyNDArray, SharedMemory as PySharedMemory
 
 out_size = prob_map.nbytes
@@ -67,6 +74,3 @@ np.copyto(
 
 task.outputs["probabilities"] = out_nd
 task.outputs["num_classes"] = num_classes
-
-# Clear GPU cache after inference
-inference_service._cleanup_after_inference()
