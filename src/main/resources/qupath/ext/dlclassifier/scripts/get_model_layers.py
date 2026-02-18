@@ -19,8 +19,8 @@ logger = logging.getLogger("dlclassifier.appose.model_layers")
 # Required inputs: architecture, encoder, num_channels, num_classes
 
 try:
-    from dlclassifier_server.services.pretrained_service import PretrainedService
-    pretrained = PretrainedService()
+    from dlclassifier_server.services.pretrained_models import PretrainedModelsService
+    pretrained = PretrainedModelsService()
     layers = pretrained.get_model_layers(architecture, encoder, num_channels, num_classes)
     task.outputs["layers"] = layers
 except Exception as e:

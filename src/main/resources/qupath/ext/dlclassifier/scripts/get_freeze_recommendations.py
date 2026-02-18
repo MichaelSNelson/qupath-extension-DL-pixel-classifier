@@ -21,8 +21,8 @@ except NameError:
     encoder = None
 
 try:
-    from dlclassifier_server.services.pretrained_service import PretrainedService
-    pretrained = PretrainedService()
+    from dlclassifier_server.services.pretrained_models import PretrainedModelsService
+    pretrained = PretrainedModelsService()
     recs = pretrained.get_freeze_recommendations(dataset_size, encoder=encoder)
     task.outputs["recommendations"] = recs
 except Exception as e:

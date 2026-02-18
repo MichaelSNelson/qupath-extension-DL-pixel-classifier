@@ -70,20 +70,19 @@ def watch_cancel():
 cancel_watcher = threading.Thread(target=watch_cancel, daemon=True)
 cancel_watcher.start()
 
-# Build training config dict matching TrainingService.train() signature
-train_config = {
-    "model_type": model_type,
-    "architecture": architecture,
-    "input_config": input_config,
-    "training": training_params,
-    "classes": classes,
-    "data_path": data_path,
-}
+# Extract frozen layers from architecture dict (Java puts them there)
+frozen_layers = architecture.get("frozen_layers", None)
 
 result = training_service.train(
-    config=train_config,
+    model_type=model_type,
+    architecture=architecture,
+    input_config=input_config,
+    training_params=training_params,
+    classes=classes,
+    data_path=data_path,
     progress_callback=progress_callback,
-    cancel_flag=cancel_flag
+    cancel_flag=cancel_flag,
+    frozen_layers=frozen_layers
 )
 
 task.outputs["model_path"] = result.get("model_path", "")
