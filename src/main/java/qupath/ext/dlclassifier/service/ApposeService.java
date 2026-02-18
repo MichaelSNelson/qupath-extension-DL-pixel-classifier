@@ -134,79 +134,83 @@ public class ApposeService {
                 logger.info("ONNX dependencies excluded from environment");
             }
 
-            // Set context classloader so ServiceLoader discovers Appose's
-            // Scheme implementations from the extension shadow JAR.
-            // QuPath's extension classloader doesn't propagate to thread context.
+            // ALL Appose operations require the extension classloader as TCCL.
+            // Appose and its dependencies (Groovy JSON) use ServiceLoader internally:
+            //   - Scheme/BuilderFactory: during environment build
+            //   - FastStringService (Groovy): during task JSON serialization
+            //   - ShmFactory: during NDArray/SharedMemory allocation
+            // QuPath extension threads don't propagate the extension classloader
+            // to TCCL, so ServiceLoader.load() fails to find implementations.
             ClassLoader original = Thread.currentThread().getContextClassLoader();
             Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
 
-            report(statusCallback, "Building pixi environment (this may take several minutes)...");
-
-            // Build the pixi environment (downloads deps on first run)
             try {
+                report(statusCallback, "Building pixi environment (this may take several minutes)...");
+
+                // Build the pixi environment (downloads deps on first run)
                 environment = Appose.pixi()
                         .content(pixiToml)
                         .scheme("pixi.toml")
                         .name(ENV_NAME)
                         .logDebug()
                         .build();
+
+                logger.info("Appose environment built successfully");
+                report(statusCallback, "Starting Python service...");
+
+                // Create Python service (lazy - subprocess starts on first task)
+                pythonService = environment.python();
+
+                // Register debug output handler
+                pythonService.debug(msg -> logger.debug("[Appose Python] {}", msg));
+
+                // Set the init script that runs when the Python subprocess starts.
+                // IMPORTANT: init() can only be called ONCE -- each call replaces
+                // the previous script. We prepend "import numpy" before the main
+                // init script because NumPy must be imported BEFORE the Appose
+                // stdin reader thread starts, or it deadlocks on Windows.
+                // See: https://github.com/numpy/numpy/issues/24290
+                String initScript = "import numpy\n" + loadScript("init_services.py");
+                pythonService.init(initScript);
+
+                // Force the Python subprocess to actually start and verify
+                // that all critical packages are installed and importable.
+                // pythonService.init() is lazy and queues scripts without
+                // executing them, so we must run a blocking task() to confirm
+                // the environment is truly functional.
+                report(statusCallback, "Verifying installed packages (this may take a moment)...");
+                logger.info("Running environment verification task...");
+
+                String verifyScript =
+                        "import torch\n" +
+                        "import segmentation_models_pytorch\n" +
+                        "import albumentations\n" +
+                        "import numpy\n" +
+                        "import PIL\n" +
+                        "task.outputs['torch_version'] = torch.__version__\n" +
+                        "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n";
+
+                Task verifyTask = pythonService.task(verifyScript);
+                verifyTask.listen(event -> {
+                    if (event.responseType == ResponseType.FAILURE
+                            || event.responseType == ResponseType.CRASH) {
+                        logger.error("Verification task failed: {}", verifyTask.error);
+                    }
+                });
+                verifyTask.waitFor();
+
+                String torchVersion = String.valueOf(verifyTask.outputs.get("torch_version"));
+                String cudaAvailable = String.valueOf(verifyTask.outputs.get("cuda_available"));
+                logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaAvailable);
+
+                initialized = true;
+                initError = null;
+                report(statusCallback, "Setup complete! (PyTorch " + torchVersion
+                        + ", CUDA=" + cudaAvailable + ")");
+                logger.info("Appose Python service initialized");
             } finally {
                 Thread.currentThread().setContextClassLoader(original);
             }
-
-            logger.info("Appose environment built successfully");
-            report(statusCallback, "Starting Python service...");
-
-            // Create Python service (lazy - subprocess starts on first task)
-            pythonService = environment.python();
-
-            // Register debug output handler
-            pythonService.debug(msg -> logger.debug("[Appose Python] {}", msg));
-
-            // Set the init script that runs when the Python subprocess starts.
-            // IMPORTANT: init() can only be called ONCE -- each call replaces
-            // the previous script. We prepend "import numpy" before the main
-            // init script because NumPy must be imported BEFORE the Appose
-            // stdin reader thread starts, or it deadlocks on Windows.
-            // See: https://github.com/numpy/numpy/issues/24290
-            String initScript = "import numpy\n" + loadScript("init_services.py");
-            pythonService.init(initScript);
-
-            // Force the Python subprocess to actually start and verify
-            // that all critical packages are installed and importable.
-            // pythonService.init() is lazy and queues scripts without
-            // executing them, so we must run a blocking task() to confirm
-            // the environment is truly functional.
-            report(statusCallback, "Verifying installed packages (this may take a moment)...");
-            logger.info("Running environment verification task...");
-
-            String verifyScript =
-                    "import torch\n" +
-                    "import segmentation_models_pytorch\n" +
-                    "import albumentations\n" +
-                    "import numpy\n" +
-                    "import PIL\n" +
-                    "task.outputs['torch_version'] = torch.__version__\n" +
-                    "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n";
-
-            Task verifyTask = pythonService.task(verifyScript);
-            verifyTask.listen(event -> {
-                if (event.responseType == ResponseType.FAILURE
-                        || event.responseType == ResponseType.CRASH) {
-                    logger.error("Verification task failed: {}", verifyTask.error);
-                }
-            });
-            verifyTask.waitFor();
-
-            String torchVersion = String.valueOf(verifyTask.outputs.get("torch_version"));
-            String cudaAvailable = String.valueOf(verifyTask.outputs.get("cuda_available"));
-            logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaAvailable);
-
-            initialized = true;
-            initError = null;
-            report(statusCallback, "Setup complete! (PyTorch " + torchVersion
-                    + ", CUDA=" + cudaAvailable + ")");
-            logger.info("Appose Python service initialized");
 
         } catch (Exception e) {
             initError = e.getMessage();
@@ -238,6 +242,10 @@ public class ApposeService {
             throw new IOException("Failed to load task script: " + scriptName, e);
         }
 
+        // TCCL must be set for Groovy JSON serialization (Messages.encode)
+        // and SharedMemory/NDArray operations (ShmFactory ServiceLoader).
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
         try {
             Task task = pythonService.task(script, inputs);
             task.listen(event -> {
@@ -254,6 +262,8 @@ public class ApposeService {
             throw new IOException("Appose task '" + scriptName + "' interrupted", e);
         } catch (TaskException e) {
             throw new IOException("Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
         }
     }
 
@@ -281,6 +291,8 @@ public class ApposeService {
             throw new IOException("Failed to load task script: " + scriptName, e);
         }
 
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
         try {
             Task task = pythonService.task(script, inputs);
             task.listen(eventListener::accept);
@@ -291,6 +303,8 @@ public class ApposeService {
             throw new IOException("Appose task '" + scriptName + "' interrupted", e);
         } catch (TaskException e) {
             throw new IOException("Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
         }
     }
 
@@ -315,7 +329,16 @@ public class ApposeService {
             throw new IOException("Failed to load task script: " + scriptName, e);
         }
 
-        return pythonService.task(script, inputs);
+        // TCCL needed for Groovy JSON serialization when task.start() is called.
+        // Note: the caller must also ensure TCCL is set when calling task.waitFor()
+        // if the task uses NDArray (SharedMemory deserialization).
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+        try {
+            return pythonService.task(script, inputs);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
     }
 
     /**
@@ -351,6 +374,68 @@ public class ApposeService {
      */
     public String getInitError() {
         return initError;
+    }
+
+    // ==================== Classloader Workaround ====================
+
+    /**
+     * Executes a callable with the thread context classloader (TCCL) set to
+     * the extension's classloader, then restores the original TCCL.
+     * <p>
+     * <b>Why this is needed:</b> Appose and its dependencies use
+     * {@code ServiceLoader.load()} without specifying a classloader, so it
+     * defaults to the TCCL. In plugin frameworks like QuPath, each extension
+     * has its own classloader, and worker threads (e.g. QuPath's tile-rendering
+     * pool) inherit the application classloader as their TCCL -- which cannot
+     * see service registrations bundled in the extension's shadow JAR.
+     * <p>
+     * This affects multiple Appose operations:
+     * <ul>
+     *   <li><b>NDArray/SharedMemory</b>: {@code Plugins.create(ShmFactory.class)} on every allocation</li>
+     *   <li><b>Task serialization</b>: Groovy's {@code FastStringService} for JSON encoding via {@code Messages.encode()}</li>
+     *   <li><b>Environment build</b>: {@code Plugins.discover(Scheme.class)} and {@code Plugins.create(BuilderFactory.class)}</li>
+     * </ul>
+     * Without this workaround, operations fail with
+     * {@code UnsupportedOperationException} or {@code Unable to load FastStringService}.
+     *
+     * @param callable the operation to run with the extension classloader
+     * @param <T>      return type
+     * @return the result of the callable
+     * @throws Exception if the callable throws
+     */
+    public static <T> T withExtensionClassLoader(java.util.concurrent.Callable<T> callable) throws Exception {
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+        try {
+            return callable.call();
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
+    /**
+     * Void variant of {@link #withExtensionClassLoader(java.util.concurrent.Callable)}
+     * for operations that don't return a value.
+     *
+     * @param runnable the operation to run with the extension classloader
+     * @throws Exception if the runnable throws
+     */
+    public static void runWithExtensionClassLoader(ThrowingRunnable runnable) throws Exception {
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+        try {
+            runnable.run();
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
+    /**
+     * Functional interface for runnables that can throw checked exceptions.
+     */
+    @FunctionalInterface
+    public interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     // ==================== Internal Helpers ====================

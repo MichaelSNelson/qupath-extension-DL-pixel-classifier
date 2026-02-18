@@ -145,61 +145,74 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             jobIdCallback.accept(jobId);
         }
 
-        // Create task with progress listener and cancellation
-        Task task = appose.createTask("train", inputs);
+        // All Appose task operations need TCCL set for Groovy JSON serialization
+        // (task.start/cancel/waitFor all go through Messages.encode -> Groovy).
+        ClassLoader extensionCL = ApposeService.class.getClassLoader();
+        ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(extensionCL);
 
-        // Listen for progress events
-        task.listen(event -> {
-            if (event.responseType == ResponseType.UPDATE && event.message != null) {
-                try {
-                    ClassifierClient.TrainingProgress progress = parseProgressJson(event.message);
-                    if (progressCallback != null && progress.epoch() > 0) {
-                        progressCallback.accept(progress);
-                    }
-                } catch (Exception e) {
-                    logger.debug("Failed to parse training progress: {}", e.getMessage());
-                }
-            }
-        });
-
-        // Start the task
-        task.start();
-
-        // Poll for cancellation in a background thread
-        Thread cancelThread = new Thread(() -> {
-            while (!task.status.isFinished()) {
-                if (cancelledCheck != null && cancelledCheck.get()) {
-                    logger.info("Training cancel requested, sending to Appose task");
-                    task.cancel();
-                    break;
-                }
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }, "DLClassifier-ApposeTrainCancel");
-        cancelThread.setDaemon(true);
-        cancelThread.start();
-
-        // Wait for completion
         try {
-            task.waitFor();
-        } catch (Exception e) {
-            if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
-                logger.info("Training cancelled via Appose");
-                return new ClassifierClient.TrainingResult(jobId, null, 0, 0);
+            // Create task with progress listener and cancellation
+            Task task = appose.createTask("train", inputs);
+
+            // Listen for progress events
+            task.listen(event -> {
+                if (event.responseType == ResponseType.UPDATE && event.message != null) {
+                    try {
+                        ClassifierClient.TrainingProgress progress = parseProgressJson(event.message);
+                        if (progressCallback != null && progress.epoch() > 0) {
+                            progressCallback.accept(progress);
+                        }
+                    } catch (Exception e) {
+                        logger.debug("Failed to parse training progress: {}", e.getMessage());
+                    }
+                }
+            });
+
+            // Start the task
+            task.start();
+
+            // Poll for cancellation in a background thread.
+            // The cancel thread also needs TCCL because task.cancel()
+            // sends a JSON message via Groovy serialization.
+            Thread cancelThread = new Thread(() -> {
+                Thread.currentThread().setContextClassLoader(extensionCL);
+                while (!task.status.isFinished()) {
+                    if (cancelledCheck != null && cancelledCheck.get()) {
+                        logger.info("Training cancel requested, sending to Appose task");
+                        task.cancel();
+                        break;
+                    }
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }, "DLClassifier-ApposeTrainCancel");
+            cancelThread.setDaemon(true);
+            cancelThread.start();
+
+            // Wait for completion
+            try {
+                task.waitFor();
+            } catch (Exception e) {
+                if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
+                    logger.info("Training cancelled via Appose");
+                    return new ClassifierClient.TrainingResult(jobId, null, 0, 0);
+                }
+                throw new IOException("Training failed: " + task.error, e);
             }
-            throw new IOException("Training failed: " + task.error, e);
+
+            String modelPath = String.valueOf(task.outputs.get("model_path"));
+            double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
+            double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
+
+            return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy);
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalCL);
         }
-
-        String modelPath = String.valueOf(task.outputs.get("model_path"));
-        double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
-        double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
-
-        return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy);
     }
 
     @Override
@@ -262,6 +275,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     /**
      * Single-tile pixel inference with full shared-memory round-trip.
      * No file I/O -- probability map returned directly via shared memory.
+     * <p>
+     * Wrapped with {@link ApposeService#withExtensionClassLoader} because
+     * NDArray allocation triggers ServiceLoader discovery of ShmFactory,
+     * and QuPath's tile-rendering threads don't have the extension classloader
+     * as their TCCL.
      */
     private ClassifierClient.PixelInferenceResult runSingleTilePixelInference(
             ApposeService appose,
@@ -277,67 +295,75 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path outputDir,
             int reflectionPadding) throws IOException {
 
-        // Create shared memory NDArray for input tile
-        int pixelCount = tileHeight * tileWidth * numChannels;
-        NDArray.Shape shape = new NDArray.Shape(
-                NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
-        NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
-
         try {
-            // Copy raw bytes into shared memory, converting dtype if needed
-            FloatBuffer fbuf = inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
-            if ("uint8".equals(dtype)) {
-                for (byte b : rawTileBytes) {
-                    fbuf.put((b & 0xFF) / 255.0f);
+            return ApposeService.withExtensionClassLoader(() -> {
+                // Create shared memory NDArray for input tile
+                NDArray.Shape shape = new NDArray.Shape(
+                        NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
+                NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
+
+                try {
+                    // Copy raw bytes into shared memory, converting dtype if needed
+                    FloatBuffer fbuf = inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
+                    if ("uint8".equals(dtype)) {
+                        for (byte b : rawTileBytes) {
+                            fbuf.put((b & 0xFF) / 255.0f);
+                        }
+                    } else {
+                        // float32: copy raw bytes directly
+                        FloatBuffer srcBuf = ByteBuffer.wrap(rawTileBytes)
+                                .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                        fbuf.put(srcBuf);
+                    }
+
+                    // Build input config dict
+                    Map<String, Object> inputConfig = buildInputConfig(channelConfig);
+
+                    Map<String, Object> inputs = new HashMap<>();
+                    inputs.put("model_path", modelPath);
+                    inputs.put("tile_data", inputNd);
+                    inputs.put("tile_height", tileHeight);
+                    inputs.put("tile_width", tileWidth);
+                    inputs.put("num_channels", numChannels);
+                    inputs.put("input_config", inputConfig);
+                    inputs.put("reflection_padding", reflectionPadding);
+
+                    Task task = appose.runTask("inference_pixel", inputs);
+
+                    int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
+                    NDArray resultNd = (NDArray) task.outputs.get("probabilities");
+
+                    try {
+                        // Read probability map from shared memory and save as .bin file
+                        // (matching the existing file-based contract for DLPixelClassifier)
+                        Files.createDirectories(outputDir);
+                        Path outputPath = outputDir.resolve(tileId + ".bin");
+
+                        // Result is in CHW order (C classes, H height, W width) as float32
+                        ByteBuffer resultBuf = resultNd.buffer().order(ByteOrder.nativeOrder());
+                        byte[] resultBytes = new byte[resultBuf.remaining()];
+                        resultBuf.get(resultBytes);
+                        Files.write(outputPath, resultBytes);
+
+                        Map<String, String> outputPaths = Map.of(tileId, outputPath.toString());
+                        return new ClassifierClient.PixelInferenceResult(outputPaths, numClasses);
+                    } finally {
+                        resultNd.close();
+                    }
+                } finally {
+                    inputNd.close();
                 }
-            } else {
-                // float32: copy raw bytes directly
-                FloatBuffer srcBuf = ByteBuffer.wrap(rawTileBytes)
-                        .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-                fbuf.put(srcBuf);
-            }
-
-            // Build input config dict
-            Map<String, Object> inputConfig = buildInputConfig(channelConfig);
-
-            Map<String, Object> inputs = new HashMap<>();
-            inputs.put("model_path", modelPath);
-            inputs.put("tile_data", inputNd);
-            inputs.put("tile_height", tileHeight);
-            inputs.put("tile_width", tileWidth);
-            inputs.put("num_channels", numChannels);
-            inputs.put("input_config", inputConfig);
-            inputs.put("reflection_padding", reflectionPadding);
-
-            Task task = appose.runTask("inference_pixel", inputs);
-
-            int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
-            NDArray resultNd = (NDArray) task.outputs.get("probabilities");
-
-            try {
-                // Read probability map from shared memory and save as .bin file
-                // (matching the existing file-based contract for DLPixelClassifier)
-                Files.createDirectories(outputDir);
-                Path outputPath = outputDir.resolve(tileId + ".bin");
-
-                // Result is in CHW order (C classes, H height, W width) as float32
-                ByteBuffer resultBuf = resultNd.buffer().order(ByteOrder.nativeOrder());
-                byte[] resultBytes = new byte[resultBuf.remaining()];
-                resultBuf.get(resultBytes);
-                Files.write(outputPath, resultBytes);
-
-                Map<String, String> outputPaths = Map.of(tileId, outputPath.toString());
-                return new ClassifierClient.PixelInferenceResult(outputPaths, numClasses);
-            } finally {
-                resultNd.close();
-            }
-        } finally {
-            inputNd.close();
+            });
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Single-tile pixel inference failed", e);
         }
     }
 
     /**
      * Multi-tile pixel inference with file-based output.
+     * Wrapped with extension classloader for ShmFactory ServiceLoader discovery.
      */
     private ClassifierClient.PixelInferenceResult runMultiTilePixelInference(
             ApposeService appose,
@@ -353,54 +379,62 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path outputDir,
             int reflectionPadding) throws IOException {
 
-        int numTiles = tileIds.size();
-        int pixelsPerTile = tileHeight * tileWidth * numChannels;
-
-        // Convert to float32 if needed
-        byte[] float32Bytes;
-        if ("uint8".equals(dtype)) {
-            float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
-            FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
-                    .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-            for (byte b : rawTileBytes) {
-                fbuf.put((b & 0xFF) / 255.0f);
-            }
-        } else {
-            float32Bytes = rawTileBytes;
-        }
-
-        // Create shared memory NDArray for all tiles
-        NDArray.Shape shape = new NDArray.Shape(
-                NDArray.Shape.Order.C_ORDER,
-                numTiles, tileHeight, tileWidth, numChannels);
-        NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
-
         try {
-            ByteBuffer buf = inputNd.buffer().order(ByteOrder.nativeOrder());
-            buf.put(float32Bytes);
+            return ApposeService.withExtensionClassLoader(() -> {
+                int numTiles = tileIds.size();
+                int pixelsPerTile = tileHeight * tileWidth * numChannels;
 
-            Map<String, Object> inputConfig = buildInputConfig(channelConfig);
+                // Convert to float32 if needed
+                byte[] float32Bytes;
+                if ("uint8".equals(dtype)) {
+                    float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
+                    FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
+                            .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                    for (byte b : rawTileBytes) {
+                        fbuf.put((b & 0xFF) / 255.0f);
+                    }
+                } else {
+                    float32Bytes = rawTileBytes;
+                }
 
-            Map<String, Object> inputs = new HashMap<>();
-            inputs.put("model_path", modelPath);
-            inputs.put("tile_data", inputNd);
-            inputs.put("tile_ids", tileIds);
-            inputs.put("tile_height", tileHeight);
-            inputs.put("tile_width", tileWidth);
-            inputs.put("num_channels", numChannels);
-            inputs.put("input_config", inputConfig);
-            inputs.put("output_dir", outputDir.toString());
-            inputs.put("reflection_padding", reflectionPadding);
+                // Create shared memory NDArray for all tiles
+                NDArray.Shape shape = new NDArray.Shape(
+                        NDArray.Shape.Order.C_ORDER,
+                        numTiles, tileHeight, tileWidth, numChannels);
+                NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
-            Task task = appose.runTask("inference_pixel_batch", inputs);
+                try {
+                    ByteBuffer buf = inputNd.buffer().order(ByteOrder.nativeOrder());
+                    buf.put(float32Bytes);
 
-            int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
-            @SuppressWarnings("unchecked")
-            Map<String, String> outputPaths = (Map<String, String>) task.outputs.get("output_paths");
-            return new ClassifierClient.PixelInferenceResult(
-                    new HashMap<>(outputPaths), numClasses);
-        } finally {
-            inputNd.close();
+                    Map<String, Object> inputConfig = buildInputConfig(channelConfig);
+
+                    Map<String, Object> inputs = new HashMap<>();
+                    inputs.put("model_path", modelPath);
+                    inputs.put("tile_data", inputNd);
+                    inputs.put("tile_ids", tileIds);
+                    inputs.put("tile_height", tileHeight);
+                    inputs.put("tile_width", tileWidth);
+                    inputs.put("num_channels", numChannels);
+                    inputs.put("input_config", inputConfig);
+                    inputs.put("output_dir", outputDir.toString());
+                    inputs.put("reflection_padding", reflectionPadding);
+
+                    Task task = appose.runTask("inference_pixel_batch", inputs);
+
+                    int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> outputPaths = (Map<String, String>) task.outputs.get("output_paths");
+                    return new ClassifierClient.PixelInferenceResult(
+                            new HashMap<>(outputPaths), numClasses);
+                } finally {
+                    inputNd.close();
+                }
+            });
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Multi-tile pixel inference failed", e);
         }
     }
 
@@ -433,62 +467,71 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             InferenceConfig inferenceConfig) throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
-        int numTiles = tileIds.size();
-        int pixelsPerTile = tileHeight * tileWidth * numChannels;
-
-        // Convert to float32 if needed
-        byte[] float32Bytes;
-        if ("uint8".equals(dtype)) {
-            float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
-            FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
-                    .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-            for (byte b : rawTileBytes) {
-                fbuf.put((b & 0xFF) / 255.0f);
-            }
-        } else {
-            float32Bytes = rawTileBytes;
-        }
-
-        NDArray.Shape shape = new NDArray.Shape(
-                NDArray.Shape.Order.C_ORDER,
-                numTiles, tileHeight, tileWidth, numChannels);
-        NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
         try {
-            ByteBuffer buf = inputNd.buffer().order(ByteOrder.nativeOrder());
-            buf.put(float32Bytes);
+            return ApposeService.withExtensionClassLoader(() -> {
+                int numTiles = tileIds.size();
+                int pixelsPerTile = tileHeight * tileWidth * numChannels;
 
-            Map<String, Object> inputConfig = buildInputConfig(channelConfig);
-
-            Map<String, Object> inputs = new HashMap<>();
-            inputs.put("model_path", modelPath);
-            inputs.put("tile_data", inputNd);
-            inputs.put("tile_ids", tileIds);
-            inputs.put("tile_height", tileHeight);
-            inputs.put("tile_width", tileWidth);
-            inputs.put("num_channels", numChannels);
-            inputs.put("input_config", inputConfig);
-
-            Task task = appose.runTask("inference_batch", inputs);
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> rawPredictions =
-                    (Map<String, Object>) task.outputs.get("predictions");
-
-            Map<String, float[]> predictions = new HashMap<>();
-            for (Map.Entry<String, Object> entry : rawPredictions.entrySet()) {
-                @SuppressWarnings("unchecked")
-                List<Number> probs = (List<Number>) entry.getValue();
-                float[] probArray = new float[probs.size()];
-                for (int i = 0; i < probs.size(); i++) {
-                    probArray[i] = probs.get(i).floatValue();
+                // Convert to float32 if needed
+                byte[] float32Bytes;
+                if ("uint8".equals(dtype)) {
+                    float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
+                    FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
+                            .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                    for (byte b : rawTileBytes) {
+                        fbuf.put((b & 0xFF) / 255.0f);
+                    }
+                } else {
+                    float32Bytes = rawTileBytes;
                 }
-                predictions.put(entry.getKey(), probArray);
-            }
 
-            return new ClassifierClient.InferenceResult(predictions);
-        } finally {
-            inputNd.close();
+                NDArray.Shape shape = new NDArray.Shape(
+                        NDArray.Shape.Order.C_ORDER,
+                        numTiles, tileHeight, tileWidth, numChannels);
+                NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
+
+                try {
+                    ByteBuffer buf = inputNd.buffer().order(ByteOrder.nativeOrder());
+                    buf.put(float32Bytes);
+
+                    Map<String, Object> inputConfig = buildInputConfig(channelConfig);
+
+                    Map<String, Object> inputs = new HashMap<>();
+                    inputs.put("model_path", modelPath);
+                    inputs.put("tile_data", inputNd);
+                    inputs.put("tile_ids", tileIds);
+                    inputs.put("tile_height", tileHeight);
+                    inputs.put("tile_width", tileWidth);
+                    inputs.put("num_channels", numChannels);
+                    inputs.put("input_config", inputConfig);
+
+                    Task task = appose.runTask("inference_batch", inputs);
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> rawPredictions =
+                            (Map<String, Object>) task.outputs.get("predictions");
+
+                    Map<String, float[]> predictions = new HashMap<>();
+                    for (Map.Entry<String, Object> entry : rawPredictions.entrySet()) {
+                        @SuppressWarnings("unchecked")
+                        List<Number> probs = (List<Number>) entry.getValue();
+                        float[] probArray = new float[probs.size()];
+                        for (int i = 0; i < probs.size(); i++) {
+                            probArray[i] = probs.get(i).floatValue();
+                        }
+                        predictions.put(entry.getKey(), probArray);
+                    }
+
+                    return new ClassifierClient.InferenceResult(predictions);
+                } finally {
+                    inputNd.close();
+                }
+            });
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Batch inference failed", e);
         }
     }
 
