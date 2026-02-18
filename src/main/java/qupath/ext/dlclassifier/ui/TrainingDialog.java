@@ -24,6 +24,7 @@ import qupath.ext.dlclassifier.scripting.ScriptGenerator;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.dialogs.Dialogs;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
@@ -1373,11 +1374,22 @@ public class TrainingDialog {
         }
 
         private void rebalanceClassWeights() {
-            List<ClassItem> selected = classListView.getItems().stream()
+            List<ClassItem> allItems = classListView.getItems();
+            logger.info("Rebalance: classListView has {} items", allItems.size());
+
+            if (allItems.isEmpty()) {
+                Dialogs.showWarningNotification("Rebalance",
+                        "No classes loaded. Click 'Load Classes from Selected Images' first.");
+                return;
+            }
+
+            List<ClassItem> selected = allItems.stream()
                     .filter(item -> item.selected().get())
                     .collect(Collectors.toList());
 
             if (selected.isEmpty()) {
+                Dialogs.showWarningNotification("Rebalance",
+                        "No classes are selected. Check at least 2 classes to rebalance.");
                 logger.warn("Rebalance: no selected classes");
                 return;
             }
@@ -1395,6 +1407,9 @@ public class TrainingDialog {
                     .collect(Collectors.toList());
 
             if (areas.isEmpty()) {
+                Dialogs.showWarningNotification("Rebalance",
+                        "All selected classes have zero annotation area.\n" +
+                        "Ensure annotations have area (not just points) and reload classes.");
                 logger.warn("Rebalance: all selected classes have zero annotation area -- cannot compute weights");
                 return;
             }
@@ -1422,13 +1437,17 @@ public class TrainingDialog {
                 item.weightMultiplier().set(weight);
             }
 
-            // Log the rebalanced weights
-            StringBuilder sb = new StringBuilder("Rebalanced class weights:");
+            // Build user-visible summary
+            StringBuilder sb = new StringBuilder();
             for (ClassItem item : selected) {
-                sb.append(" ").append(item.name())
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(item.name())
                   .append("=").append(String.format("%.2f", item.weightMultiplier().get()));
             }
-            logger.info(sb.toString());
+            String summary = sb.toString();
+            logger.info("Rebalanced class weights: {}", summary);
+            Dialogs.showInfoNotification("Rebalance",
+                    "Weights updated: " + summary);
         }
 
         private TrainingDialogResult buildResult() {

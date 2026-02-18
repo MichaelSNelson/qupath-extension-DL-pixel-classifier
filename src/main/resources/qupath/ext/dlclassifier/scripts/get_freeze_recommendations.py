@@ -12,8 +12,13 @@ import logging
 
 logger = logging.getLogger("dlclassifier.appose.freeze_recs")
 
-dataset_size = task.inputs["dataset_size"]
-encoder = task.inputs.get("encoder", None)
+# Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
+# Required inputs: dataset_size
+# Optional inputs: encoder
+try:
+    encoder
+except NameError:
+    encoder = None
 
 try:
     from dlclassifier_server.services.pretrained_service import PretrainedService

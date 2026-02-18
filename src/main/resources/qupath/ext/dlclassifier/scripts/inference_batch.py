@@ -25,13 +25,9 @@ logger = logging.getLogger("dlclassifier.appose.inference_batch")
 if inference_service is None:
     raise RuntimeError("Inference service not initialized: " + globals().get("_init_error", "unknown"))
 
-model_path = task.inputs["model_path"]
-tile_nd = task.inputs["tile_data"]
-tile_ids = task.inputs["tile_ids"]
-tile_height = task.inputs["tile_height"]
-tile_width = task.inputs["tile_width"]
-num_channels = task.inputs["num_channels"]
-input_config = task.inputs["input_config"]
+# Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
+# Required inputs: model_path, tile_data, tile_ids, tile_height, tile_width, num_channels, input_config
+tile_nd = tile_data
 
 num_tiles = len(tile_ids)
 

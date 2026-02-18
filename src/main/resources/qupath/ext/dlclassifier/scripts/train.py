@@ -25,12 +25,8 @@ logger = logging.getLogger("dlclassifier.appose.train")
 if inference_service is None:
     raise RuntimeError("Services not initialized: " + globals().get("_init_error", "unknown"))
 
-model_type = task.inputs["model_type"]
-architecture = task.inputs["architecture"]
-input_config = task.inputs["input_config"]
-training_params = task.inputs["training_params"]
-classes = task.inputs["classes"]
-data_path = task.inputs["data_path"]
+# Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
+# Required inputs: model_type, architecture, input_config, training_params, classes, data_path
 
 # Import training service (heavier import, done here rather than init)
 from dlclassifier_server.services.training_service import TrainingService

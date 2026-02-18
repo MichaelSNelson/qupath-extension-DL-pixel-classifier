@@ -29,15 +29,14 @@ logger = logging.getLogger("dlclassifier.appose.inference_pixel_batch")
 if inference_service is None:
     raise RuntimeError("Inference service not initialized: " + globals().get("_init_error", "unknown"))
 
-model_path = task.inputs["model_path"]
-tile_nd = task.inputs["tile_data"]
-tile_ids = task.inputs["tile_ids"]
-tile_height = task.inputs["tile_height"]
-tile_width = task.inputs["tile_width"]
-num_channels = task.inputs["num_channels"]
-input_config = task.inputs["input_config"]
-output_dir = task.inputs["output_dir"]
-reflection_padding = task.inputs.get("reflection_padding", 0)
+# Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
+# Required inputs: model_path, tile_data, tile_ids, tile_height, tile_width, num_channels, input_config, output_dir
+# Optional inputs: reflection_padding
+tile_nd = tile_data
+try:
+    reflection_padding
+except NameError:
+    reflection_padding = 0
 
 num_tiles = len(tile_ids)
 os.makedirs(output_dir, exist_ok=True)

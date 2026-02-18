@@ -15,10 +15,8 @@ import logging
 
 logger = logging.getLogger("dlclassifier.appose.model_layers")
 
-architecture = task.inputs["architecture"]
-encoder = task.inputs["encoder"]
-num_channels = task.inputs["num_channels"]
-num_classes = task.inputs["num_classes"]
+# Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
+# Required inputs: architecture, encoder, num_channels, num_classes
 
 try:
     from dlclassifier_server.services.pretrained_service import PretrainedService
