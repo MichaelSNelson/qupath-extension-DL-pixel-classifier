@@ -32,6 +32,38 @@ if inference_service is None:
 from dlclassifier_server.services.training_service import TrainingService
 training_service = TrainingService(gpu_manager=gpu_manager)
 
+# Log device and training configuration for diagnostics
+import torch
+device_name = training_service.device
+cuda_available = torch.cuda.is_available()
+device_info = "CPU"
+logger.info("Training device: %s (CUDA available: %s)", device_name, cuda_available)
+if device_name == "cuda":
+    device_info = torch.cuda.get_device_name(0)
+    logger.info("GPU: %s", device_info)
+elif device_name == "cpu":
+    logger.warning("Training on CPU -- this will be very slow. Check pixi.toml CUDA configuration.")
+logger.info("Model: %s, backbone: %s", model_type, architecture.get("backbone", "unknown"))
+logger.info("Classes: %s", classes)
+logger.info("Epochs: %s, batch_size: %s, lr: %s",
+    training_params.get("epochs"), training_params.get("batch_size"), training_params.get("learning_rate"))
+logger.info("Data path: %s", data_path)
+
+# Send pre-training status update so the Java UI can show device info
+total_epochs = training_params.get("epochs", 50)
+task.update(
+    message=json.dumps({
+        "status": "initializing",
+        "device": device_name,
+        "device_info": device_info,
+        "cuda_available": cuda_available,
+        "epoch": 0,
+        "total_epochs": total_epochs,
+    }),
+    current=0,
+    maximum=total_epochs
+)
+
 
 def progress_callback(epoch, train_loss, val_loss, accuracy,
                        per_class_iou, per_class_loss, mean_iou):

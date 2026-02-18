@@ -545,9 +545,19 @@ public class TrainingWorkflow {
                             return;
                         }
                         if (progress != null) {
-                            // Update status on first epoch to show training is actively running
+                            // Epoch 0 = pre-training status with device info (no metrics yet)
+                            if (trainingProgress.epoch() == 0) {
+                                progress.setStatus("Preparing model on " +
+                                        (trainingProgress.totalEpochs() > 0
+                                            ? trainingProgress.totalEpochs() + " epochs..."
+                                            : "backend..."));
+                                progress.log("Python backend ready, building model...");
+                                return;
+                            }
+
+                            // Update status on first real epoch
                             if (lastLoggedEpoch.get() < 0) {
-                                progress.setStatus("Training model (" + trainingProgress.totalEpochs() + " epochs)...");
+                                progress.setStatus("Training (" + trainingProgress.totalEpochs() + " epochs)...");
                             }
 
                             // Always update progress bar and detail text (lightweight, keeps UI responsive)

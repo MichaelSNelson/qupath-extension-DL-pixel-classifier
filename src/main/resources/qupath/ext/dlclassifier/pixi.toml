@@ -2,6 +2,11 @@
 channels = ["conda-forge", "pytorch"]
 platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
 
+# CUDA system requirement: tells pixi that CUDA is available on the host.
+# Without this, pixi resolves CPU-only PyTorch even if a GPU is present.
+[system-requirements]
+cuda = "12"
+
 [dependencies]
 python = "3.10.*"
 appose = ">=0.7.2"
@@ -12,8 +17,9 @@ tifffile = ">=2023.7.0"
 imagecodecs = ">=2023.7.0"
 pydantic = ">=2.0.0"
 
-# PyTorch via conda-forge (includes CUDA support on Linux/Windows)
-pytorch = ">=2.1.0"
+# PyTorch with GPU support via conda-forge
+# pytorch-gpu resolves the CUDA variant on Linux/Windows, CPU on macOS
+pytorch-gpu = ">=2.1.0"
 torchvision = ">=0.16.0"
 
 [pypi-dependencies]

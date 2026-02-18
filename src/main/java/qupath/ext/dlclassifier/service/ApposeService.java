@@ -161,8 +161,9 @@ public class ApposeService {
                 // Create Python service (lazy - subprocess starts on first task)
                 pythonService = environment.python();
 
-                // Register debug output handler
-                pythonService.debug(msg -> logger.debug("[Appose Python] {}", msg));
+                // Register debug output handler -- log Python stderr at INFO level
+                // so diagnostic messages (device info, training config) are visible
+                pythonService.debug(msg -> logger.info("[Appose Python] {}", msg));
 
                 // Set the init script that runs when the Python subprocess starts.
                 // IMPORTANT: init() can only be called ONCE -- each call replaces
@@ -203,10 +204,16 @@ public class ApposeService {
                 String cudaAvailable = String.valueOf(verifyTask.outputs.get("cuda_available"));
                 logger.info("Environment verified: PyTorch {}, CUDA={}", torchVersion, cudaAvailable);
 
+                if (!"True".equalsIgnoreCase(cudaAvailable)) {
+                    logger.warn("CUDA is NOT available -- training and inference will run on CPU (very slow). "
+                            + "Rebuild the environment to install GPU-enabled PyTorch.");
+                }
+
                 initialized = true;
                 initError = null;
+                String deviceNote = "True".equalsIgnoreCase(cudaAvailable) ? "GPU" : "CPU only";
                 report(statusCallback, "Setup complete! (PyTorch " + torchVersion
-                        + ", CUDA=" + cudaAvailable + ")");
+                        + ", " + deviceNote + ")");
                 logger.info("Appose Python service initialized");
             } finally {
                 Thread.currentThread().setContextClassLoader(original);

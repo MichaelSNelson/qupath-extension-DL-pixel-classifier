@@ -160,7 +160,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 if (event.responseType == ResponseType.UPDATE && event.message != null) {
                     try {
                         ClassifierClient.TrainingProgress progress = parseProgressJson(event.message);
-                        if (progressCallback != null && progress.epoch() > 0) {
+                        if (progressCallback != null) {
                             progressCallback.accept(progress);
                         }
                     } catch (Exception e) {
