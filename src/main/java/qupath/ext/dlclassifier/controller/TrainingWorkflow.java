@@ -15,6 +15,7 @@ import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
+import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.utilities.AnnotationExtractor;
@@ -416,23 +417,32 @@ public class TrainingWorkflow {
                     selectedImages, progress, currentJobId));
         });
 
-        CompletableFuture.runAsync(() -> {
-            TrainingResult result = trainCore(classifierName, description, handler,
-                    trainingConfig, channelConfig, classNames,
-                    null, selectedImages, progress, currentJobId,
-                    classColors);
+        // Suspend overlay during training to prevent Appose "thread death" races
+        // from concurrent tile requests and to free GPU memory for training.
+        OverlayService overlayService = OverlayService.getInstance();
+        overlayService.suspendForTraining();
 
-            if (result.success()) {
-                progress.complete(true, String.format(
-                        "Classifier trained successfully!\nBest model: epoch %d\n" +
-                        "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
-                        result.bestEpoch(), result.finalLoss(),
-                        result.finalAccuracy() * 100, result.bestMeanIoU()));
-            } else if (result.message() != null && result.message().contains("paused")) {
-                // Paused state is handled by showPausedState - don't close
-                logger.info("Training paused, waiting for user action");
-            } else {
-                progress.complete(false, result.message());
+        CompletableFuture.runAsync(() -> {
+            try {
+                TrainingResult result = trainCore(classifierName, description, handler,
+                        trainingConfig, channelConfig, classNames,
+                        null, selectedImages, progress, currentJobId,
+                        classColors);
+
+                if (result.success()) {
+                    progress.complete(true, String.format(
+                            "Classifier trained successfully!\nBest model: epoch %d\n" +
+                            "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                            result.bestEpoch(), result.finalLoss(),
+                            result.finalAccuracy() * 100, result.bestMeanIoU()));
+                } else if (result.message() != null && result.message().contains("paused")) {
+                    // Paused state is handled by showPausedState - don't close
+                    logger.info("Training paused, waiting for user action");
+                } else {
+                    progress.complete(false, result.message());
+                }
+            } finally {
+                overlayService.resumeAfterTraining();
             }
         });
     }

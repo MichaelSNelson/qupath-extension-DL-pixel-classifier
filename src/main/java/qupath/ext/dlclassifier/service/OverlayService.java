@@ -41,6 +41,9 @@ public class OverlayService {
     /** Observable property tracking whether live prediction is active. */
     private final BooleanProperty livePrediction = new SimpleBooleanProperty(false);
 
+    /** True while training is in progress -- overlay creation is blocked. */
+    private final BooleanProperty trainingActive = new SimpleBooleanProperty(false);
+
     private OverlayService() {}
 
     /**
@@ -200,5 +203,41 @@ public class OverlayService {
                 viewer.repaint();
             }
         }
+    }
+
+    /**
+     * Suspends overlay for training.
+     * <p>
+     * Removes any active overlay and sets the training-active flag, which
+     * prevents overlay re-creation until {@link #resumeAfterTraining()} is called.
+     * This avoids concurrent inference tile requests interfering with training
+     * (Appose "thread death" race) and frees GPU memory for the training job.
+     */
+    public void suspendForTraining() {
+        Platform.runLater(() -> {
+            removeOverlay();
+            trainingActive.set(true);
+            logger.info("Overlay suspended for training");
+        });
+    }
+
+    /**
+     * Resumes overlay availability after training completes.
+     */
+    public void resumeAfterTraining() {
+        Platform.runLater(() -> {
+            trainingActive.set(false);
+            logger.info("Overlay resumed after training");
+        });
+    }
+
+    /**
+     * Observable property for training-active state.
+     * Bind menu items to this to disable overlay controls during training.
+     *
+     * @return the training-active property
+     */
+    public BooleanProperty trainingActiveProperty() {
+        return trainingActive;
     }
 }

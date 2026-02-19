@@ -258,12 +258,12 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 overlayService.removeOverlay();
             }
         });
-        livePredictionOption.disableProperty().bind(
-                Bindings.createBooleanBinding(
-                        () -> qupath.getImageData() == null,
-                        qupath.imageDataProperty()
-                )
+        BooleanBinding noImage = Bindings.createBooleanBinding(
+                () -> qupath.getImageData() == null,
+                qupath.imageDataProperty()
         );
+        livePredictionOption.disableProperty().bind(
+                noImage.or(overlayService.trainingActiveProperty()));
         livePredictionOption.visibleProperty().bind(environmentReady);
 
         // 4) Remove Overlay - fully remove and clean up resources
