@@ -280,6 +280,13 @@ public class ApposeService {
      * @return the completed Task with outputs
      * @throws IOException if the service is not available or the task fails
      */
+    /**
+     * Maximum retries for transient Appose worker errors (e.g. "thread death"
+     * when too many concurrent tasks overwhelm the Python worker's thread pool).
+     */
+    private static final int MAX_TASK_RETRIES = 2;
+    private static final long RETRY_DELAY_MS = 100;
+
     public Task runTask(String scriptName, Map<String, Object> inputs) throws IOException {
         ensureInitialized();
 
@@ -295,24 +302,49 @@ public class ApposeService {
         ClassLoader original = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
         try {
-            Task task = pythonService.task(script, inputs);
-            task.listen(event -> {
-                if (event.responseType == ResponseType.FAILURE
-                        || event.responseType == ResponseType.CRASH) {
-                    logger.error("Appose task '{}' {}: {}", scriptName,
-                            event.responseType, task.error);
+            IOException lastError = null;
+            for (int attempt = 0; attempt <= MAX_TASK_RETRIES; attempt++) {
+                try {
+                    Task task = pythonService.task(script, inputs);
+                    task.listen(event -> {
+                        if (event.responseType == ResponseType.FAILURE
+                                || event.responseType == ResponseType.CRASH) {
+                            logger.error("Appose task '{}' {}: {}", scriptName,
+                                    event.responseType, task.error);
+                        }
+                    });
+                    task.waitFor();
+                    return task;
+                } catch (TaskException e) {
+                    lastError = new IOException(
+                            "Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
+                    // Retry on transient "thread death" errors from worker overload
+                    if (attempt < MAX_TASK_RETRIES && isTransientError(e)) {
+                        logger.warn("Appose task '{}' transient failure (attempt {}/{}): {}",
+                                scriptName, attempt + 1, MAX_TASK_RETRIES + 1, e.getMessage());
+                        Thread.sleep(RETRY_DELAY_MS * (attempt + 1));
+                        continue;
+                    }
+                    throw lastError;
                 }
-            });
-            task.waitFor();
-            return task;
+            }
+            throw lastError;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Appose task '" + scriptName + "' interrupted", e);
-        } catch (TaskException e) {
-            throw new IOException("Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
         } finally {
             Thread.currentThread().setContextClassLoader(original);
         }
+    }
+
+    /**
+     * Checks whether a TaskException represents a transient error that may
+     * succeed on retry. Currently covers "thread death" from the Appose
+     * Python worker when too many concurrent tasks exhaust the thread pool.
+     */
+    private static boolean isTransientError(TaskException e) {
+        String msg = e.getMessage();
+        return msg != null && msg.toLowerCase().contains("thread death");
     }
 
     /**
