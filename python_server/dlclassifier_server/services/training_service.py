@@ -26,6 +26,8 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, StepLR, OneCyc
 from PIL import Image
 
 from .gpu_manager import GPUManager, get_gpu_manager
+from ..utils.normalization import normalize as normalize_image
+from ..utils.normalization import compute_dataset_stats
 
 logger = logging.getLogger(__name__)
 
@@ -381,19 +383,12 @@ class SegmentationDataset(Dataset):
         return img_tensor, mask_tensor
 
     def _normalize(self, img: np.ndarray) -> np.ndarray:
-        """Normalize image data."""
-        norm_config = self.input_config.get("normalization", {})
-        strategy = norm_config.get("strategy", "percentile_99")
-        per_channel = norm_config.get("per_channel", False)
+        """Normalize image data.
 
-        if per_channel and img.ndim == 3 and img.shape[2] > 1:
-            # Normalize each channel independently
-            for c in range(img.shape[2]):
-                img[..., c] = self._normalize_single(img[..., c], norm_config, strategy)
-        else:
-            img = self._normalize_single(img, norm_config, strategy)
-
-        return img
+        Delegates to shared normalization module which supports both
+        per-tile and precomputed image-level statistics.
+        """
+        return normalize_image(img, self.input_config)
 
     @staticmethod
     def _load_patch(img_path: Path) -> np.ndarray:
@@ -424,33 +419,6 @@ class SegmentationDataset(Dataset):
         img = Image.open(img_path)
         return np.array(img, dtype=np.float32)
 
-    def _normalize_single(
-        self,
-        img: np.ndarray,
-        norm_config: Dict[str, Any],
-        strategy: str
-    ) -> np.ndarray:
-        """Normalize a single image or channel."""
-        if strategy == "percentile_99":
-            percentile = norm_config.get("clip_percentile", 99.0)
-            p_min = np.percentile(img, 100 - percentile)
-            p_max = np.percentile(img, percentile)
-            img = np.clip(img, p_min, p_max)
-            if p_max > p_min:
-                img = (img - p_min) / (p_max - p_min)
-        elif strategy == "min_max":
-            i_min, i_max = img.min(), img.max()
-            if i_max > i_min:
-                img = (img - i_min) / (i_max - i_min)
-        elif strategy == "z_score":
-            mean, std = img.mean(), img.std()
-            if std > 0:
-                img = (img - mean) / std
-                img = np.clip(img, -5, 5)
-                # Rescale to 0-1 for augmentation compatibility
-                img = (img + 5) / 10
-
-        return img
 
 
 class TrainingService:
@@ -630,6 +598,25 @@ class TrainingService:
             augment=False,  # Never augment validation
             context_dir=val_context_dir
         )
+
+        # Compute dataset-level normalization statistics for consistent inference
+        try:
+            train_images = []
+            for i in range(min(len(train_dataset), 200)):  # Sample up to 200 patches
+                img_path = train_dataset.images[i]
+                img_arr = SegmentationDataset._load_patch(img_path)
+                if img_arr.ndim == 2:
+                    img_arr = img_arr[..., np.newaxis]
+                train_images.append(img_arr)
+
+            dataset_norm_stats = compute_dataset_stats(
+                train_images, num_channels=input_config["num_channels"]
+            )
+            logger.info(f"Computed dataset normalization stats from "
+                        f"{len(train_images)} training patches")
+        except Exception as e:
+            logger.warning(f"Failed to compute dataset normalization stats: {e}")
+            dataset_norm_stats = None
 
         # Create data loaders
         batch_size = training_params.get("batch_size", 8)
@@ -1011,7 +998,7 @@ class TrainingService:
             model = model.to(self.device)
             logger.info(f"Restored best model weights (score={best_score:.4f})")
 
-        # Save final model
+        # Save final model (include dataset normalization stats when available)
         model_path = self._save_model(
             model=model,
             model_type=model_type,
@@ -1019,7 +1006,8 @@ class TrainingService:
             input_config=input_config,
             classes=classes,
             data_path=str(data_path),
-            training_history=training_history
+            training_history=training_history,
+            normalization_stats=dataset_norm_stats
         )
 
         return {
@@ -1231,7 +1219,8 @@ class TrainingService:
         input_config: Dict[str, Any],
         classes: List[str],
         data_path: str,
-        training_history: Optional[List[Dict[str, Any]]] = None
+        training_history: Optional[List[Dict[str, Any]]] = None,
+        normalization_stats: Optional[List[Dict[str, float]]] = None
     ) -> str:
         """Save the trained model."""
         import time
@@ -1303,6 +1292,11 @@ class TrainingService:
             "input_config": input_config,
             "classes": class_list
         }
+
+        # Include dataset normalization stats for consistent inference
+        if normalization_stats:
+            metadata["normalization_stats"] = normalization_stats
+            logger.info(f"Saved normalization stats for {len(normalization_stats)} channels")
 
         metadata_path = output_dir / "metadata.json"
         with open(metadata_path, "w") as f:

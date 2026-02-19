@@ -3,6 +3,7 @@ package qupath.ext.dlclassifier.model;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -52,6 +53,9 @@ public class ClassifierMetadata {
     private final double finalLoss;
     private final double finalAccuracy;
 
+    // Normalization stats computed from training dataset (may be null for older models)
+    private final List<Map<String, Double>> normalizationStats;
+
     private ClassifierMetadata(Builder builder) {
         this.id = builder.id;
         this.name = builder.name;
@@ -72,6 +76,9 @@ public class ClassifierMetadata {
         this.trainingEpochs = builder.trainingEpochs;
         this.finalLoss = builder.finalLoss;
         this.finalAccuracy = builder.finalAccuracy;
+        this.normalizationStats = builder.normalizationStats != null
+                ? Collections.unmodifiableList(new ArrayList<>(builder.normalizationStats))
+                : null;
     }
 
     // Getters
@@ -174,6 +181,23 @@ public class ClassifierMetadata {
     }
 
     /**
+     * Returns per-channel normalization statistics computed from the training dataset,
+     * or null if not available (older models without this data).
+     * <p>
+     * Each map contains keys: p1, p99, min, max, mean, std.
+     */
+    public List<Map<String, Double>> getNormalizationStats() {
+        return normalizationStats;
+    }
+
+    /**
+     * Returns true if this model has training dataset normalization statistics.
+     */
+    public boolean hasNormalizationStats() {
+        return normalizationStats != null && !normalizationStats.isEmpty();
+    }
+
+    /**
      * Returns a list of class names.
      */
     public List<String> getClassNames() {
@@ -223,6 +247,10 @@ public class ClassifierMetadata {
         training.put("final_loss", finalLoss);
         training.put("final_accuracy", finalAccuracy);
         map.put("training", training);
+
+        if (normalizationStats != null && !normalizationStats.isEmpty()) {
+            map.put("normalization_stats", normalizationStats);
+        }
 
         return map;
     }
@@ -285,6 +313,7 @@ public class ClassifierMetadata {
         private int trainingEpochs = 0;
         private double finalLoss = 0.0;
         private double finalAccuracy = 0.0;
+        private List<Map<String, Double>> normalizationStats;
 
         public Builder id(String id) {
             this.id = id;
@@ -389,6 +418,16 @@ public class ClassifierMetadata {
 
         public Builder finalAccuracy(double accuracy) {
             this.finalAccuracy = accuracy;
+            return this;
+        }
+
+        /**
+         * Sets per-channel normalization statistics from the training dataset.
+         *
+         * @param stats list of per-channel stat maps (p1, p99, min, max, mean, std)
+         */
+        public Builder normalizationStats(List<Map<String, Double>> stats) {
+            this.normalizationStats = stats != null ? new ArrayList<>(stats) : null;
             return this;
         }
 

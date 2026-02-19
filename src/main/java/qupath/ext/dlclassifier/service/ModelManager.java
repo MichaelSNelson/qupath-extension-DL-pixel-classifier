@@ -202,6 +202,24 @@ public class ModelManager {
                 finalAccuracy = train.has("final_accuracy") ? train.get("final_accuracy").getAsDouble() : 0.0;
             }
 
+            // Parse normalization stats (from models trained with Phase 2)
+            List<Map<String, Double>> normalizationStats = null;
+            if (obj.has("normalization_stats") && obj.get("normalization_stats").isJsonArray()) {
+                normalizationStats = new ArrayList<>();
+                for (var statElement : obj.getAsJsonArray("normalization_stats")) {
+                    if (statElement.isJsonObject()) {
+                        Map<String, Double> statMap = new HashMap<>();
+                        var statObj = statElement.getAsJsonObject();
+                        for (String key : statObj.keySet()) {
+                            try {
+                                statMap.put(key, statObj.get(key).getAsDouble());
+                            } catch (Exception ignored) {}
+                        }
+                        normalizationStats.add(statMap);
+                    }
+                }
+            }
+
             // Build metadata
             ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
                     .id(id)
@@ -220,7 +238,8 @@ public class ModelManager {
                     .trainingImageName(trainingImageName)
                     .trainingEpochs(trainingEpochs)
                     .finalLoss(finalLoss)
-                    .finalAccuracy(finalAccuracy);
+                    .finalAccuracy(finalAccuracy)
+                    .normalizationStats(normalizationStats);
             if (createdAt != null) {
                 builder.createdAt(createdAt);
             }

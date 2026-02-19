@@ -587,10 +587,12 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 .normalizationStrategy(metadata.getNormalizationStrategy())
                 .build();
 
-        // Build a minimal inference config for overlay mode
+        // Build inference config for overlay mode
+        // Overlap is computed from physical distance by DLPixelClassifier.buildPixelMetadata()
+        // so we use a placeholder here; the actual padding is set via computePhysicalOverlap()
         InferenceConfig inferenceConfig = InferenceConfig.builder()
                 .tileSize(metadata.getInputWidth())
-                .overlap(32)
+                .overlap(64)
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 

@@ -76,6 +76,10 @@ public final class DLClassifierPreferences {
     private static final DoubleProperty holeFillingMicrons = PathPrefs.createPersistentPreference(
             "dlclassifier.holeFillingMicrons", 5.0);
 
+    // Overlay overlap: target physical distance in micrometers
+    private static final DoubleProperty overlayOverlapUm = PathPrefs.createPersistentPreference(
+            "dlclassifier.overlayOverlapUm", 25.0);
+
     // Normalization
     private static final StringProperty defaultNormalization = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultNormalization", "PERCENTILE_99");
@@ -190,6 +194,16 @@ public final class DLClassifierPreferences {
                 .description("Pixels of reflection padding added around each tile before " +
                         "neural network inference. Reduces tile edge artifacts caused by " +
                         "zero padding in convolutional layers. Set to 0 to disable. Default: 32.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(overlayOverlapUm, Double.class)
+                .name("Overlay Overlap (um)")
+                .category(CATEGORY)
+                .description("Target physical overlap in micrometers between adjacent tiles " +
+                        "during overlay inference. More overlap provides more CNN context at " +
+                        "tile boundaries, reducing edge artifacts. The actual pixel overlap " +
+                        "is computed from the image's pixel calibration. Minimum: 64 pixels. " +
+                        "Default: 25.0 um.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)
@@ -404,6 +418,20 @@ public final class DLClassifierPreferences {
 
     public static DoubleProperty holeFillingMicronsProperty() {
         return holeFillingMicrons;
+    }
+
+    // ==================== Overlay Overlap ====================
+
+    public static double getOverlayOverlapUm() {
+        return overlayOverlapUm.get();
+    }
+
+    public static void setOverlayOverlapUm(double um) {
+        overlayOverlapUm.set(um);
+    }
+
+    public static DoubleProperty overlayOverlapUmProperty() {
+        return overlayOverlapUm;
     }
 
     // ==================== Normalization ====================

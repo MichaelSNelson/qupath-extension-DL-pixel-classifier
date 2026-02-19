@@ -24,6 +24,7 @@ import torch
 from PIL import Image
 
 from .gpu_manager import GPUManager, get_gpu_manager
+from ..utils.normalization import normalize as normalize_image
 
 logger = logging.getLogger(__name__)
 
@@ -828,6 +829,9 @@ class InferenceService:
     def _normalize(self, img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
         """Normalize image data.
 
+        Delegates to shared normalization module which supports both
+        per-tile and precomputed image-level statistics.
+
         Args:
             img: Input image array
             input_config: Configuration with normalization settings
@@ -835,64 +839,7 @@ class InferenceService:
         Returns:
             Normalized image array
         """
-        norm_config = input_config.get("normalization", {})
-        strategy = norm_config.get("strategy", "percentile_99")
-        per_channel = norm_config.get("per_channel", False)
-
-        if per_channel and img.ndim == 3 and img.shape[2] > 1:
-            # Normalize each channel independently
-            for c in range(img.shape[2]):
-                img[..., c] = self._normalize_single(img[..., c], norm_config, strategy)
-        else:
-            img = self._normalize_single(img, norm_config, strategy)
-
-        return img
-
-    def _normalize_single(
-        self,
-        img: np.ndarray,
-        norm_config: Dict[str, Any],
-        strategy: str
-    ) -> np.ndarray:
-        """Normalize a single image or channel.
-
-        Args:
-            img: Image or channel array
-            norm_config: Normalization configuration
-            strategy: Normalization strategy name
-
-        Returns:
-            Normalized array
-        """
-        if strategy == "percentile_99":
-            percentile = norm_config.get("clip_percentile", 99.0)
-            p_min = np.percentile(img, 100 - percentile)
-            p_max = np.percentile(img, percentile)
-            img = np.clip(img, p_min, p_max)
-            if p_max > p_min:
-                img = (img - p_min) / (p_max - p_min)
-
-        elif strategy == "min_max":
-            i_min, i_max = img.min(), img.max()
-            if i_max > i_min:
-                img = (img - i_min) / (i_max - i_min)
-
-        elif strategy == "z_score":
-            mean, std = img.mean(), img.std()
-            if std > 0:
-                img = (img - mean) / std
-                img = np.clip(img, -5, 5)
-                # Rescale to 0-1 for model compatibility
-                img = (img + 5) / 10
-
-        elif strategy == "fixed_range":
-            fixed_min = norm_config.get("min", 0)
-            fixed_max = norm_config.get("max", 255)
-            img = np.clip(img, fixed_min, fixed_max)
-            if fixed_max > fixed_min:
-                img = (img - fixed_min) / (fixed_max - fixed_min)
-
-        return img
+        return normalize_image(img, input_config)
 
     def clear_model_cache(self) -> None:
         """Clear the model cache to free memory."""

@@ -2,7 +2,9 @@ package qupath.ext.dlclassifier.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -38,6 +40,7 @@ public class ChannelConfiguration {
     private final double clipPercentile;
     private final double fixedMin;
     private final double fixedMax;
+    private final List<Map<String, Double>> precomputedChannelStats;
 
     private ChannelConfiguration(Builder builder) {
         this.selectedChannels = Collections.unmodifiableList(new ArrayList<>(builder.selectedChannels));
@@ -48,6 +51,9 @@ public class ChannelConfiguration {
         this.clipPercentile = builder.clipPercentile;
         this.fixedMin = builder.fixedMin;
         this.fixedMax = builder.fixedMax;
+        this.precomputedChannelStats = builder.precomputedChannelStats != null
+                ? Collections.unmodifiableList(new ArrayList<>(builder.precomputedChannelStats))
+                : null;
     }
 
     // Getters
@@ -86,6 +92,45 @@ public class ChannelConfiguration {
 
     public double getFixedMax() {
         return fixedMax;
+    }
+
+    /**
+     * Returns precomputed per-channel normalization statistics, or null if not set.
+     * <p>
+     * Each map in the list corresponds to one channel and contains keys:
+     * p1, p99, min, max, mean, std.
+     */
+    public List<Map<String, Double>> getPrecomputedChannelStats() {
+        return precomputedChannelStats;
+    }
+
+    /**
+     * Returns true if precomputed image-level normalization stats are available.
+     */
+    public boolean hasPrecomputedStats() {
+        return precomputedChannelStats != null && !precomputedChannelStats.isEmpty();
+    }
+
+    /**
+     * Creates a copy of this configuration with precomputed normalization statistics.
+     * <p>
+     * Used by {@link qupath.ext.dlclassifier.service.DLPixelClassifier} to attach
+     * image-level stats computed from sampling the image.
+     *
+     * @param stats per-channel statistics (p1, p99, min, max, mean, std)
+     * @return new ChannelConfiguration with the precomputed stats
+     */
+    public ChannelConfiguration withPrecomputedStats(List<Map<String, Double>> stats) {
+        return new Builder()
+                .selectedChannels(selectedChannels)
+                .channelNames(channelNames)
+                .bitDepth(bitDepth)
+                .normalizationStrategy(normalizationStrategy)
+                .perChannelNormalization(perChannelNormalization)
+                .clipPercentile(clipPercentile)
+                .fixedRange(fixedMin, fixedMax)
+                .precomputedChannelStats(stats)
+                .build();
     }
 
     /**
@@ -154,6 +199,7 @@ public class ChannelConfiguration {
         private double clipPercentile = 99.0;
         private double fixedMin = 0.0;
         private double fixedMax = 255.0;
+        private List<Map<String, Double>> precomputedChannelStats;
 
         public Builder selectedChannels(List<Integer> channels) {
             this.selectedChannels = new ArrayList<>(channels);
@@ -188,6 +234,19 @@ public class ChannelConfiguration {
         public Builder fixedRange(double min, double max) {
             this.fixedMin = min;
             this.fixedMax = max;
+            return this;
+        }
+
+        /**
+         * Sets precomputed per-channel normalization statistics.
+         * <p>
+         * Each map should contain keys: p1, p99, min, max, mean, std.
+         *
+         * @param stats per-channel statistics, or null to clear
+         * @return this builder
+         */
+        public Builder precomputedChannelStats(List<Map<String, Double>> stats) {
+            this.precomputedChannelStats = stats;
             return this;
         }
 

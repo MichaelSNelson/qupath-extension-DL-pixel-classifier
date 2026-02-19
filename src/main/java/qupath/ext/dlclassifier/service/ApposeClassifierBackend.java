@@ -616,6 +616,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     /**
      * Builds the input configuration dict from a ChannelConfiguration.
+     * <p>
+     * Includes normalization strategy, per-channel flag, clip percentile,
+     * fixed min/max range, and precomputed image-level stats when available.
      */
     private static Map<String, Object> buildInputConfig(ChannelConfiguration channelConfig) {
         Map<String, Object> inputConfig = new HashMap<>();
@@ -626,6 +629,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         normalization.put("strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
         normalization.put("per_channel", channelConfig.isPerChannelNormalization());
         normalization.put("clip_percentile", channelConfig.getClipPercentile());
+        // Include fixed range values (previously missing for FIXED_RANGE strategy)
+        normalization.put("min", channelConfig.getFixedMin());
+        normalization.put("max", channelConfig.getFixedMax());
+
+        // Include precomputed image-level normalization stats when available
+        List<Map<String, Double>> precomputedStats = channelConfig.getPrecomputedChannelStats();
+        if (precomputedStats != null && !precomputedStats.isEmpty()) {
+            normalization.put("precomputed", true);
+            normalization.put("channel_stats", precomputedStats);
+        }
+
         inputConfig.put("normalization", normalization);
 
         return inputConfig;

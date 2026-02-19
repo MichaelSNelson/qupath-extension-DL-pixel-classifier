@@ -215,17 +215,19 @@ public class InferenceConfig {
         }
 
         /**
-         * Sets the overlap as a percentage of tile size (0.0 to 20.0).
+         * Sets the overlap as a percentage of tile size (0.0 to 50.0).
          * <p>
          * This will also calculate and set the pixel overlap value.
+         * Values above 25% are rarely needed but may be useful for very
+         * high resolution images with fine structures.
          *
-         * @param percent overlap percentage (0.0 to 20.0)
+         * @param percent overlap percentage (0.0 to 50.0)
          * @return this builder
          * @throws IllegalArgumentException if percent is out of range
          */
         public Builder overlapPercent(double percent) {
-            if (percent < 0.0 || percent > 20.0) {
-                throw new IllegalArgumentException("Overlap percent must be between 0.0 and 20.0");
+            if (percent < 0.0 || percent > 50.0) {
+                throw new IllegalArgumentException("Overlap percent must be between 0.0 and 50.0");
             }
             this.overlapPercent = percent;
             // Calculate pixel overlap from percentage
@@ -309,8 +311,8 @@ public class InferenceConfig {
             if (overlap < 0 || overlap >= tileSize / 2) {
                 throw new IllegalStateException("Overlap must be between 0 and half of tile size");
             }
-            if (overlapPercent < 0.0 || overlapPercent > 20.0) {
-                throw new IllegalStateException("Overlap percent must be between 0.0 and 20.0");
+            if (overlapPercent < 0.0 || overlapPercent > 50.0) {
+                throw new IllegalStateException("Overlap percent must be between 0.0 and 50.0");
             }
             if (maxTilesInMemory < 1) {
                 throw new IllegalStateException("Max tiles in memory must be at least 1");
