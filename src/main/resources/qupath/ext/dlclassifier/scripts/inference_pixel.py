@@ -61,16 +61,12 @@ with inference_lock:
 
 num_classes = prob_map.shape[0]
 
-# Write result to shared memory NDArray (outside lock -- no GPU needed)
-from appose import NDArray as PyNDArray, SharedMemory as PySharedMemory
+# Write result to shared memory NDArray (outside lock -- no GPU needed).
+# NDArray auto-creates SharedMemory of the correct size when shm=None.
+from appose import NDArray as PyNDArray
 
-out_size = prob_map.nbytes
-out_shm = PySharedMemory(out_size)
-out_nd = PyNDArray(out_shm, "float32", [num_classes, tile_height, tile_width])
-np.copyto(
-    np.ndarray(prob_map.shape, dtype=np.float32, buffer=out_shm.buf),
-    prob_map
-)
+out_nd = PyNDArray(dtype="float32", shape=[num_classes, tile_height, tile_width])
+np.copyto(out_nd.ndarray(), prob_map)
 
 task.outputs["probabilities"] = out_nd
 task.outputs["num_classes"] = num_classes
