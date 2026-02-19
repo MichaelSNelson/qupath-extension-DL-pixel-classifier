@@ -12,7 +12,6 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import javafx.stage.FileChooser;
-import javafx.stage.Modality;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,7 +77,6 @@ public class ModelManagementWorkflow {
     private void showModelManagerDialog() {
         dialogStage = new Stage();
         dialogStage.setTitle("DL Classifier Manager");
-        dialogStage.initModality(Modality.APPLICATION_MODAL);
         dialogStage.initOwner(qupath.getStage());
 
         BorderPane root = new BorderPane();

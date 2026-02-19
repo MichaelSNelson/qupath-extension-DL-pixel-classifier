@@ -11,7 +11,6 @@ import javafx.scene.control.*;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.*;
-import javafx.stage.Modality;
 import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +21,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig.OutputObjectType;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.scripting.ScriptGenerator;
 import qupath.ext.dlclassifier.service.ModelManager;
+import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 import qupath.lib.scripting.QP;
 
@@ -134,7 +134,7 @@ public class InferenceDialog {
 
         public Optional<InferenceDialogResult> buildAndShow() {
             dialog = new Dialog<>();
-            dialog.initModality(Modality.APPLICATION_MODAL);
+            dialog.initOwner(QuPathGUI.getInstance().getStage());
             dialog.setTitle("Apply DL Pixel Classifier");
             dialog.setResizable(true);
 

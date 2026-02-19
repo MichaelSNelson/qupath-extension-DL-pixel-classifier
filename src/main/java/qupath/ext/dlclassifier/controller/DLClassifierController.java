@@ -80,6 +80,7 @@ public class DLClassifierController {
         logger.info("Showing server settings dialog");
 
         Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.initOwner(qupath.getStage());
         dialog.setTitle("DL Pixel Classifier - Server Settings");
         dialog.setHeaderText("Configure the Python classification server connection");
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);

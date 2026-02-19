@@ -15,6 +15,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.lib.gui.QuPathGUI;
 
 import java.io.File;
 import java.io.IOException;
@@ -155,6 +156,7 @@ public class PythonConsoleWindow {
 
     private void createWindow() {
         stage = new Stage();
+        stage.initOwner(QuPathGUI.getInstance().getStage());
         stage.setTitle("DL Pixel Classifier - Python Console");
         stage.setWidth(800);
         stage.setHeight(500);

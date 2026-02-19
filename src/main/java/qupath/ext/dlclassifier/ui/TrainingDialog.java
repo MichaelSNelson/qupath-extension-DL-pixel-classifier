@@ -11,7 +11,6 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.chart.PieChart;
 import javafx.scene.layout.*;
-import javafx.stage.Modality;
 import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -181,7 +180,7 @@ public class TrainingDialog {
 
         public Optional<TrainingDialogResult> buildAndShow() {
             dialog = new Dialog<>();
-            dialog.initModality(Modality.APPLICATION_MODAL);
+            dialog.initOwner(QuPathGUI.getInstance().getStage());
             dialog.setTitle("Train DL Pixel Classifier");
             dialog.setResizable(true);
 

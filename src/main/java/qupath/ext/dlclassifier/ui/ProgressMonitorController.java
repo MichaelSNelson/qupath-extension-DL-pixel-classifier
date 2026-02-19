@@ -10,11 +10,11 @@ import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
-import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.lib.gui.QuPathGUI;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -81,7 +81,7 @@ public class ProgressMonitorController {
      */
     public ProgressMonitorController(String title, boolean showLossChart) {
         stage = new Stage();
-        stage.initModality(Modality.NONE);
+        stage.initOwner(QuPathGUI.getInstance().getStage());
         stage.initStyle(StageStyle.DECORATED);
         stage.setTitle(title);
         stage.setResizable(true);
