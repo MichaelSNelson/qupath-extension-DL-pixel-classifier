@@ -25,6 +25,60 @@ logger = logging.getLogger("dlclassifier.appose.inference_batch")
 if inference_service is None:
     raise RuntimeError("Inference service not initialized: " + globals().get("init_error", "unknown"))
 
+
+# --- Inline normalization for precomputed image-level stats ---
+# (See inference_pixel.py for rationale on why this is inlined)
+
+def _apply_precomputed_stats(img, stats, strategy):
+    """Normalize a single channel/image using pre-computed statistics."""
+    if strategy == "percentile_99":
+        p_min = stats.get("p1", float(img.min()))
+        p_max = stats.get("p99", float(img.max()))
+        img = np.clip(img, p_min, p_max)
+        if p_max > p_min:
+            img = (img - p_min) / (p_max - p_min)
+    elif strategy == "min_max":
+        i_min = stats.get("min", float(img.min()))
+        i_max = stats.get("max", float(img.max()))
+        if i_max > i_min:
+            img = (img - i_min) / (i_max - i_min)
+    elif strategy == "z_score":
+        mean = stats.get("mean", float(img.mean()))
+        std = stats.get("std", float(img.std()))
+        if std > 0:
+            img = (img - mean) / std
+            img = np.clip(img, -5, 5)
+            img = (img + 5) / 10
+    elif strategy == "fixed_range":
+        fixed_min = stats.get("min", 0)
+        fixed_max = stats.get("max", 255)
+        img = np.clip(img, fixed_min, fixed_max)
+        if fixed_max > fixed_min:
+            img = (img - fixed_min) / (fixed_max - fixed_min)
+    return img
+
+
+def _normalize_tile(img, input_config):
+    """Normalize a tile, using precomputed image-level stats when available."""
+    norm_config = input_config.get("normalization", {})
+    precomputed = norm_config.get("precomputed", False)
+    channel_stats = norm_config.get("channel_stats", None)
+
+    if precomputed and channel_stats:
+        strategy = norm_config.get("strategy", "percentile_99")
+        per_channel = norm_config.get("per_channel", False)
+        if per_channel and img.ndim == 3 and img.shape[2] > 1:
+            for c in range(min(img.shape[2], len(channel_stats))):
+                img[..., c] = _apply_precomputed_stats(
+                    img[..., c], channel_stats[c], strategy)
+        else:
+            stats = channel_stats[0] if channel_stats else {}
+            img = _apply_precomputed_stats(img, stats, strategy)
+        return img
+
+    return inference_service._normalize(img, input_config)
+
+
 # Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
 # Required inputs: model_path, tile_data, tile_ids, tile_height, tile_width, num_channels, input_config
 tile_nd = tile_data
@@ -38,7 +92,7 @@ raw = tile_nd.ndarray().reshape(num_tiles, tile_height, tile_width, num_channels
 selected = input_config.get("selected_channels")
 preprocessed = []
 for i in range(num_tiles):
-    img = inference_service._normalize(raw[i], input_config)
+    img = _normalize_tile(raw[i], input_config)
     if selected:
         img = img[:, :, selected]
     preprocessed.append(img)
