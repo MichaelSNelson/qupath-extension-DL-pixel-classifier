@@ -127,9 +127,13 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 
 ### Tile seams visible in output
 
+Image-level normalization (enabled by default) should eliminate most tile boundary artifacts. If seams are still visible:
+
+- **Re-train the model** -- newly trained models save training dataset normalization statistics in metadata, giving the best cross-tile consistency
 - Increase tile overlap percentage (10-15% recommended)
 - Use LINEAR or GAUSSIAN blend mode instead of NONE
 - Verify overlap is not 0%
+- For overlays, adjust the **Overlay Overlap (um)** preference (Edit > Preferences) to increase physical overlap distance
 
 ### Objects are fragmented or too small
 

@@ -135,6 +135,19 @@ Early stopping handles this automatically, but you can also:
 - Cancel training if validation loss has been increasing for 10+ epochs
 - Cancel if the loss chart shows clear divergence between train and val
 
+## Normalization Strategy
+
+The extension supports four normalization strategies. The choice affects how pixel intensities are scaled before the model sees them.
+
+| Strategy | Best for | Notes |
+|----------|----------|-------|
+| **PERCENTILE_99** (default) | Most images | Clips to 1st/99th percentile, robust to outliers |
+| **MIN_MAX** | Uniform-intensity images | Uses full dynamic range, sensitive to outliers |
+| **Z_SCORE** | Images with consistent intensity distributions | Mean/std normalization, good for fluorescence |
+| **FIXED_RANGE** | When you know the exact intensity range | Specify min/max values explicitly (e.g., 0-4095 for 12-bit) |
+
+**Image-level normalization** (enabled by default) computes statistics once across the entire image, then applies them consistently to every tile. This eliminates visible tile boundary artifacts that occur when each tile independently computes its own statistics. Newly trained models also save training dataset statistics in their metadata for even better consistency across different images.
+
 ## Improving Results
 
 ### Quick wins
@@ -144,6 +157,7 @@ Early stopping handles this automatically, but you can also:
 3. **Enable augmentation** (especially flips and rotation)
 4. **Use a histology backbone** for H&E images
 5. **Increase epochs** with early stopping (it is safe to overshoot)
+6. **Re-train models** to save normalization statistics -- new models automatically store training dataset stats for improved inference consistency
 
 ### Medium effort
 

@@ -49,7 +49,7 @@ These options are collapsed by default. Expand **PROCESSING OPTIONS** to adjust.
 | Option | Default | Description |
 |--------|---------|-------------|
 | **Tile Size** | Auto-set from classifier | Should match training tile size |
-| **Tile Overlap (%)** | 12.5% | Higher = better blending but slower. See below. |
+| **Tile Overlap (%)** | 12.5% | Higher = better blending but slower (max 50%). See below. |
 | **Blend Mode** | LINEAR | How overlapping tiles merge. LINEAR or GAUSSIAN recommended. |
 | **Use GPU** | Yes | 10-50x faster than CPU |
 
@@ -62,13 +62,27 @@ Overlap determines how much adjacent tiles share:
 | 0% | Seams visible | Fastest | Objects may split at tile boundaries |
 | 5-10% | Moderate | Fast | Some seam reduction |
 | 10-15% | Good | Moderate | Recommended for seamless results |
-| 15-20% | Best | Slower | ~2x processing time vs 0% |
+| 15-25% | Best | Slower | ~2x processing time vs 0% |
+| 25-50% | Diminishing returns | Much slower | Only needed for very large receptive fields |
+
+For **overlay mode**, the overlap is automatically computed from a physical distance (default 25 um) using the image's pixel calibration. This ensures consistent overlap regardless of objective magnification. The preference **Overlay Overlap (um)** in Edit > Preferences controls this distance.
 
 The **blend mode** controls how overlapping predictions merge:
 
 - **LINEAR**: Weighted average favoring tile centers. Good default.
 - **GAUSSIAN**: Gaussian-weighted for smoother transitions. Best for overlays.
 - **NONE**: Last tile wins. Fastest but may show seams.
+
+### Image-level normalization
+
+The extension automatically computes normalization statistics across the entire image before starting inference. This ensures all tiles receive identical normalization, eliminating the "blocky" tile boundary artifacts that occur when each tile independently computes its own statistics.
+
+**Priority order:**
+1. **Training dataset statistics** (best) -- stored in model metadata for newly trained models
+2. **Image-level sampling** -- samples ~16 tiles in a 4x4 grid across the image (~1-3s one-time cost)
+3. **Per-tile normalization** -- fallback if sampling fails
+
+This is fully automatic and requires no configuration.
 
 ## Step 6: Set Application Scope
 

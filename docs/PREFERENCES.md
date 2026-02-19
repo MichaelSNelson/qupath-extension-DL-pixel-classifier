@@ -20,6 +20,7 @@ These appear in **Edit > Preferences > DL Pixel Classifier**.
 | DL Server Host | `dlclassifier.serverHost` | `localhost` | Hostname or IP of the Python server (HTTP mode only) |
 | DL Server Port | `dlclassifier.serverPort` | `8765` | Port of the Python server (HTTP mode only) |
 | Overlay Reflection Padding | `dlclassifier.overlayReflectionPadding` | `32` | Pixels of reflection padding per tile to reduce edge artifacts. Set to 0 to disable. |
+| Overlay Overlap (um) | `dlclassifier.overlayOverlapUm` | `25.0` | Target tile overlap distance in microns for overlays. Converted to pixels using the image's pixel calibration. Ensures consistent overlap regardless of objective/resolution. Minimum 64 pixels. |
 | Use GPU for Inference | `dlclassifier.useGPU` | `true` | Use GPU acceleration when available |
 
 > **Note:** Toggling "Use Appose" immediately updates menu visibility. When Appose is enabled and the environment hasn't been set up, only "Setup DL Environment..." is visible. When Appose is disabled, all workflow items appear immediately (they connect to the external HTTP server).

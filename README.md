@@ -10,6 +10,7 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Real-time progress** with separate train/val loss charting
 - **Multiple output types**: Measurements, detection objects, or classification overlays
 - **Pixel-level inference** for OBJECTS and OVERLAY output types with full per-pixel probability maps
+- **Image-level normalization** eliminates tile boundary artifacts by computing consistent statistics across the entire image
 - **Dialog preference persistence** -- training and inference settings are remembered across sessions
 - **Combined CE + Dice loss** for improved segmentation quality (default)
 - **IoU-based early stopping** monitors mean IoU instead of validation loss
@@ -150,7 +151,8 @@ qupath-extension-DL-pixel-classifier/
 │   └── dlclassifier_server/
 │       ├── main.py                   # FastAPI application
 │       ├── routers/                  # API endpoints
-│       └── services/                 # Training/inference services
+│       ├── services/                 # Training/inference services
+│       └── utils/                    # Shared utilities (normalization, etc.)
 ```
 
 ## REST API

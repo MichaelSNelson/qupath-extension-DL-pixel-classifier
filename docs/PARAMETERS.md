@@ -106,9 +106,16 @@ Complete reference for every parameter in the training and inference dialogs. Th
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | **Tile Size** | Auto | Auto-set from classifier. Must be divisible by 32. |
-| **Tile Overlap (%)** | 12.5% | 0-20%. Higher = better blending, slower processing. |
+| **Tile Overlap (%)** | 12.5% | 0-50%. Higher = better blending, slower processing. |
 | **Blend Mode** | LINEAR | LINEAR (recommended), GAUSSIAN (smoothest), NONE (fastest). |
 | **Use GPU** | On | 10-50x faster than CPU. Falls back automatically. |
+
+### Normalization
+
+| Parameter | Description |
+|-----------|-------------|
+| **Image-level normalization** | Automatically enabled. Computes per-channel normalization statistics once across the entire image (sampling ~16 tiles in a 4x4 grid), then applies the same statistics to every tile. Eliminates tile boundary artifacts caused by per-tile normalization. |
+| **Training dataset stats** | When available in the model metadata (models trained after this update), normalization uses statistics from the training dataset for the best consistency. Falls back to image-level sampling for older models. |
 
 ### Application Scope
 
