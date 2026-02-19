@@ -23,7 +23,7 @@ import logging
 logger = logging.getLogger("dlclassifier.appose.train")
 
 if inference_service is None:
-    raise RuntimeError("Services not initialized: " + globals().get("_init_error", "unknown"))
+    raise RuntimeError("Services not initialized: " + globals().get("init_error", "unknown"))
 
 # Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
 # Required inputs: model_type, architecture, input_config, training_params, classes, data_path
@@ -105,17 +105,24 @@ cancel_watcher.start()
 # Extract frozen layers from architecture dict (Java puts them there)
 frozen_layers = architecture.get("frozen_layers", None)
 
-result = training_service.train(
-    model_type=model_type,
-    architecture=architecture,
-    input_config=input_config,
-    training_params=training_params,
-    classes=classes,
-    data_path=data_path,
-    progress_callback=progress_callback,
-    cancel_flag=cancel_flag,
-    frozen_layers=frozen_layers
-)
+try:
+    result = training_service.train(
+        model_type=model_type,
+        architecture=architecture,
+        input_config=input_config,
+        training_params=training_params,
+        classes=classes,
+        data_path=data_path,
+        progress_callback=progress_callback,
+        cancel_flag=cancel_flag,
+        frozen_layers=frozen_layers
+    )
+except Exception as e:
+    logger.error("Training failed: %s", e)
+    raise
+finally:
+    # Signal cancel_watcher to stop so the daemon thread terminates cleanly
+    cancel_flag.set()
 
 task.outputs["model_path"] = result.get("model_path", "")
 task.outputs["final_loss"] = result.get("final_loss", 0.0)

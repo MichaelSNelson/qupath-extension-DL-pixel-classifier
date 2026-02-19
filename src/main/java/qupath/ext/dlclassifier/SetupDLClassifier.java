@@ -22,6 +22,7 @@ import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.SetupEnvironmentDialog;
 import qupath.ext.dlclassifier.ui.TooltipHelper;
 import qupath.fx.dialogs.Dialogs;
@@ -356,8 +357,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         systemInfoOption.setOnAction(e -> showSystemInfo());
         systemInfoOption.visibleProperty().bind(environmentReady);
 
+        // Python Console - visible when Appose mode is active and environment ready
+        MenuItem pythonConsoleOption = new MenuItem(res.getString("menu.pythonConsole"));
+        TooltipHelper.installOnMenuItem(pythonConsoleOption,
+                "Show a live console window displaying Python process output.\n" +
+                "Useful for monitoring model loading, inference, and debugging.");
+        pythonConsoleOption.setOnAction(e -> PythonConsoleWindow.getInstance().show());
+        pythonConsoleOption.visibleProperty().bind(
+                environmentReady.and(DLClassifierPreferences.useApposeProperty()));
+
         utilitiesMenu.getItems().addAll(serverOption, freeGpuOption, systemInfoOption,
-                new SeparatorMenuItem(), rebuildItem);
+                pythonConsoleOption, new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
         extensionMenu.getItems().addAll(

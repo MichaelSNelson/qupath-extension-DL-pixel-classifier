@@ -186,7 +186,10 @@ public class ApposeService {
 
                 // Register debug output handler -- log Python stderr at INFO level
                 // so diagnostic messages (device info, training config) are visible
-                pythonService.debug(msg -> logger.info("[Appose Python] {}", msg));
+                pythonService.debug(msg -> {
+                    logger.info("[Appose Python] {}", msg);
+                    qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
+                });
 
                 // Set the init script that runs when the Python subprocess starts.
                 // IMPORTANT: init() can only be called ONCE -- each call replaces
