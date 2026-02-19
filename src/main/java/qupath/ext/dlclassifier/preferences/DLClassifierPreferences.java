@@ -110,6 +110,16 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty augElasticDeform = PathPrefs.createPersistentPreference(
             "dlclassifier.augElasticDeform", false);
 
+    // Tiling/resolution settings persisted from training dialog
+    private static final DoubleProperty defaultDownsample = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultDownsample", 1.0);
+
+    private static final IntegerProperty defaultContextScale = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultContextScale", 1);
+
+    private static final IntegerProperty lastLineStrokeWidth = PathPrefs.createPersistentPreference(
+            "dlclassifier.lastLineStrokeWidth", 0);
+
     // ==================== Training Strategy Preferences ====================
 
     private static final StringProperty defaultScheduler = PathPrefs.createPersistentPreference(
@@ -544,6 +554,45 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty augElasticDeformProperty() {
         return augElasticDeform;
+    }
+
+    // ==================== Tiling/Resolution Settings ====================
+
+    public static double getDefaultDownsample() {
+        return defaultDownsample.get();
+    }
+
+    public static void setDefaultDownsample(double downsample) {
+        defaultDownsample.set(downsample);
+    }
+
+    public static DoubleProperty defaultDownsampleProperty() {
+        return defaultDownsample;
+    }
+
+    public static int getDefaultContextScale() {
+        return defaultContextScale.get();
+    }
+
+    public static void setDefaultContextScale(int scale) {
+        defaultContextScale.set(scale);
+    }
+
+    public static IntegerProperty defaultContextScaleProperty() {
+        return defaultContextScale;
+    }
+
+    /** Line stroke width last used in the training dialog. 0 means "use QuPath's stroke thickness". */
+    public static int getLastLineStrokeWidth() {
+        return lastLineStrokeWidth.get();
+    }
+
+    public static void setLastLineStrokeWidth(int width) {
+        lastLineStrokeWidth.set(width);
+    }
+
+    public static IntegerProperty lastLineStrokeWidthProperty() {
+        return lastLineStrokeWidth;
     }
 
     // ==================== Training Strategy Preferences ====================

@@ -504,7 +504,7 @@ public class TrainingDialog {
 
             // Use pretrained checkbox
             usePretrainedCheck = new CheckBox("Use pretrained weights");
-            usePretrainedCheck.setSelected(true);
+            usePretrainedCheck.setSelected(DLClassifierPreferences.isUsePretrainedWeights());
             TooltipHelper.installWithLink(usePretrainedCheck,
                     "Initialize encoder with pretrained weights.\n" +
                     "Dramatically improves convergence and final accuracy,\n" +
@@ -709,7 +709,7 @@ public class TrainingDialog {
                     "4x (Quarter resolution)",
                     "8x (1/8 resolution)"
             ));
-            downsampleCombo.setValue("1x (Full resolution)");
+            downsampleCombo.setValue(mapDownsampleToDisplay(DLClassifierPreferences.getDefaultDownsample()));
             TooltipHelper.install(downsampleCombo,
                     "Controls image resolution for training.\n" +
                     "Higher downsample = more spatial context per tile but less detail.\n\n" +
@@ -730,7 +730,7 @@ public class TrainingDialog {
                     "4x context (Recommended)",
                     "8x context"
             ));
-            contextScaleCombo.setValue("None (single scale)");
+            contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
             TooltipHelper.install(contextScaleCombo,
                     "Multi-scale context feeds the model two views of each location:\n" +
                     "the full-resolution tile for detail, plus a larger surrounding\n" +
@@ -762,14 +762,17 @@ public class TrainingDialog {
             grid.add(overlapSpinner, 1, row);
             row++;
 
-            // Line stroke width - pre-fill from QuPath's annotation stroke thickness
-            int defaultStroke = 5;
-            try {
-                defaultStroke = (int) Math.max(1, PathPrefs.annotationStrokeThicknessProperty().get());
-            } catch (Exception e) {
-                logger.debug("Could not read QuPath annotation stroke thickness, using default");
+            // Line stroke width - restore from preferences, or fall back to QuPath's stroke thickness
+            int savedStroke = DLClassifierPreferences.getLastLineStrokeWidth();
+            if (savedStroke <= 0) {
+                try {
+                    savedStroke = (int) Math.max(1, PathPrefs.annotationStrokeThicknessProperty().get());
+                } catch (Exception e) {
+                    savedStroke = 5;
+                    logger.debug("Could not read QuPath annotation stroke thickness, using default");
+                }
             }
-            lineStrokeWidthSpinner = new Spinner<>(1, 50, defaultStroke, 1);
+            lineStrokeWidthSpinner = new Spinner<>(1, 50, savedStroke, 1);
             lineStrokeWidthSpinner.setEditable(true);
             lineStrokeWidthSpinner.setPrefWidth(100);
             TooltipHelper.install(lineStrokeWidthSpinner,
@@ -1487,7 +1490,16 @@ public class TrainingDialog {
             // Save dialog settings to preferences for next session
             DLClassifierPreferences.setLastArchitecture(architectureCombo.getValue());
             DLClassifierPreferences.setLastBackbone(backboneCombo.getValue());
+            DLClassifierPreferences.setDefaultEpochs(epochsSpinner.getValue());
+            DLClassifierPreferences.setDefaultBatchSize(batchSizeSpinner.getValue());
+            DLClassifierPreferences.setDefaultLearningRate(learningRateSpinner.getValue());
             DLClassifierPreferences.setValidationSplit(validationSplitSpinner.getValue());
+            DLClassifierPreferences.setTileSize(tileSizeSpinner.getValue());
+            DLClassifierPreferences.setTileOverlap(overlapSpinner.getValue());
+            DLClassifierPreferences.setDefaultDownsample(parseDownsample(downsampleCombo.getValue()));
+            DLClassifierPreferences.setDefaultContextScale(parseContextScale(contextScaleCombo.getValue()));
+            DLClassifierPreferences.setLastLineStrokeWidth(lineStrokeWidthSpinner.getValue());
+            DLClassifierPreferences.setUsePretrainedWeights(usePretrainedCheck.isSelected());
             DLClassifierPreferences.setAugFlipHorizontal(flipHorizontalCheck.isSelected());
             DLClassifierPreferences.setAugFlipVertical(flipVerticalCheck.isSelected());
             DLClassifierPreferences.setAugRotation(rotationCheck.isSelected());
@@ -1647,6 +1659,22 @@ public class TrainingDialog {
         private static String mapEarlyStoppingMetricFromDisplay(String display) {
             if ("Validation Loss".equals(display)) return "val_loss";
             return "mean_iou";
+        }
+
+        private static String mapDownsampleToDisplay(double value) {
+            if (value >= 8.0) return "8x (1/8 resolution)";
+            if (value >= 4.0) return "4x (Quarter resolution)";
+            if (value >= 2.0) return "2x (Half resolution)";
+            return "1x (Full resolution)";
+        }
+
+        private static String mapContextScaleToDisplay(int value) {
+            return switch (value) {
+                case 8 -> "8x context";
+                case 4 -> "4x context (Recommended)";
+                case 2 -> "2x context";
+                default -> "None (single scale)";
+            };
         }
 
         private void copyTrainingScript(Button sourceButton) {
