@@ -262,6 +262,16 @@ public class DLPixelClassifier implements PixelClassifier {
                 throw new IOException("Classification interrupted during shutdown", e);
             }
 
+            // "thread death" is transient (Python worker thread contention under high
+            // concurrency). QuPath re-requests the tile on repaint, so don't count it
+            // toward the circuit breaker -- it would trip on startup when many tiles
+            // are requested simultaneously.
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.toLowerCase().contains("thread death")) {
+                logger.debug("Transient thread death for tile, will retry on repaint");
+                throw e;
+            }
+
             int errorCount = consecutiveErrors.incrementAndGet();
             lastErrorMessage = e.getMessage();
 
