@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -43,6 +44,16 @@ public class ApposeService {
     private static final String PIXI_TOML_RESOURCE = RESOURCE_BASE + "pixi.toml";
     private static final String SCRIPTS_BASE = RESOURCE_BASE + "scripts/";
     private static final String ENV_NAME = "dl-pixel-classifier";
+
+    /**
+     * Limits how many Appose tasks can be in-flight simultaneously.
+     * The Python worker spawns a thread per task; too many concurrent threads
+     * cause "thread death" errors. Since GPU tasks serialize on inference_lock
+     * in Python anyway, only a few concurrent tasks are needed for pipelining
+     * (one on GPU, a few queued waiting for the lock).
+     */
+    private static final int MAX_CONCURRENT_TASKS = 4;
+    private final Semaphore taskSemaphore = new Semaphore(MAX_CONCURRENT_TASKS, true);
 
     private static ApposeService instance;
 
@@ -281,11 +292,12 @@ public class ApposeService {
      * @throws IOException if the service is not available or the task fails
      */
     /**
-     * Maximum retries for transient Appose worker errors (e.g. "thread death"
-     * when too many concurrent tasks overwhelm the Python worker's thread pool).
+     * Maximum retries for transient Appose worker errors (e.g. "thread death").
+     * With the semaphore limiting concurrency these should be rare, but keep
+     * one retry as a safety net.
      */
-    private static final int MAX_TASK_RETRIES = 2;
-    private static final long RETRY_DELAY_MS = 100;
+    private static final int MAX_TASK_RETRIES = 1;
+    private static final long RETRY_DELAY_MS = 200;
 
     public Task runTask(String scriptName, Map<String, Object> inputs) throws IOException {
         ensureInitialized();
@@ -295,6 +307,16 @@ public class ApposeService {
             script = loadScript(scriptName + ".py");
         } catch (IOException e) {
             throw new IOException("Failed to load task script: " + scriptName, e);
+        }
+
+        // Throttle concurrent Appose tasks to prevent "thread death" in the
+        // Python worker. QuPath's overlay system fires 14+ tile requests
+        // simultaneously; the semaphore gates them so only a few are in-flight.
+        try {
+            taskSemaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Appose task '" + scriptName + "' interrupted waiting for permit", e);
         }
 
         // TCCL must be set for Groovy JSON serialization (Messages.encode)
@@ -318,11 +340,10 @@ public class ApposeService {
                 } catch (TaskException e) {
                     lastError = new IOException(
                             "Appose task '" + scriptName + "' failed: " + e.getMessage(), e);
-                    // Retry on transient "thread death" errors from worker overload
                     if (attempt < MAX_TASK_RETRIES && isTransientError(e)) {
-                        logger.warn("Appose task '{}' transient failure (attempt {}/{}): {}",
-                                scriptName, attempt + 1, MAX_TASK_RETRIES + 1, e.getMessage());
-                        Thread.sleep(RETRY_DELAY_MS * (attempt + 1));
+                        logger.warn("Appose task '{}' transient failure, retrying: {}",
+                                scriptName, e.getMessage());
+                        Thread.sleep(RETRY_DELAY_MS);
                         continue;
                     }
                     throw lastError;
@@ -334,6 +355,7 @@ public class ApposeService {
             throw new IOException("Appose task '" + scriptName + "' interrupted", e);
         } finally {
             Thread.currentThread().setContextClassLoader(original);
+            taskSemaphore.release();
         }
     }
 
