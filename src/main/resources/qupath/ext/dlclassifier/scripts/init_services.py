@@ -48,13 +48,13 @@ try:
     # concurrent tile inference tasks race on model loading, CUDA memory
     # allocation, and forward passes. PyTorch CUDA ops are thread-safe
     # but concurrent batches can OOM and torch.compile is NOT thread-safe.
-    _inference_lock = threading.Lock()
+    inference_lock = threading.Lock()
 
 except Exception as e:
     logger.error("Failed to initialize DL classifier services: %s", e)
     # Store error so tasks can report it -- imports succeeded but
     # runtime initialization failed (e.g. GPU not available)
-    _init_error = str(e)
+    init_error = str(e)
     gpu_manager = None
     inference_service = None
     model_registry = None

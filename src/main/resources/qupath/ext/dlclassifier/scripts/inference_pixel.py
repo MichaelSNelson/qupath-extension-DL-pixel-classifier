@@ -21,7 +21,7 @@ logger = logging.getLogger("dlclassifier.appose.inference")
 
 # Access persistent globals from init script
 if inference_service is None:
-    raise RuntimeError("Inference service not initialized: " + globals().get("_init_error", "unknown"))
+    raise RuntimeError("Inference service not initialized: " + globals().get("init_error", "unknown"))
 
 # Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
 # Required inputs: model_path, tile_data, tile_height, tile_width, num_channels, input_config
@@ -49,7 +49,7 @@ if selected:
 # CUDA memory, and forward passes simultaneously. The GPU can only run
 # one batch at a time anyway, so serializing here prevents OOM and
 # thread-safety issues (torch.compile is NOT thread-safe).
-with _inference_lock:
+with inference_lock:
     model_tuple = inference_service._load_model(model_path)
     prob_maps = inference_service._infer_batch_spatial(
         model_tuple, [tile_array],

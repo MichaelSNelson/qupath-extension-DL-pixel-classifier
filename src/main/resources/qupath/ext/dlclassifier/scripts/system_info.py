@@ -102,7 +102,7 @@ if inference_service is not None:
     lines.append("InferenceService: initialized")
     lines.append("InferenceService device: %s" % inference_service._device_str)
 else:
-    err = globals().get("_init_error", "unknown")
+    err = globals().get("init_error", "unknown")
     lines.append("InferenceService: NOT initialized (%s)" % err)
 
 if gpu_manager is not None:
