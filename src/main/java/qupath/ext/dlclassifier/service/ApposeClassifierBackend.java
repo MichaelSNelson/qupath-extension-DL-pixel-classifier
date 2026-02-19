@@ -208,8 +208,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             String modelPath = String.valueOf(task.outputs.get("model_path"));
             double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
             double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
+            int bestEpoch = ((Number) task.outputs.getOrDefault("best_epoch", 0)).intValue();
+            double bestMeanIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
 
-            return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy);
+            return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
+                    bestEpoch, bestMeanIoU);
         } finally {
             Thread.currentThread().setContextClassLoader(originalCL);
         }

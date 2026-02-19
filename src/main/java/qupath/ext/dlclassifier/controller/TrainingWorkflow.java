@@ -80,8 +80,10 @@ public class TrainingWorkflow {
      *
      * @param classifierId    the saved classifier ID
      * @param classifierName  the classifier display name
-     * @param finalLoss       final training loss
-     * @param finalAccuracy   final training accuracy
+     * @param finalLoss       best model validation loss
+     * @param finalAccuracy   best model accuracy
+     * @param bestEpoch       epoch that produced the best model
+     * @param bestMeanIoU     best model mean IoU
      * @param epochsCompleted number of epochs completed
      * @param success         whether training completed successfully
      * @param message         summary or error message
@@ -91,6 +93,8 @@ public class TrainingWorkflow {
             String classifierName,
             double finalLoss,
             double finalAccuracy,
+            int bestEpoch,
+            double bestMeanIoU,
             int epochsCompleted,
             boolean success,
             String message
@@ -230,7 +234,7 @@ public class TrainingWorkflow {
             }
             if (imgData == null) {
                 logger.warn("No image data available for training");
-                return new TrainingResult(null, name, 0.0, 0.0, 0, false,
+                return new TrainingResult(null, name, 0.0, 0.0, 0, 0.0, 0, false,
                         "No image data available");
             }
 
@@ -420,8 +424,10 @@ public class TrainingWorkflow {
 
             if (result.success()) {
                 progress.complete(true, String.format(
-                        "Classifier trained successfully!\nFinal loss: %.4f\nAccuracy: %.2f%%",
-                        result.finalLoss(), result.finalAccuracy() * 100));
+                        "Classifier trained successfully!\nBest model: epoch %d\n" +
+                        "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                        result.bestEpoch(), result.finalLoss(),
+                        result.finalAccuracy() * 100, result.bestMeanIoU()));
             } else if (result.message() != null && result.message().contains("paused")) {
                 // Paused state is handled by showPausedState - don't close
                 logger.info("Training paused, waiting for user action");
@@ -543,7 +549,7 @@ public class TrainingWorkflow {
             }
 
             if (progress != null && progress.isCancelled()) {
-                return new TrainingResult(null, classifierName, 0, 0, 0, false,
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
                         "Training cancelled by user");
             }
 
@@ -652,13 +658,13 @@ public class TrainingWorkflow {
                     progress.log("Training paused at epoch " + serverResult.lastEpoch());
                     progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
                 }
-                return new TrainingResult(null, classifierName, 0, 0, 0, false,
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
                         "Training paused at epoch " + serverResult.lastEpoch());
             }
 
             if (serverResult.isCancelled()) {
                 if (progress != null) progress.log("Training cancelled");
-                return new TrainingResult(null, classifierName, 0, 0, 0, false,
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
                         "Training cancelled by user");
             }
 
@@ -702,6 +708,8 @@ public class TrainingWorkflow {
                     classifierName,
                     serverResult.finalLoss(),
                     serverResult.finalAccuracy(),
+                    serverResult.bestEpoch(),
+                    serverResult.bestMeanIoU(),
                     trainingConfig.getEpochs(),
                     true,
                     "Training completed successfully"
@@ -710,7 +718,7 @@ public class TrainingWorkflow {
         } catch (Exception e) {
             logger.error("Training failed", e);
             if (progress != null) progress.log("ERROR: " + e.getMessage());
-            return new TrainingResult(null, classifierName, 0, 0, 0, false,
+            return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
                     "Training failed: " + e.getMessage());
         }
     }
@@ -917,8 +925,10 @@ public class TrainingWorkflow {
                 progress.log("Classifier saved: " + metadata.getId());
 
                 progress.complete(true, String.format(
-                        "Classifier trained successfully!\nFinal loss: %.4f\nAccuracy: %.2f%%",
-                        serverResult.finalLoss(), serverResult.finalAccuracy() * 100));
+                        "Classifier trained successfully!\nBest model: epoch %d\n" +
+                        "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                        serverResult.bestEpoch(), serverResult.finalLoss(),
+                        serverResult.finalAccuracy() * 100, serverResult.bestMeanIoU()));
             }
 
         } catch (Exception e) {

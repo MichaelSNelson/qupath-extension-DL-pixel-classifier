@@ -255,6 +255,7 @@ public class TrainingDialog {
 
             ScrollPane scrollPane = new ScrollPane(content);
             scrollPane.setFitToWidth(true);
+            scrollPane.setMaxHeight(Double.MAX_VALUE);
             scrollPane.setPrefHeight(600);
             scrollPane.setPrefWidth(550);
 
@@ -847,12 +848,15 @@ public class TrainingDialog {
             earlyStoppingMetricCombo.setValue(
                     mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
             TooltipHelper.install(earlyStoppingMetricCombo,
-                    "Metric monitored for early stopping:\n\n" +
-                    "Mean IoU (recommended): Stops when segmentation quality plateaus.\n" +
-                    "  Directly measures overlap between prediction and ground truth.\n\n" +
-                    "Validation Loss: Stops when loss stops decreasing.\n" +
-                    "  Loss can oscillate while IoU still improves, so Mean IoU\n" +
-                    "  is generally a more reliable stopping criterion.");
+                    "Which metric decides the 'best' model checkpoint.\n\n" +
+                    "The best model weights are saved whenever this metric improves,\n" +
+                    "and training stops if it hasn't improved for 'patience' epochs.\n" +
+                    "The final saved model is always from the best epoch, not the last.\n\n" +
+                    "Mean IoU (recommended): Intersection-over-union averaged across\n" +
+                    "  all classes. Directly measures segmentation quality.\n\n" +
+                    "Validation Loss: Combined loss on held-out data.\n" +
+                    "  Can oscillate while IoU still improves, so Mean IoU is\n" +
+                    "  generally more reliable.");
 
             grid.add(new Label("Early Stop Metric:"), 0, row);
             grid.add(earlyStoppingMetricCombo, 1, row);
@@ -864,12 +868,14 @@ public class TrainingDialog {
             earlyStoppingPatienceSpinner.setEditable(true);
             earlyStoppingPatienceSpinner.setPrefWidth(100);
             TooltipHelper.install(earlyStoppingPatienceSpinner,
-                    "Number of epochs to wait without improvement before stopping.\n" +
-                    "Higher patience allows the model more time to recover from\n" +
-                    "temporary plateaus, but risks wasting time on a converged model.\n\n" +
-                    "10-15: Good default for most training runs.\n" +
-                    "20-30: For noisy training curves or cosine annealing scheduler.\n" +
-                    "5: For quick experiments or when resources are limited.");
+                    "How many consecutive epochs without improvement before stopping.\n\n" +
+                    "After each epoch, if the early stop metric hasn't improved in\n" +
+                    "this many epochs, training stops and the best model is saved.\n\n" +
+                    "10-15: Good default for most runs.\n" +
+                    "20-30: Use with cosine annealing or noisy loss curves.\n" +
+                    "3-5: For quick experiments.\n\n" +
+                    "It is safe to set a high epoch count (e.g. 200) and rely on\n" +
+                    "patience to stop training -- you won't waste GPU time.");
 
             grid.add(new Label("Early Stop Patience:"), 0, row);
             grid.add(earlyStoppingPatienceSpinner, 1, row);

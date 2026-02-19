@@ -773,8 +773,10 @@ class TrainingService:
 
         # Training loop
         num_classes = len(classes)
-        final_loss = 0.0
-        final_accuracy = 0.0
+        best_epoch = 0
+        best_loss = 0.0
+        best_accuracy = 0.0
+        best_mean_iou = 0.0
 
         for epoch in range(start_epoch, epochs):
             # Check for cancellation
@@ -894,9 +896,6 @@ class TrainingService:
             mean_iou = sum(iou_values) / len(iou_values) if iou_values else 0.0
             mean_iou = round(mean_iou, 4)
 
-            final_loss = val_loss
-            final_accuracy = accuracy
-
             # Record history
             training_history.append({
                 "epoch": epoch + 1,
@@ -933,6 +932,10 @@ class TrainingService:
             current_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
             if _is_best(current_metric, best_score):
                 best_score = current_metric
+                best_epoch = epoch + 1
+                best_loss = val_loss
+                best_accuracy = accuracy
+                best_mean_iou = mean_iou
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
                 logger.info(f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})")
@@ -1012,9 +1015,11 @@ class TrainingService:
 
         return {
             "model_path": model_path,
-            "final_loss": final_loss,
-            "final_accuracy": final_accuracy,
+            "final_loss": best_loss,
+            "final_accuracy": best_accuracy,
             "best_score": best_score,
+            "best_epoch": best_epoch,
+            "best_mean_iou": best_mean_iou,
             "epochs_trained": len(training_history),
             "early_stopped": early_stopping.should_stop if early_stopping else False
         }

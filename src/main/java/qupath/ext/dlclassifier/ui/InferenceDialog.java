@@ -171,6 +171,7 @@ public class InferenceDialog {
 
             ScrollPane scrollPane = new ScrollPane(content);
             scrollPane.setFitToWidth(true);
+            scrollPane.setMaxHeight(Double.MAX_VALUE);
             scrollPane.setPrefHeight(550);
             scrollPane.setPrefWidth(600);
 

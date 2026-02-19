@@ -127,4 +127,6 @@ finally:
 task.outputs["model_path"] = result.get("model_path", "")
 task.outputs["final_loss"] = result.get("final_loss", 0.0)
 task.outputs["final_accuracy"] = result.get("final_accuracy", 0.0)
+task.outputs["best_epoch"] = result.get("best_epoch", 0)
+task.outputs["best_mean_iou"] = result.get("best_mean_iou", 0.0)
 task.outputs["epochs_trained"] = result.get("epochs_trained", 0)

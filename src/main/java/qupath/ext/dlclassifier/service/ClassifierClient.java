@@ -402,7 +402,7 @@ public class ClassifierClient {
                     int epoch = status.get("epoch").getAsInt();
                     int totalEpochs = status.get("total_epochs").getAsInt();
                     logger.info("Training job {} paused at epoch {}/{}", jobId, epoch, totalEpochs);
-                    return new TrainingResult(jobId, null, 0, 0, true, epoch, totalEpochs);
+                    return new TrainingResult(jobId, null, 0, 0, 0, 0.0, true, epoch, totalEpochs);
                 }
             }
 
@@ -1154,19 +1154,30 @@ public class ClassifierClient {
 
     /**
      * Training result information.
+     * <p>
+     * {@code finalLoss} and {@code finalAccuracy} reflect the <b>best</b> model
+     * (the checkpoint that was actually saved), not the last training epoch.
      */
     public record TrainingResult(
             String jobId,
             String modelPath,
             double finalLoss,
             double finalAccuracy,
+            int bestEpoch,
+            double bestMeanIoU,
             boolean paused,
             int lastEpoch,
             int totalEpochs
     ) {
         /** Compact constructor for non-paused results. */
+        public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy,
+                              int bestEpoch, double bestMeanIoU) {
+            this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU, false, 0, 0);
+        }
+
+        /** Compact constructor for cancelled results. */
         public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
-            this(jobId, modelPath, finalLoss, finalAccuracy, false, 0, 0);
+            this(jobId, modelPath, finalLoss, finalAccuracy, 0, 0.0, false, 0, 0);
         }
 
         /** Returns true if training was cancelled (no model produced and not paused). */
