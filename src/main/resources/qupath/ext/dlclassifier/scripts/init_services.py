@@ -61,7 +61,7 @@ try:
     _orig_load_model = InferenceService._load_model
 
     def _patched_load_model(self, model_path, compile_model=True):
-        """Load model with correct in_channels from metadata."""
+        """Load model with correct in_channels detected from checkpoint."""
         import torch
         import segmentation_models_pytorch as smp
 
@@ -81,7 +81,7 @@ try:
         if onnx_path.exists():
             return _orig_load_model(self, model_path, compile_model)
 
-        # PyTorch path -- ensure correct in_channels from metadata
+        # PyTorch path -- detect in_channels from checkpoint weights
         pt_path = model_dir / "model.pt"
         if pt_path.exists():
             logger.info("Loading PyTorch model from %s (patched)", pt_path)
@@ -94,12 +94,53 @@ try:
             input_config = metadata.get("input_config", {})
             model_type = arch.get("type", "unet")
             encoder_name = arch.get("backbone", "resnet34")
-            num_channels = input_config.get("num_channels", 3)
+            # Check both Python-style (input_config.num_channels) and
+            # Java-style (architecture.input_channels) metadata formats.
+            # Java's ModelManager.saveClassifier() overwrites Python's
+            # metadata.json, replacing input_config with architecture format.
+            metadata_channels = input_config.get(
+                "num_channels", arch.get("input_channels", 3))
             num_classes = len(metadata.get("classes",
                                            [{"index": 0}, {"index": 1}]))
 
-            logger.info("Model: %s/%s, in_channels=%d, classes=%d",
-                        model_type, encoder_name, num_channels, num_classes)
+            # Load checkpoint first so we can detect the actual in_channels
+            # from the encoder's first conv layer weight shape.
+            # This is the ground truth -- metadata may be wrong (known bug
+            # where training saves num_channels=3 for multi-channel models).
+            state_dict = torch.load(pt_path, map_location=self.device,
+                                    weights_only=True)
+
+            num_channels = metadata_channels
+            conv1_key = "encoder.conv1.weight"
+            if conv1_key in state_dict:
+                checkpoint_channels = state_dict[conv1_key].shape[1]
+                if checkpoint_channels != metadata_channels:
+                    logger.warning(
+                        "Metadata num_channels=%d but checkpoint "
+                        "encoder.conv1.weight has %d input channels. "
+                        "Using checkpoint value.",
+                        metadata_channels, checkpoint_channels)
+                num_channels = checkpoint_channels
+            else:
+                # Some encoder architectures use different key names.
+                # Search for the first conv weight to detect in_channels.
+                for key in state_dict:
+                    if ("conv" in key and "weight" in key
+                            and state_dict[key].dim() == 4):
+                        checkpoint_channels = state_dict[key].shape[1]
+                        if checkpoint_channels != metadata_channels:
+                            logger.warning(
+                                "Metadata num_channels=%d but checkpoint "
+                                "%s has %d input channels. "
+                                "Using checkpoint value.",
+                                metadata_channels, key, checkpoint_channels)
+                        num_channels = checkpoint_channels
+                        break
+
+            logger.info("Model: %s/%s, in_channels=%d (metadata=%d), "
+                        "classes=%d",
+                        model_type, encoder_name, num_channels,
+                        metadata_channels, num_classes)
 
             model_map = {
                 "unet": smp.Unet,
@@ -121,10 +162,7 @@ try:
                 classes=num_classes
             )
 
-            model.load_state_dict(
-                torch.load(pt_path, map_location=self.device,
-                           weights_only=True)
-            )
+            model.load_state_dict(state_dict)
             model = model.to(self.device)
             model.eval()
 

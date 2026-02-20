@@ -314,9 +314,32 @@ public class ModelManager {
             }
         }
 
-        // Save metadata
+        // Save metadata -- merge with Python-generated metadata to preserve
+        // fields like input_config (with num_channels, selected_channels,
+        // normalization) and normalization_stats that the Java ClassifierMetadata
+        // does not carry.  Without this merge, the Python metadata.json is
+        // overwritten and num_channels is lost, causing multi-channel models
+        // to fail at inference.
         Path metadataPath = targetDir.resolve(METADATA_FILE);
-        String json = gson.toJson(metadata.toMap());
+        Map<String, Object> javaMetadata = metadata.toMap();
+
+        // Read existing Python-generated metadata (just copied from model dir)
+        if (Files.exists(metadataPath)) {
+            try {
+                String existingJson = Files.readString(metadataPath);
+                JsonObject pythonMeta = JsonParser.parseString(existingJson).getAsJsonObject();
+                // Preserve Python-only fields that Java metadata doesn't produce
+                for (String key : List.of("input_config", "normalization_stats")) {
+                    if (pythonMeta.has(key) && !javaMetadata.containsKey(key)) {
+                        javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Could not merge Python metadata: {}", e.getMessage());
+            }
+        }
+
+        String json = gson.toJson(javaMetadata);
         Files.writeString(metadataPath, json);
 
         logger.info("Saved classifier to: {}", targetDir);
