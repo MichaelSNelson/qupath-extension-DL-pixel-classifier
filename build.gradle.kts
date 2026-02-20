@@ -54,7 +54,7 @@ dependencies {
     testImplementation(libs.bundles.qupath)
     testImplementation("io.github.qupath:qupath-app:0.6.0-rc4")
     testImplementation("org.junit.jupiter:junit-jupiter:5.9.1")
-    testImplementation("org.assertj:assertj-core:3.24.2")
+    testImplementation("org.assertj:assertj-core:3.27.7")
     testImplementation(libs.bundles.logging)
     testImplementation(libs.qupath.fxtras)
     testImplementation("org.openjfx:javafx-base:$javafxVersion")
