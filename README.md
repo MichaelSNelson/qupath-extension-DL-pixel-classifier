@@ -1,4 +1,7 @@
-# QuPath Deep Learning Pixel Classifier Extension
+# QuPath 
+# Deep Learning
+# Pixel Classifier
+# Extension
 
 A QuPath extension for deep learning-based pixel classification, supporting both brightfield (RGB) and multi-channel fluorescence/spectral images.
 
@@ -198,3 +201,4 @@ Apache License 2.0
 ## Contributing
 
 Contributions welcome! Please open issues or pull requests on GitHub.
+
