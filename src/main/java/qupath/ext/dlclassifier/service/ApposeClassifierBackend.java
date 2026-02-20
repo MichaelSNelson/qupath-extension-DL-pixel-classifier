@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -42,6 +43,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     private static final Logger logger = LoggerFactory.getLogger(ApposeClassifierBackend.class);
     private static final Gson gson = new Gson();
+
+    // Limit concurrent Appose inference tasks. The Python side serializes GPU
+    // access via inference_lock, but 16+ overlay threads submitting tasks
+    // simultaneously creates 16 Python threads that mostly block and die.
+    // Permits=2: one task running on GPU, one preparing (normalization, data copy).
+    private static final Semaphore inferenceSemaphore = new Semaphore(2, true);
 
     // ==================== Health & Status ====================
 
@@ -337,6 +344,16 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path outputDir,
             int reflectionPadding) throws IOException {
 
+        // Throttle concurrent Appose task submissions. Without this, 16+
+        // overlay threads each spawn a Python thread that blocks on
+        // inference_lock, and many die with "thread death" before running.
+        try {
+            inferenceSemaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Inference interrupted while waiting for semaphore", e);
+        }
+
         try {
             return ApposeService.withExtensionClassLoader(() -> {
                 // Create shared memory NDArray for input tile
@@ -400,6 +417,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             throw e;
         } catch (Exception e) {
             throw new IOException("Single-tile pixel inference failed", e);
+        } finally {
+            inferenceSemaphore.release();
         }
     }
 
