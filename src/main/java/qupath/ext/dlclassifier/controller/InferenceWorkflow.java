@@ -32,6 +32,8 @@ import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.ROIs;
 import qupath.lib.roi.interfaces.ROI;
 
+import qupath.lib.plugins.workflow.DefaultScriptableWorkflowStep;
+
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.DataBufferByte;
@@ -248,6 +250,11 @@ public class InferenceWorkflow {
                 imgData.getHierarchy().fireHierarchyChangedEvent(
                         imgData.getHierarchy().getRootObject());
 
+                // Add workflow step for reproducibility (not for OVERLAY -- visual only)
+                if (config.getOutputType() != InferenceConfig.OutputType.OVERLAY) {
+                    addWorkflowStep(imgData, classifier, config);
+                }
+
                 String message = String.format(
                         "Classification completed: %d annotation(s), %d tile(s)",
                         processedAnnotations, processedTiles);
@@ -452,6 +459,11 @@ public class InferenceWorkflow {
                 // Fire hierarchy update
                 imageData.getHierarchy().fireHierarchyChangedEvent(
                         imageData.getHierarchy().getRootObject());
+
+                // Add workflow step for reproducibility (not for OVERLAY -- visual only)
+                if (inferenceConfig.getOutputType() != InferenceConfig.OutputType.OVERLAY) {
+                    addWorkflowStep(imageData, metadata, inferenceConfig);
+                }
 
                 progress.complete(true, String.format(
                         "Classification completed!\nProcessed %d annotation(s), %d tile(s)",
@@ -1072,6 +1084,30 @@ public class InferenceWorkflow {
         }
 
         return null;
+    }
+
+    /**
+     * Adds a workflow step to the image history for "Run for project" support.
+     * The generated script uses DLClassifierScripts to reload and re-run the
+     * classifier, so it works when QuPath sets each image as current.
+     */
+    private static void addWorkflowStep(ImageData<?> imageData,
+                                         ClassifierMetadata metadata,
+                                         InferenceConfig config) {
+        String outputType = config.getOutputType().name().toLowerCase();
+        String script = String.format(
+                "import qupath.ext.dlclassifier.scripting.DLClassifierScripts%n" +
+                "DLClassifierScripts.classifyRegions(" +
+                    "DLClassifierScripts.loadClassifier(\"%s\"), " +
+                    "getAnnotationObjects(), \"%s\")",
+                metadata.getId().replace("\\", "\\\\").replace("\"", "\\\""),
+                outputType);
+
+        imageData.getHistoryWorkflow().addStep(
+                new DefaultScriptableWorkflowStep(
+                        "DL Pixel Classification (" + outputType + ")",
+                        script));
+        logger.info("Added workflow step for DL classification ({})", outputType);
     }
 
     /**

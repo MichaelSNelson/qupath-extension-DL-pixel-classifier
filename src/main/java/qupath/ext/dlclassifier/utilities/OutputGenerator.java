@@ -18,6 +18,7 @@ import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.classes.PathClassTools;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
@@ -337,8 +338,14 @@ public class OutputGenerator {
                 imageData.getServer().getPath(), 1.0,
                 offsetX, offsetY, width, height);
 
-        // Process each class (skip background = class 0)
+        // Process each class (skip background = class 0, skip ignored classes)
+        List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
         for (int classIdx = 1; classIdx < numClasses; classIdx++) {
+            String className = classIdx < classes.size() ? classes.get(classIdx).name() : "Class " + classIdx;
+            if (PathClassTools.isIgnoredClass(PathClass.fromString(className))) {
+                logger.debug("Skipping ignored class: {}", className);
+                continue;
+            }
             List<PathObject> classObjects = traceClassContours(
                     classMap, classIdx, width, height, region, objectType);
             objects.addAll(classObjects);
