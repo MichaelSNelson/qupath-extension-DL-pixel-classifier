@@ -50,6 +50,96 @@ try:
     # but concurrent batches can OOM and torch.compile is NOT thread-safe.
     inference_lock = threading.Lock()
 
+    # --- Monkey-patch _load_model for stale pip package ---
+    # The installed dlclassifier_server package may be an older version
+    # that defaults to in_channels=3 instead of reading num_channels from
+    # the model metadata. This patch ensures multi-channel models (e.g.
+    # multiplex IF with 8 channels) load correctly.
+    import json as _json
+    from pathlib import Path as _Path
+
+    _orig_load_model = InferenceService._load_model
+
+    def _patched_load_model(self, model_path, compile_model=True):
+        """Load model with correct in_channels from metadata."""
+        import torch
+        import segmentation_models_pytorch as smp
+
+        # Use cache if available
+        if model_path in self._model_cache:
+            model_tuple = self._model_cache[model_path]
+            if (compile_model and model_tuple[0] == "pytorch"
+                    and model_path not in self._compiled_models):
+                if hasattr(self, '_try_compile_model'):
+                    self._try_compile_model(model_path, model_tuple)
+            return self._model_cache[model_path]
+
+        model_dir = _Path(model_path)
+
+        # ONNX path -- defer to original (ONNX doesn't need in_channels)
+        onnx_path = model_dir / "model.onnx"
+        if onnx_path.exists():
+            return _orig_load_model(self, model_path, compile_model)
+
+        # PyTorch path -- ensure correct in_channels from metadata
+        pt_path = model_dir / "model.pt"
+        if pt_path.exists():
+            logger.info("Loading PyTorch model from %s (patched)", pt_path)
+
+            metadata_path = model_dir / "metadata.json"
+            with open(metadata_path) as f:
+                metadata = _json.load(f)
+
+            arch = metadata.get("architecture", {})
+            input_config = metadata.get("input_config", {})
+            model_type = arch.get("type", "unet")
+            encoder_name = arch.get("backbone", "resnet34")
+            num_channels = input_config.get("num_channels", 3)
+            num_classes = len(metadata.get("classes",
+                                           [{"index": 0}, {"index": 1}]))
+
+            logger.info("Model: %s/%s, in_channels=%d, classes=%d",
+                        model_type, encoder_name, num_channels, num_classes)
+
+            model_map = {
+                "unet": smp.Unet,
+                "unetplusplus": smp.UnetPlusPlus,
+                "deeplabv3": smp.DeepLabV3,
+                "deeplabv3plus": smp.DeepLabV3Plus,
+                "fpn": smp.FPN,
+                "pspnet": smp.PSPNet,
+                "manet": smp.MAnet,
+                "linknet": smp.Linknet,
+                "pan": smp.PAN,
+            }
+
+            model_cls = model_map.get(model_type, smp.Unet)
+            model = model_cls(
+                encoder_name=encoder_name,
+                encoder_weights=None,
+                in_channels=num_channels,
+                classes=num_classes
+            )
+
+            model.load_state_dict(
+                torch.load(pt_path, map_location=self.device,
+                           weights_only=True)
+            )
+            model = model.to(self.device)
+            model.eval()
+
+            self._model_cache[model_path] = ("pytorch", model)
+
+            if compile_model and hasattr(self, '_try_compile_model'):
+                self._try_compile_model(model_path, ("pytorch", model))
+
+            return self._model_cache[model_path]
+
+        raise FileNotFoundError("No model found at %s" % model_path)
+
+    InferenceService._load_model = _patched_load_model
+    logger.info("Patched InferenceService._load_model for multi-channel support")
+
 except Exception as e:
     logger.error("Failed to initialize DL classifier services: %s", e)
     # Store error so tasks can report it -- imports succeeded but
