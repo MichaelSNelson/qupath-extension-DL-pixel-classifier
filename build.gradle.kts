@@ -52,7 +52,7 @@ dependencies {
 
     // For testing
     testImplementation(libs.bundles.qupath)
-    testImplementation("io.github.qupath:qupath-app:0.6.0-rc4")
+    testImplementation("io.github.qupath:qupath-app:0.7.0-rc1")
     testImplementation("org.junit.jupiter:junit-jupiter:5.9.1")
     testImplementation("org.assertj:assertj-core:3.27.7")
     testImplementation(libs.bundles.logging)
