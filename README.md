@@ -1,4 +1,4 @@
-# QuPath 
+# QuPath
 # Deep Learning
 # Pixel Classifier
 # Extension
@@ -27,64 +27,63 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **"Copy as Script" buttons** in dialogs for reproducible workflows
 - **Hierarchical geometry union** for efficient ROI merging
 
+## Installation
+
+1. **Download** the latest JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page
+2. **Copy** the JAR to your QuPath extensions directory:
+
+| OS | Extensions path |
+|----|----------------|
+| Windows | `C:\Users\<you>\AppData\Local\QuPath\v0.6\extensions\` |
+| macOS | `~/Library/Application Support/QuPath/v0.6/extensions/` |
+| Linux | `~/.local/share/QuPath/v0.6/extensions/` |
+
+3. **Restart QuPath** -- the extension appears under **Extensions > DL Pixel Classifier**
+
+> **Tip:** In QuPath, **Edit > Preferences > Extensions** shows the extensions directory path.
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and GPU configuration.
+
+## Getting Started
+
+1. **Set up the Python environment** -- **Extensions > DL Pixel Classifier > Setup DL Environment...** downloads and configures everything automatically (~2-4 GB, first time only)
+2. **Train a classifier** -- create annotations, open **Train Classifier...**, and click Start Training
+3. **Apply the classifier** -- open **Apply Classifier...**, select a model, choose an output type, and click Apply
+
+See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifier in ~10 minutes).
+
+## Requirements
+
+- QuPath 0.6.0+
+- NVIDIA GPU with CUDA recommended (CPU and Apple Silicon MPS also supported)
+- Internet connection for first-time environment setup (~2-4 GB download)
+
+> **Note:** A separate Python installation is **not** required. The extension manages its own embedded Python environment via [Appose](https://github.com/apposed/appose).
+
 ## Documentation
 
 | Guide | Description |
 |-------|-------------|
-| [Installation](docs/INSTALLATION.md) | Full setup: Java extension + Python server + GPU configuration |
+| [Quickstart](QUICKSTART.md) | Zero-to-classifier in 10 minutes |
+| [Installation](docs/INSTALLATION.md) | Full setup: extension install + Python environment + GPU configuration |
 | [Training Guide](docs/TRAINING_GUIDE.md) | Step-by-step training workflow how-to |
 | [Inference Guide](docs/INFERENCE_GUIDE.md) | Step-by-step inference workflow how-to |
 | [Parameters](docs/PARAMETERS.md) | Every parameter with defaults, ranges, and ML guidance |
 | [Scripting](docs/SCRIPTING.md) | Groovy API, builder pattern, batch processing, Copy as Script |
 | [Best Practices](docs/BEST_PRACTICES.md) | Backbone selection, annotation strategy, hyperparameter tuning |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Server issues, training issues, GPU issues, diagnostics |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Environment issues, GPU issues, training/inference issues, diagnostics |
 | [Preferences](docs/PREFERENCES.md) | All persistent preferences with defaults and keys |
-| [Quickstart](QUICKSTART.md) | Zero-to-classifier in 10 minutes |
-| [Python Server](python_server/README.md) | Detailed Python server documentation |
+| [Python Server](python_server/README.md) | Detailed Python server documentation (HTTP mode) |
 
-## Requirements
+## GPU Support
 
-- QuPath 0.6.0+, Java 21+
-- CUDA-capable GPU recommended (CPU and Apple Silicon MPS also supported)
-- Internet connection for first-time environment setup (~2-4 GB download)
+The extension automatically detects and uses available GPU hardware:
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full setup instructions.
+- **NVIDIA GPUs (CUDA)** -- auto-detected on Windows and Linux. Requires NVIDIA drivers to be installed.
+- **Apple Silicon (MPS)** -- auto-detected on macOS with M-series chips.
+- **CPU fallback** -- automatic when no GPU is available. Training will be slower but functional.
 
-## Quick Start
-
-```bash
-# Build Java extension
-./gradlew build
-# Copy JAR from build/libs/ to QuPath extensions directory
-```
-
-Then in QuPath:
-
-1. **Extensions > DL Pixel Classifier > Setup DL Environment...** (first time only)
-2. Click **Begin Setup** to download the Python environment (~2-4 GB)
-3. Once complete, **Train Classifier...** and other menu items appear automatically
-
-The extension uses [Appose](https://github.com/apposed/appose) to manage an embedded Python environment with PyTorch -- no separate Python installation or server management required.
-
-See [QUICKSTART.md](QUICKSTART.md) for the complete walkthrough.
-
-## Usage Overview
-
-**Training**: Create annotations with 2+ classes, open the training dialog, configure parameters, and click Start Training. See [docs/TRAINING_GUIDE.md](docs/TRAINING_GUIDE.md).
-
-**Inference**: Select a trained classifier, choose output type (measurements/objects/overlay), and click Apply. See [docs/INFERENCE_GUIDE.md](docs/INFERENCE_GUIDE.md).
-
-**Scripting**: Use the Simple API or Builder API for batch processing. Both dialogs include a "Copy as Script" button. See [docs/SCRIPTING.md](docs/SCRIPTING.md).
-
-## Testing
-
-```bash
-cd python_server
-pip install -e ".[dev]"
-pytest tests/ -v
-```
-
-Current status: **78 tests passing, 5 skipped**
+The setup wizard reports which GPU backend was detected at completion. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) if GPU is not detected.
 
 ## Backend Modes
 
@@ -101,14 +100,15 @@ The default mode uses [Appose](https://github.com/apposed/appose) to manage an e
 
 ### HTTP (External Server)
 
-For advanced setups (e.g., remote GPU workstations), disable Appose in **Edit > Preferences > DL Pixel Classifier** and run the Python server separately:
+For advanced setups (e.g., remote GPU workstations), disable Appose in **Edit > Preferences > DL Pixel Classifier** and run the Python server separately. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full HTTP server setup instructions.
 
-```bash
-cd python_server && pip install -e ".[cuda]"
-dlclassifier-server
-```
+## Supported Image Types
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full HTTP server setup instructions.
+| Image Type | Channels | Bit Depth | Strategy |
+|------------|----------|-----------|----------|
+| Brightfield RGB | 3 | 8-bit | Direct input |
+| Immunofluorescence | 2-8+ | 8/12/16-bit | Channel selection + normalization |
+| Spectral/Hyperspectral | 10-100+ | 16-bit | Channel grouping |
 
 ## Architecture
 
@@ -186,13 +186,33 @@ qupath-extension-DL-pixel-classifier/
 | POST | /api/v1/inference | Run tile-level aggregated inference (for MEASUREMENTS) |
 | POST | /api/v1/inference/pixel | Run pixel-level inference returning probability maps (for OBJECTS/OVERLAY) |
 
-## Supported Image Types
+## For Developers
 
-| Image Type | Channels | Bit Depth | Strategy |
-|------------|----------|-----------|----------|
-| Brightfield RGB | 3 | 8-bit | Direct input |
-| Immunofluorescence | 2-8+ | 8/12/16-bit | Channel selection + normalization |
-| Spectral/Hyperspectral | 10-100+ | 16-bit | Channel grouping |
+### Building from source
+
+```bash
+git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
+cd qupath-extension-DL-pixel-classifier
+./gradlew build
+```
+
+This produces a JAR file in `build/libs/`. Copy it to your QuPath extensions directory and restart QuPath.
+
+For a shadow JAR that bundles all dependencies:
+
+```bash
+./gradlew shadowJar
+```
+
+### Running Python tests
+
+```bash
+cd python_server
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+Current status: **78 tests passing, 5 skipped**
 
 ## License
 
@@ -201,4 +221,3 @@ Apache License 2.0
 ## Contributing
 
 Contributions welcome! Please open issues or pull requests on GitHub.
-

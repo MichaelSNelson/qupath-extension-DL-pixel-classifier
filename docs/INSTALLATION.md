@@ -7,25 +7,18 @@ Complete setup instructions for the DL Pixel Classifier extension.
 | Component | Requirement |
 |-----------|-------------|
 | QuPath | 0.6.0 or later |
-| Java JDK | 21+ (for building the extension) |
 | GPU | NVIDIA GPU with CUDA recommended; Apple Silicon (MPS) also works; CPU fallback available |
 | Internet | Required for first-time environment setup (~2-4 GB download) |
 
 > **Note:** A separate Python installation is **not** required for the default Appose backend. The extension manages its own embedded Python environment.
 
-## Part 1: Java Extension
+## Part 1: Install the Extension
 
-### Build from source
+### Download the JAR
 
-```bash
-git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
-cd qupath-extension-DL-pixel-classifier
-./gradlew build
-```
+Download the latest release JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page.
 
-This produces a JAR file in `build/libs/`.
-
-### Install into QuPath
+### Copy to QuPath extensions directory
 
 Copy the JAR to your QuPath extensions directory:
 
@@ -35,7 +28,11 @@ Copy the JAR to your QuPath extensions directory:
 | macOS | `~/Library/Application Support/QuPath/v0.6/extensions/` |
 | Linux | `~/.local/share/QuPath/v0.6/extensions/` |
 
-Alternatively, in QuPath: **Edit > Preferences > Extensions** shows the extensions directory path. Drop the JAR there and restart QuPath.
+> **Tip:** In QuPath, **Edit > Preferences > Extensions** shows the extensions directory path. You can drag and drop the JAR there.
+
+### Verify installation
+
+Restart QuPath. You should see **Extensions > DL Pixel Classifier** in the menu bar. On first launch, only **Setup DL Environment...** and **Utilities** will be visible -- this is normal.
 
 ## Part 2: Python Environment Setup (Appose -- Default)
 
@@ -80,17 +77,99 @@ If the environment becomes corrupted or you want a fresh install:
 2. Confirm the rebuild (this deletes the existing environment)
 3. Complete the setup wizard again
 
-## Part 3: Alternative -- External Python Server (HTTP Mode)
+## Part 3: GPU Configuration
 
-For advanced setups where the Python backend runs on a different machine (e.g., a dedicated GPU workstation), you can disable Appose and connect to an external server instead.
+### NVIDIA GPU (CUDA)
 
-### 3a. Disable Appose in QuPath
+1. Install the latest NVIDIA drivers from [nvidia.com/drivers](https://www.nvidia.com/drivers)
+   - **Windows:** Install "Game Ready" or "Studio" drivers
+   - **Linux:** Install via your distribution's package manager or NVIDIA's `.run` installer
+2. **Important:** NVIDIA drivers must be installed **before** running the environment setup. If you installed drivers after setup, use **Utilities > Rebuild DL Environment...** to reinstall.
+
+### Verifying GPU detection (Appose mode)
+
+After completing the setup wizard, verify that the GPU was detected:
+
+1. **Setup dialog completion message** -- the dialog reports which GPU backend was found (CUDA, MPS, or CPU)
+2. **Python Console** -- go to **Extensions > DL Pixel Classifier > Utilities > Python Console** and look for:
+   - `CUDA available: True` (NVIDIA GPU)
+   - `MPS available: True` (Apple Silicon)
+3. **System Info** -- go to **Extensions > DL Pixel Classifier > Utilities > System Info** for a full diagnostic dump including PyTorch version, CUDA version, and GPU details
+
+### Apple Silicon (MPS)
+
+MPS support is automatic on macOS with Apple Silicon (M-series chips). No additional configuration needed.
+
+### CPU fallback
+
+If no GPU is detected, the backend automatically falls back to CPU. Training will be slower but functional.
+
+## Part 4: Verifying the Complete Setup
+
+### Appose mode (default)
+
+1. Open QuPath with the extension installed
+2. You should see **Extensions > DL Pixel Classifier** in the menu bar
+3. If this is first time: only **Setup DL Environment...** and **Utilities > Server Settings** are visible
+4. After running setup: all workflow items (Train, Apply, Toggle Prediction Overlay, etc.) appear
+5. Open the **Python Console** (Utilities menu) to verify GPU status
+
+### HTTP mode
+
+1. Start the Python server
+2. Open QuPath with the extension installed
+3. Disable Appose in preferences
+4. All workflow items should be visible immediately
+5. Use **Utilities > Server Settings** to test the connection
+
+If issues occur, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Part 5: Building from Source (for Developers)
+
+> This section is for **developers** who want to build the extension from source. End-users should download the pre-built JAR from GitHub Releases (see Part 1).
+
+### Build the extension
+
+```bash
+git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
+cd qupath-extension-DL-pixel-classifier
+./gradlew build
+```
+
+This produces a JAR file in `build/libs/`. Copy it to your QuPath extensions directory and restart QuPath.
+
+### Shadow JAR (bundled dependencies)
+
+For a self-contained JAR that includes all dependencies:
+
+```bash
+./gradlew shadowJar
+```
+
+### Running Python tests
+
+```bash
+cd python_server
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+### Java build requirements
+
+- Java JDK 21+
+- Gradle (wrapper included in the repository)
+
+## Part 6: Alternative -- External Python Server (HTTP Mode)
+
+> This is for **advanced setups** where the Python backend runs on a different machine (e.g., a dedicated GPU workstation). Most users should use the default Appose mode (Part 2).
+
+### 6a. Disable Appose in QuPath
 
 1. Go to **Edit > Preferences > DL Pixel Classifier**
 2. Uncheck **Use Appose (Embedded Python)**
 3. All workflow menu items will appear immediately (no environment setup needed)
 
-### 3b. Set up the Python server
+### 6b. Set up the Python server
 
 On the machine that will run the server:
 
@@ -120,7 +199,7 @@ pip install -e .
 > pip install -e .
 > ```
 
-### 3c. Start the server
+### 6c. Start the server
 
 ```bash
 dlclassifier-server
@@ -132,14 +211,14 @@ INFO:     Started server process
 INFO:     Uvicorn running on http://0.0.0.0:8765
 ```
 
-### 3d. Configure QuPath
+### 6d. Configure QuPath
 
 1. In QuPath, go to **Extensions > DL Pixel Classifier > Utilities > Server Settings**
 2. Set the host to the server machine's IP address (or `localhost` for same machine)
 3. Set the port to `8765` (default)
 4. Ensure firewall rules allow traffic on the configured port
 
-### 3e. Verify the connection
+### 6e. Verify the connection
 
 ```bash
 curl http://localhost:8765/api/v1/health
@@ -151,46 +230,3 @@ Expected response:
 ```
 
 > **Windows without curl:** Open `http://localhost:8765/docs` in a browser for the interactive Swagger UI.
-
-## Part 4: GPU Configuration
-
-### NVIDIA GPU (CUDA)
-
-1. Install the latest NVIDIA drivers from [nvidia.com/drivers](https://www.nvidia.com/drivers)
-2. Verify CUDA availability:
-   ```bash
-   python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
-   ```
-3. For best performance, ensure the PyTorch CUDA version matches your driver's CUDA version
-
-> With Appose mode, the embedded environment automatically installs CUDA-compatible PyTorch on Windows and Linux.
-
-### Apple Silicon (MPS)
-
-MPS support is automatic on macOS with Apple Silicon. Verify:
-```bash
-python -c "import torch; print(f'MPS: {torch.backends.mps.is_available()}')"
-```
-
-### CPU fallback
-
-If no GPU is detected, the backend automatically falls back to CPU. Training will be slower but functional.
-
-## Verifying the Complete Setup
-
-### Appose mode (default)
-
-1. Open QuPath with the extension installed
-2. You should see **Extensions > DL Pixel Classifier** in the menu bar
-3. If this is first time: only **Setup DL Environment...** and **Utilities > Server Settings** are visible
-4. After running setup: all workflow items (Train, Apply, Toggle Prediction Overlay, etc.) appear
-
-### HTTP mode
-
-1. Start the Python server
-2. Open QuPath with the extension installed
-3. Disable Appose in preferences
-4. All workflow items should be visible immediately
-5. Use **Utilities > Server Settings** to test the connection
-
-If issues occur, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

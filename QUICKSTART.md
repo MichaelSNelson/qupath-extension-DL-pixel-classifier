@@ -9,7 +9,6 @@ Get from zero to your first trained pixel classifier in about 10 minutes.
 | Component | Requirement |
 |-----------|-------------|
 | QuPath | 0.6.0 or later |
-| Java JDK | 21+ (for building the extension) |
 | GPU | NVIDIA GPU with CUDA recommended; Apple Silicon (MPS) also works; CPU fallback available |
 | Internet | Required for first-time environment setup (~2-4 GB download) |
 
@@ -17,22 +16,10 @@ Get from zero to your first trained pixel classifier in about 10 minutes.
 
 ---
 
-## Step 1: Clone the Repository
+## Step 1: Install the Extension
 
-```bash
-git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
-cd qupath-extension-DL-pixel-classifier
-```
-
----
-
-## Step 2: Build the Java Extension
-
-```bash
-./gradlew build
-```
-
-This produces a JAR file in `build/libs/`. Copy it to your QuPath extensions directory:
+1. Download the latest JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page
+2. Copy the JAR to your QuPath extensions directory:
 
 | OS | Typical extensions path |
 |----|------------------------|
@@ -40,11 +27,13 @@ This produces a JAR file in `build/libs/`. Copy it to your QuPath extensions dir
 | macOS | `~/Library/Application Support/QuPath/v0.6/extensions/` |
 | Linux | `~/.local/share/QuPath/v0.6/extensions/` |
 
-Alternatively, in QuPath: **Edit > Preferences > Extensions** shows the extensions directory path. Drop the JAR there and restart QuPath.
+3. Restart QuPath
+
+> **Tip:** In QuPath, **Edit > Preferences > Extensions** shows the extensions directory path. You can drag and drop the JAR there.
 
 ---
 
-## Step 3: Set Up the Python Environment
+## Step 2: Set Up the Python Environment
 
 On first launch after installing the extension, only **Setup DL Environment...** will be visible in the menu.
 
@@ -53,9 +42,12 @@ On first launch after installing the extension, only **Setup DL Environment...**
 3. Optionally uncheck **ONNX export support** (~200 MB savings) if you don't need it
 4. Click **Begin Setup**
 5. Wait for the download and configuration to complete (the dialog shows progress)
-6. Click **Close** when done
+6. When complete, the dialog reports which GPU backend was detected (CUDA, MPS, or CPU)
+7. Click **Close** when done
 
 The training and inference menu items now appear automatically. On subsequent launches, the environment is detected on disk and everything is ready immediately.
+
+> **GPU not detected?** If the setup reports CPU-only but you have an NVIDIA GPU, make sure your NVIDIA drivers are installed and try **Utilities > Rebuild DL Environment...** See [Troubleshooting](docs/TROUBLESHOOTING.md) for details.
 
 > **Alternative: External Python Server**
 >
@@ -63,9 +55,9 @@ The training and inference menu items now appear automatically. On subsequent la
 
 ---
 
-## Step 4: Train Your First Classifier
+## Step 3: Train Your First Classifier
 
-### 4a. Prepare annotations in QuPath
+### 3a. Prepare annotations in QuPath
 
 1. Open an image in QuPath
 2. Create at least two annotation classes (e.g., right-click in the annotation class list to add "Foreground" and "Background")
@@ -74,11 +66,11 @@ The training and inference menu items now appear automatically. On subsequent la
 
 > **Minimum requirement:** At least one annotation per class. More annotations = better results. Line/brush annotations work well -- you don't need to label every pixel.
 
-### 4b. Open the training dialog
+### 3b. Open the training dialog
 
 **Extensions > DL Pixel Classifier > Train Classifier...**
 
-### 4c. Configure training
+### 3c. Configure training
 
 The dialog has collapsible sections. For a quick first test:
 
@@ -94,7 +86,7 @@ The dialog has collapsible sections. For a quick first test:
 
 Leave everything else at defaults.
 
-### 4d. Start training
+### 3d. Start training
 
 Click **Start Training**. A progress window appears showing:
 - Export progress (extracting patches from annotations)
@@ -103,13 +95,13 @@ Click **Start Training**. A progress window appears showing:
 
 A 3-epoch test run should complete in under a minute on GPU.
 
-### 4e. Verify the result
+### 3e. Verify the result
 
 When training completes, the classifier is saved to your QuPath project under `classifiers/`. You can see it via **Extensions > DL Pixel Classifier > Manage Models...**
 
 ---
 
-## Step 5: Apply the Classifier
+## Step 4: Apply the Classifier
 
 1. Open an image (same one or a different one)
 2. Create annotation(s) around the region(s) you want to classify
@@ -135,142 +127,34 @@ To train from annotations across multiple project images:
 
 ---
 
-## Project Layout
+## Viewing Python Logs
 
-```
-qupath-extension-DL-pixel-classifier/
-|
-|-- src/                      # Java extension source
-|   |-- main/java/qupath/ext/dlclassifier/
-|       |-- controller/       # Workflow orchestration
-|       |-- model/            # Data objects (TrainingConfig, etc.)
-|       |-- service/          # ApposeService, ClassifierClient, ModelManager
-|       |-- ui/               # Dialogs, setup wizard, progress UI
-|       |-- utilities/        # AnnotationExtractor, TileProcessor
-|       +-- scripting/        # Groovy API, script generation
-|
-|-- python_server/            # Python backend (HTTP mode only)
-|   |-- dlclassifier_server/
-|       |-- main.py           # FastAPI app
-|       |-- routers/          # API endpoints
-|       +-- services/         # Training, inference, job management
-|
-|-- scripts/examples/         # Groovy script examples
-|-- build.gradle.kts          # Java build config
-+-- QUICKSTART.md             # This file
-```
+The **Python Console** shows all Python-side output, including GPU initialization, model loading, and error messages. This is the primary diagnostic tool for troubleshooting.
+
+1. Go to **Extensions > DL Pixel Classifier > Utilities > Python Console**
+2. The console displays all Python stderr output in real time
+3. Use **Copy to Clipboard** to capture logs for bug reports
+
+The Python Console is especially useful for:
+- Confirming GPU detection ("CUDA available: True" or "MPS available: True")
+- Diagnosing model loading errors
+- Viewing training/inference progress details from the Python side
+
+> **See also:** **Extensions > DL Pixel Classifier > Utilities > System Info** provides a full diagnostic dump (PyTorch version, CUDA version, GPU info, package versions) with a **Copy to Clipboard** button for sharing in bug reports.
 
 ---
 
-## Configuration
+## Troubleshooting Quick Reference
 
-The extension stores preferences via QuPath's preference system. Defaults:
+| Problem | Quick fix |
+|---------|-----------|
+| Setup fails or stalls | Check internet; try **Utilities > Rebuild DL Environment...** |
+| GPU not detected | Install NVIDIA drivers first, then rebuild environment |
+| Training fails immediately | Verify annotations have assigned classes; check QuPath log |
+| Out of memory | Reduce batch size (4 or 2) or tile size (256) |
+| Menu items don't appear | Complete Setup DL Environment; restart QuPath |
 
-**Backend & Server:**
-
-| Preference | Default | Where to change |
-|-----------|---------|-----------------|
-| Use Appose (Embedded Python) | `true` | Edit > Preferences > DL Pixel Classifier |
-| Server host | `localhost` | Extensions > DL Pixel Classifier > Utilities > Server Settings |
-| Server port | `8765` | Extensions > DL Pixel Classifier > Utilities > Server Settings |
-| Default tile size | `512` | Training / Inference dialog |
-| Default epochs | `50` | Training dialog |
-| Default batch size | `8` | Training dialog |
-
-**Training Dialog (remembered across sessions):**
-
-| Preference | Default | Description |
-|-----------|---------|-------------|
-| Architecture | `unet` | Last used model architecture |
-| Backbone | `resnet34` | Last used encoder backbone |
-| Validation split | `20%` | Percentage of data held for validation |
-| Horizontal flip | `true` | Augmentation: random horizontal flip |
-| Vertical flip | `true` | Augmentation: random vertical flip |
-| Rotation | `true` | Augmentation: random 90-degree rotation |
-| Color jitter | `false` | Augmentation: brightness/contrast variation |
-| Elastic deformation | `false` | Augmentation: elastic distortion |
-
-**Training Strategy (remembered across sessions):**
-
-These are in the collapsed **"TRAINING STRATEGY"** section of the training dialog.
-
-| Preference | Default | Description |
-|-----------|---------|-------------|
-| LR Scheduler | `One Cycle` | Learning rate schedule (One Cycle / Cosine Annealing / Step Decay / None) |
-| Loss Function | `Cross Entropy + Dice` | Loss function (CE+Dice optimizes region overlap; CE alone over-weights easy pixels) |
-| Early Stop Metric | `Mean IoU` | Metric for early stopping (Mean IoU / Validation Loss) |
-| Early Stop Patience | `15` | Epochs to wait without improvement before stopping |
-| Mixed Precision | `true` | Use FP16/FP32 automatic mixed precision on CUDA GPUs (~2x speedup) |
-
-**Inference Dialog (remembered across sessions):**
-
-| Preference | Default | Description |
-|-----------|---------|-------------|
-| Output type | `MEASUREMENTS` | How to output classification results |
-| Blend mode | `LINEAR` | How overlapping tiles are merged |
-| Smoothing | `1.0` | Boundary smoothing amount |
-| Apply to selected | `true` | Apply to selected annotations only |
-| Create backup | `false` | Back up measurements before overwriting |
-
-> **Note:** Dialog settings are saved automatically when you click "Start Training" or "Apply". The next time you open the dialog, your previous settings are restored.
-
-If the Python server runs on a different machine (e.g., a GPU workstation), change the host/port in Server Settings to point to that machine's IP and port.
-
----
-
-## Scripting (Headless / Batch)
-
-Both dialogs have a **Copy as Script** button that generates a runnable Groovy script from the current settings.
-
-**Quick example -- apply a classifier to all project images:**
-
-```groovy
-import qupath.ext.dlclassifier.scripting.DLClassifierScripts
-
-def classifier = DLClassifierScripts.loadClassifier("test_classifier_v1")
-
-for (entry in getProject().getImageList()) {
-    def imageData = entry.readImageData()
-    DLClassifierScripts.classifyRegions(classifier, imageData.getAnnotationObjects())
-    entry.saveImageData(imageData)
-}
-println "Done"
-```
-
-See `scripts/examples/` for more examples.
-
----
-
-## Troubleshooting
-
-### Environment setup fails or stalls
-
-| Symptom | Fix |
-|---------|-----|
-| Setup dialog shows error | Check internet connection; try again with **Retry** |
-| Download is very slow | The initial download is ~2-4 GB; expect several minutes on slower connections |
-| Environment corrupted | Use **Utilities > Rebuild DL Environment...** to delete and re-download |
-| Menu items don't appear after setup | Close and reopen QuPath; verify `~/.local/share/appose/dl-pixel-classifier/.pixi/` exists |
-
-### Training fails immediately
-
-- Make sure you have annotations with assigned classes
-- The selected classes in the dialog must match annotation classes in the image
-- Check the QuPath log (**View > Show log**) for detailed error messages
-
-### Out of memory
-
-- Reduce **batch size** (try 4 or 2)
-- Use a smaller backbone (`mobilenet_v2` instead of `resnet50`)
-- Reduce **tile size** (256 instead of 512)
-
-### HTTP mode: Server won't start
-
-| Symptom | Fix |
-|---------|-----|
-| `ModuleNotFoundError: No module named 'torch'` | Activate your venv first, then `pip install -e .` |
-| Port 8765 already in use | Kill the other process, or start with `dlclassifier-server --port 8766` and update QuPath's Server Settings |
-| QuPath can't connect | Verify server is running, check Server Settings, check firewall rules |
+See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for the full troubleshooting guide.
 
 ---
 
@@ -282,4 +166,20 @@ See `scripts/examples/` for more examples.
 - **Experiment with backbones** -- try a larger backbone (resnet50) or a histology-pretrained backbone for tissue classification, or import a custom ONNX model
 - **Multi-image training** -- combine annotations from several images for a more robust classifier
 - **Tune training strategy** -- expand the "TRAINING STRATEGY" section in the training dialog to adjust the LR scheduler, loss function, early stopping metric/patience, and mixed precision
-- See the full [README](README.md) and [Python server docs](python_server/README.md) for the complete API reference
+- See the [Training Guide](docs/TRAINING_GUIDE.md) and [Inference Guide](docs/INFERENCE_GUIDE.md) for detailed parameter explanations
+
+---
+
+## Building from Source
+
+> This section is for **developers** contributing to the extension. End-users should download the pre-built JAR from GitHub Releases (see Step 1 above).
+
+```bash
+git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
+cd qupath-extension-DL-pixel-classifier
+./gradlew build
+```
+
+This produces a JAR file in `build/libs/`. Copy it to your QuPath extensions directory and restart QuPath.
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) Part 5 for full build instructions and testing details.

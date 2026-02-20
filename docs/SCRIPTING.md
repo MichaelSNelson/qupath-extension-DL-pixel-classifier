@@ -1,5 +1,7 @@
 # Scripting Guide
 
+> **Audience:** This guide is for power users and developers who want to automate workflows via Groovy scripting in QuPath's script editor.
+
 How to use the Groovy scripting API for batch processing and reproducible workflows.
 
 ## Overview
