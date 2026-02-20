@@ -106,12 +106,12 @@ Click **Apply** to start inference. Progress is shown in the QuPath log.
 
 For quick visual inspection without the full inference dialog:
 
-1. **Extensions > DL Pixel Classifier > Live DL Prediction** (toggle)
+1. **Extensions > DL Pixel Classifier > Toggle Prediction Overlay** (check/uncheck)
 2. Select a classifier from the popup
 3. The overlay renders as you pan and zoom
 4. Uncheck to remove the overlay
 
-Use **Extensions > DL Pixel Classifier > Remove Overlay** to permanently remove and free resources.
+Use **Extensions > DL Pixel Classifier > Remove Classification Overlay** to permanently remove and free resources.
 
 ## Copy as Script
 

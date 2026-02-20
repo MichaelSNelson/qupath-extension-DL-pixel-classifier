@@ -17,8 +17,8 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Mixed precision training** (AMP) for ~2x speedup on CUDA GPUs
 - **Configurable training strategy** via collapsed "Training Strategy" section in the training dialog (scheduler, loss function, early stopping metric/patience, mixed precision)
 - **Histology-pretrained encoders** from TCGA/Lunit/Kather100K for better tissue feature extraction
-- **Pluggable architecture** supporting UNet, SegFormer, and custom ONNX models
-- **REST API communication** with Python deep learning server
+- **Pluggable architecture** supporting UNet and custom ONNX models
+- **Appose shared-memory IPC** for embedded Python inference (REST API available for external server mode)
 - **Groovy scripting API** for batch processing
 - **Headless builder API** for running workflows without GUI
 - **"Copy as Script" buttons** in dialogs for reproducible workflows
@@ -92,7 +92,7 @@ The extension supports two backend modes for running the Python deep learning en
 The default mode uses [Appose](https://github.com/apposed/appose) to manage an embedded Python environment with PyTorch, eliminating the need for a separate Python installation or server process.
 
 - **First-time setup**: A guided setup wizard (**Extensions > DL Pixel Classifier > Setup DL Environment...**) downloads and configures the environment (~2-4 GB). ONNX export support can be optionally excluded to reduce download size.
-- **Environment location**: `~/.appose/pixi/dl-pixel-classifier/`
+- **Environment location**: `~/.local/share/appose/dl-pixel-classifier/`
 - **Recovery**: Use **Utilities > Rebuild DL Environment...** to delete and re-download the environment if it becomes corrupted.
 - Communication uses Appose's shared-memory IPC (no network sockets).
 
@@ -112,50 +112,66 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for full HTTP server setup inst
 ```
 qupath-extension-DL-pixel-classifier/
 ├── src/main/java/qupath/ext/dlclassifier/
-│   ├── SetupDLClassifier.java       # Extension entry point & menu management
-│   ├── classifier/                   # Classifier type system
+│   ├── SetupDLClassifier.java        # Extension entry point & menu management
+│   ├── DLClassifierChecks.java       # Startup validation
+│   ├── classifier/                    # Classifier type system
 │   │   ├── ClassifierHandler.java
 │   │   ├── ClassifierRegistry.java
 │   │   └── handlers/
-│   │       └── UNetHandler.java
-│   ├── controller/                   # Workflow orchestration
+│   │       ├── UNetHandler.java
+│   │       └── CustomONNXHandler.java
+│   ├── controller/                    # Workflow orchestration
 │   │   ├── DLClassifierController.java
 │   │   ├── TrainingWorkflow.java
-│   │   └── InferenceWorkflow.java
-│   ├── service/                      # Backend services
-│   │   ├── ApposeService.java       # Appose embedded Python management
-│   │   ├── ClassifierClient.java    # HTTP client (external server mode)
-│   │   ├── BackendFactory.java      # Backend selection (Appose vs HTTP)
+│   │   ├── InferenceWorkflow.java
+│   │   └── ModelManagementWorkflow.java
+│   ├── service/                       # Backend services
+│   │   ├── ApposeService.java        # Appose embedded Python management
+│   │   ├── ApposeClassifierBackend.java  # Appose backend implementation
+│   │   ├── HttpClassifierBackend.java    # HTTP backend implementation
+│   │   ├── ClassifierBackend.java    # Backend interface
+│   │   ├── ClassifierClient.java     # HTTP client (external server mode)
+│   │   ├── BackendFactory.java       # Backend selection (Appose vs HTTP)
+│   │   ├── DLPixelClassifier.java    # QuPath PixelClassifier integration
 │   │   ├── ModelManager.java
 │   │   └── OverlayService.java
-│   ├── model/                        # Data objects
+│   ├── model/                         # Data objects
 │   │   ├── TrainingConfig.java
 │   │   ├── InferenceConfig.java
 │   │   ├── ChannelConfiguration.java
 │   │   └── ClassifierMetadata.java
-│   ├── utilities/                    # Processing utilities
-│   │   ├── AnnotationExtractor.java # Training data export (single + multi-image)
+│   ├── utilities/                     # Processing utilities
+│   │   ├── AnnotationExtractor.java  # Training data export (single + multi-image)
 │   │   ├── TileProcessor.java
 │   │   ├── ChannelNormalizer.java
+│   │   ├── BitDepthConverter.java
 │   │   └── OutputGenerator.java
-│   ├── ui/                           # UI components
-│   │   ├── SetupEnvironmentDialog.java  # First-time setup wizard
+│   ├── ui/                            # UI components
+│   │   ├── TrainingDialog.java
+│   │   ├── InferenceDialog.java
+│   │   ├── SetupEnvironmentDialog.java   # First-time setup wizard
+│   │   ├── ChannelSelectionPanel.java
+│   │   ├── LayerFreezePanel.java
+│   │   ├── ProgressMonitorController.java
+│   │   ├── PythonConsoleWindow.java
 │   │   └── TooltipHelper.java
 │   ├── scripting/
-│   │   ├── DLClassifierScripts.java  # Groovy API
-│   │   └── ScriptGenerator.java      # Dialog-to-script generation
+│   │   ├── DLClassifierScripts.java   # Groovy API
+│   │   └── ScriptGenerator.java       # Dialog-to-script generation
 │   └── preferences/
 │       └── DLClassifierPreferences.java
 │
-├── python_server/                    # Python DL server (HTTP mode)
+├── python_server/                     # Python DL server (HTTP mode)
 │   └── dlclassifier_server/
-│       ├── main.py                   # FastAPI application
-│       ├── routers/                  # API endpoints
-│       ├── services/                 # Training/inference services
-│       └── utils/                    # Shared utilities (normalization, etc.)
+│       ├── main.py                    # FastAPI application
+│       ├── routers/                   # API endpoints
+│       ├── services/                  # Training/inference services
+│       └── utils/                     # Shared utilities (normalization, etc.)
 ```
 
-## REST API
+## REST API (HTTP Mode Only)
+
+> These endpoints apply when using the external Python server (HTTP mode). In the default Appose mode, communication uses shared-memory IPC and no HTTP server is involved.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

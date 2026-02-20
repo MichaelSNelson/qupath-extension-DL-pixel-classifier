@@ -113,7 +113,7 @@ Loss: CE + Dice
 |----------|-----------|
 | Very small dataset (<200 tiles) | efficientnet-b0, freeze all encoder, augmentation on, epochs=200, batch=4 |
 | Large dataset (>10000 tiles) | resnet50, unfreeze all, epochs=50, batch=16, lr=5e-4 |
-| Multi-scale features needed | Try FPN or DeepLabV3+ instead of UNet |
+| Multi-scale features needed | Try a larger backbone (resnet50) or import a custom ONNX model |
 | Staining variation between slides | Enable color jitter augmentation |
 | Tissue distortion artifacts | Enable elastic deformation augmentation |
 
@@ -169,6 +169,6 @@ The extension supports four normalization strategies. The choice affects how pix
 ### High effort
 
 1. **Annotate more images** for diversity
-2. **Try different architectures** (DeepLabV3+, FPN)
+2. **Try a custom ONNX model** trained externally with a different architecture
 3. **Manual layer freeze tuning** for your specific dataset
 4. **Cross-validation** using multiple train/test splits

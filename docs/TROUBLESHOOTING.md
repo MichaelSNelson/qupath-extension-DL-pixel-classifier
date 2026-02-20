@@ -14,7 +14,7 @@ Common issues and solutions for the DL Pixel Classifier extension.
 
 ### Menu items don't appear after setup
 
-1. Verify the environment directory exists: `~/.appose/pixi/dl-pixel-classifier/.pixi/`
+1. Verify the environment directory exists: `~/.local/share/appose/dl-pixel-classifier/.pixi/`
 2. Close and reopen QuPath
 3. Check the QuPath log (**View > Show log**) for errors
 
@@ -72,7 +72,7 @@ If you want to use an external Python server instead, disable Appose in **Edit >
 
 | Cause | Fix |
 |-------|-----|
-| Running on CPU | Check GPU detection: `curl http://localhost:8765/api/v1/gpu` |
+| Running on CPU | **Appose mode:** Check the QuPath log (**View > Show log**) for "CUDA available" at startup. **HTTP mode:** `curl http://localhost:8765/api/v1/gpu` |
 | Mixed precision disabled | Enable in Training Strategy section |
 | Very large tile size | Reduce tile size (256 instead of 512) |
 | Very large batch size | Reduce batch size |

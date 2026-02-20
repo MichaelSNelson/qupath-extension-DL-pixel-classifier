@@ -232,7 +232,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         SeparatorMenuItem sep1 = new SeparatorMenuItem();
         sep1.visibleProperty().bind(environmentReady);
 
-        // 3) Live DL Prediction - toggle live tile classification on/off
+        // 3) Toggle Prediction Overlay - toggle live tile classification on/off
         //    When checked and no overlay exists, prompts user to select a classifier
         CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
         TooltipHelper.installOnMenuItem(livePredictionOption,
@@ -537,7 +537,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
     /**
      * Prompts the user to select a classifier and creates a live overlay.
-     * Called when the user checks "Live DL Prediction" and no overlay exists.
+     * Called when the user checks "Toggle Prediction Overlay" and no overlay exists.
      */
     private void createOverlayFromClassifierSelection(QuPathGUI qupath,
                                                        OverlayService overlayService,

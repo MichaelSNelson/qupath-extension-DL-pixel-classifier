@@ -63,18 +63,32 @@ Multi-image training combines patches from all selected images into one training
 | Architecture | Best for | Reference |
 |-------------|----------|-----------|
 | **UNet** | General-purpose segmentation. Good default. | [Paper](https://arxiv.org/abs/1505.04597) |
-| **DeepLabV3+** | Large structures spanning tiles | - |
-| **FPN** | Objects varying significantly in size | - |
-| **PSPNet** | Tasks requiring global context | - |
+| **Custom ONNX** | Importing externally trained models. Advanced users. | - |
 
 ### Backbone (Encoder)
 
+The UNet architecture supports the following backbones:
+
+**Standard backbones (ImageNet-pretrained):**
+
 | Backbone | Speed | Accuracy | VRAM | Notes |
 |----------|-------|----------|------|-------|
+| resnet18 | Very fast | Good | Very low | Lightweight option |
 | resnet34 | Fast | Good | Low | Best default |
 | resnet50 | Medium | Better | Medium | For complex tasks |
 | efficientnet-b0 | Very fast | Good | Very low | Lightweight |
-| Histology backbones | Medium | Best for tissue | Medium | Pretrained on tissue patches ([smp encoders](https://smp.readthedocs.io/en/latest/encoders.html)) |
+| efficientnet-b1 | Fast | Good | Low | Slightly larger than b0 |
+| efficientnet-b2 | Fast | Better | Low | Good accuracy/speed balance |
+| mobilenet_v2 | Very fast | Good | Very low | Smallest model |
+
+**Histology-pretrained backbones (ResNet-50 based, ~100 MB download on first use):**
+
+| Backbone | Pretraining | Notes |
+|----------|-------------|-------|
+| resnet50_lunit-swav (Histology) | Lunit SwAV self-supervised | Best for general tissue classification |
+| resnet50_lunit-bt (Histology) | Lunit Barlow Twins self-supervised | Alternative self-supervised approach |
+| resnet50_kather100k (Histology) | Kather100K supervised | Trained on colorectal tissue patches |
+| resnet50_tcga-brca (Histology) | TCGA-BRCA supervised | Trained on breast cancer tissue patches |
 
 Histology-pretrained backbones (marked "Histology" in the dropdown) use weights from millions of tissue patches instead of ImageNet. They typically produce better results for histopathology with less training data.
 
@@ -91,7 +105,7 @@ Histology-pretrained backbones (marked "Histology" in the dropdown) use weights 
 | **Tile Size** | 512 | Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
 | **Resolution** | 1x | 1x for cell-level, 2-4x for tissue-level classification. |
 | **Tile Overlap** | 0% | 10-25% generates more patches from limited annotations. |
-| **Line Stroke Width** | 5 | Width for polyline annotation masks. Increase for sparse lines. |
+| **Line Stroke Width** | 0 | Width for polyline annotation masks (0 = use QuPath's stroke thickness). Increase for sparse lines. |
 
 ### Training Strategy (advanced, collapsed by default)
 

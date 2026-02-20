@@ -68,9 +68,9 @@ The environment is stored at:
 
 | OS | Path |
 |----|------|
-| Windows | `C:\Users\<you>\.appose\pixi\dl-pixel-classifier\` |
-| macOS | `~/.appose/pixi/dl-pixel-classifier/` |
-| Linux | `~/.appose/pixi/dl-pixel-classifier/` |
+| Windows | `C:\Users\<you>\.local\share\appose\dl-pixel-classifier\` |
+| macOS | `~/.local/share/appose/dl-pixel-classifier/` |
+| Linux | `~/.local/share/appose/dl-pixel-classifier/` |
 
 ### Rebuilding the environment
 
@@ -183,7 +183,7 @@ If no GPU is detected, the backend automatically falls back to CPU. Training wil
 1. Open QuPath with the extension installed
 2. You should see **Extensions > DL Pixel Classifier** in the menu bar
 3. If this is first time: only **Setup DL Environment...** and **Utilities > Server Settings** are visible
-4. After running setup: all workflow items (Train, Apply, Live Prediction, etc.) appear
+4. After running setup: all workflow items (Train, Apply, Toggle Prediction Overlay, etc.) appear
 
 ### HTTP mode
 

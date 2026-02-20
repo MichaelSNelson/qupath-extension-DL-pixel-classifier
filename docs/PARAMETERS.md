@@ -22,8 +22,8 @@ Complete reference for every parameter in the training and inference dialogs. Th
 
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **Architecture** | UNet, DeepLabV3+, FPN, PSPNet | Segmentation architecture. UNet is the best general-purpose choice. See [UNet paper](https://arxiv.org/abs/1505.04597). |
-| **Backbone** | resnet34, resnet50, efficientnet-b0, histology variants | Pretrained encoder network. Histology backbones use tissue-pretrained weights. See [smp encoders](https://smp.readthedocs.io/en/latest/encoders.html). |
+| **Architecture** | UNet, Custom ONNX | Segmentation architecture. UNet is the best general-purpose choice. Custom ONNX allows importing externally trained models. See [UNet paper](https://arxiv.org/abs/1505.04597). |
+| **Backbone** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, plus 4 histology-pretrained variants (resnet50_lunit-swav, resnet50_lunit-bt, resnet50_kather100k, resnet50_tcga-brca) | Pretrained encoder network. Histology backbones use tissue-pretrained weights instead of ImageNet. |
 
 ### Training Hyperparameters
 
@@ -36,7 +36,7 @@ Complete reference for every parameter in the training and inference dialogs. Th
 | **Tile Size** | 512 | 64-1024 | Patch size in pixels. Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
 | **Resolution** | 1x | 1x, 2x, 4x, 8x | Image downsample level. Higher = more context per tile, less detail. |
 | **Tile Overlap** | 0% | 0-50% | Overlap between training tiles. 10-25% generates more patches from limited annotations. |
-| **Line Stroke Width** | 5 | 1-50 | Pixel width for polyline annotation masks. Pre-filled from QuPath's stroke thickness. |
+| **Line Stroke Width** | 0 | 0-50 | Pixel width for polyline annotation masks. Default 0 means "use QuPath's annotation stroke thickness". |
 
 ### Training Strategy (advanced)
 

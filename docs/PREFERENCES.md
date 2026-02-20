@@ -66,6 +66,9 @@ These are saved when you click "Start Training" and restored next time you open 
 | Rotation | `dlclassifier.augRotation` | `true` | Augmentation: 90-degree rotation |
 | Color Jitter | `dlclassifier.augColorJitter` | `false` | Augmentation: color perturbation |
 | Elastic Deformation | `dlclassifier.augElasticDeform` | `false` | Augmentation: elastic distortion |
+| Resolution Downsample | `dlclassifier.defaultDownsample` | `1.0` | Resolution downsample factor (1x, 2x, 4x, 8x) |
+| Context Scale | `dlclassifier.defaultContextScale` | `1` | Multi-scale context level |
+| Line Stroke Width | `dlclassifier.lastLineStrokeWidth` | `0` | Line annotation mask width (0 = use QuPath's annotation stroke thickness) |
 
 ## Training Strategy Preferences (remembered across sessions)
 

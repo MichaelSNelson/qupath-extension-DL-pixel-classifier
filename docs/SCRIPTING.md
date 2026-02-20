@@ -129,7 +129,7 @@ def trainingConfig = TrainingConfig.builder()
 |--------|------|-------------|
 | `.tileSize(int)` | int | Tile size in pixels (must be divisible by 32) |
 | `.overlap(int)` | int | Overlap in pixels |
-| `.overlapPercent(double)` | double | Overlap as percentage (0-20) |
+| `.overlapPercent(double)` | double | Overlap as percentage (0-50) |
 | `.blendMode(BlendMode)` | enum | LINEAR, GAUSSIAN, or NONE |
 | `.outputType(OutputType)` | enum | MEASUREMENTS, OBJECTS, or OVERLAY |
 | `.objectType(OutputObjectType)` | enum | DETECTION or ANNOTATION |

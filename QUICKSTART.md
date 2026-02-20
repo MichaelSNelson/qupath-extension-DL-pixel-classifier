@@ -250,7 +250,7 @@ See `scripts/examples/` for more examples.
 | Setup dialog shows error | Check internet connection; try again with **Retry** |
 | Download is very slow | The initial download is ~2-4 GB; expect several minutes on slower connections |
 | Environment corrupted | Use **Utilities > Rebuild DL Environment...** to delete and re-download |
-| Menu items don't appear after setup | Close and reopen QuPath; verify `~/.appose/pixi/dl-pixel-classifier/.pixi/` exists |
+| Menu items don't appear after setup | Close and reopen QuPath; verify `~/.local/share/appose/dl-pixel-classifier/.pixi/` exists |
 
 ### Training fails immediately
 
@@ -279,7 +279,7 @@ See `scripts/examples/` for more examples.
 - **Increase epochs** once you've verified the pipeline works (50-100 for real training)
 - **Try histology-pretrained backbones** -- select a backbone ending in "(Histology)" for weights pretrained on tissue patches instead of ImageNet. These produce better features for tissue classification and need less layer freezing. ~100MB download on first use (cached afterward).
 - **Try transfer learning** -- freeze early encoder layers for faster convergence on small datasets
-- **Experiment with architectures** -- UNet++ and DeepLabV3+ often outperform vanilla UNet
+- **Experiment with backbones** -- try a larger backbone (resnet50) or a histology-pretrained backbone for tissue classification, or import a custom ONNX model
 - **Multi-image training** -- combine annotations from several images for a more robust classifier
 - **Tune training strategy** -- expand the "TRAINING STRATEGY" section in the training dialog to adjust the LR scheduler, loss function, early stopping metric/patience, and mixed precision
 - See the full [README](README.md) and [Python server docs](python_server/README.md) for the complete API reference
