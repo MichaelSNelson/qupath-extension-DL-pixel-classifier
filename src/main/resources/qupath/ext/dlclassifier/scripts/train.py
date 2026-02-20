@@ -30,6 +30,19 @@ if inference_service is None:
 
 # Import training service (heavier import, done here rather than init)
 from dlclassifier_server.services.training_service import TrainingService
+import dlclassifier_server.services.training_service as _tsm
+import numpy as _np
+
+# Fix: np.frombuffer returns read-only arrays; ensure _load_patch always
+# returns writable arrays so normalization can modify in-place.
+# This patches the installed package which may be stale (Appose pip cache).
+_orig_lp = _tsm.SegmentationDataset._load_patch
+@staticmethod
+def _writable_load_patch(img_path):
+    arr = _orig_lp(img_path)
+    return arr.copy() if not arr.flags.writeable else arr
+_tsm.SegmentationDataset._load_patch = _writable_load_patch
+
 training_service = TrainingService(gpu_manager=gpu_manager)
 
 # Log device and training configuration for diagnostics

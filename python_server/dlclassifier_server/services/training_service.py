@@ -405,7 +405,7 @@ class SegmentationDataset(Dataset):
                 header = np.frombuffer(f.read(12), dtype=np.int32)
                 h, w, c = int(header[0]), int(header[1]), int(header[2])
                 data = np.frombuffer(f.read(), dtype=np.float32)
-            return data.reshape(h, w, c)
+            return data.reshape(h, w, c).copy()
         if suffix in ('.tif', '.tiff'):
             try:
                 import tifffile

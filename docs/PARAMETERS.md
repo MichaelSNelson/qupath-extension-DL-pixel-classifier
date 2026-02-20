@@ -23,7 +23,7 @@ Complete reference for every parameter in the training and inference dialogs. Th
 | Parameter | Options | Description |
 |-----------|---------|-------------|
 | **Architecture** | UNet, Custom ONNX | Segmentation architecture. UNet is the best general-purpose choice. Custom ONNX allows importing externally trained models. See [UNet paper](https://arxiv.org/abs/1505.04597). |
-| **Backbone** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, plus 4 histology-pretrained variants (resnet50_lunit-swav, resnet50_lunit-bt, resnet50_kather100k, resnet50_tcga-brca) | Pretrained encoder network. Histology backbones use tissue-pretrained weights instead of ImageNet. |
+| **Backbone** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, plus 4 histology-pretrained variants (resnet50_lunit-swav, resnet50_lunit-bt, resnet50_kather100k, resnet50_tcga-brca) | Pretrained encoder network. Histology backbones use H&E tissue-pretrained weights (20x, 3-channel RGB) instead of ImageNet -- best for H&E brightfield. For fluorescence or multi-channel images, use ImageNet backbones. See [Backbone Selection](BEST_PRACTICES.md#backbone-selection). |
 
 ### Training Hyperparameters
 

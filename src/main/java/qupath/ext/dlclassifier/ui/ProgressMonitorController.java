@@ -59,6 +59,8 @@ public class ProgressMonitorController {
     private final Map<String, XYChart.Series<Number, Number>> iouSeriesMap = new LinkedHashMap<>();
     private Map<String, Integer> classColors = new LinkedHashMap<>();
 
+    private final TitledPane logPane;
+
     private final DoubleProperty overallProgress = new SimpleDoubleProperty(0);
     private final DoubleProperty currentProgress = new SimpleDoubleProperty(0);
     private final StringProperty status = new SimpleStringProperty("Initializing...");
@@ -195,7 +197,7 @@ public class ProgressMonitorController {
         }
 
         // Log section
-        TitledPane logPane = new TitledPane("Log", logArea);
+        logPane = new TitledPane("Log", logArea);
         logPane.setExpanded(false);
         root.getChildren().add(logPane);
 
@@ -450,12 +452,15 @@ public class ProgressMonitorController {
             if (success) {
                 status.set("Complete");
                 statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: green;");
+                detail.set(message);
             } else {
                 status.set("Failed");
                 statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: red;");
+                detail.set("Error -- see Log below");
+                detailLabel.setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
+                logPane.setExpanded(true);
             }
 
-            detail.set(message);
             log(message);
         });
     }

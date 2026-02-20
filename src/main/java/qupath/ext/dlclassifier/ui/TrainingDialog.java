@@ -478,14 +478,15 @@ public class TrainingDialog {
             backboneCombo = new ComboBox<>();
             TooltipHelper.installWithLink(backboneCombo,
                     "Pretrained encoder network that extracts features:\n\n" +
-                    "resnet34: Good balance of speed and accuracy. Best default.\n" +
-                    "resnet50: Deeper, more capacity, slower. For complex tasks.\n" +
-                    "efficientnet-b0: Lightweight, fast inference.\n\n" +
-                    "Histology encoders (marked 'Histology') use weights pretrained\n" +
-                    "on millions of tissue patches instead of ImageNet. They provide\n" +
-                    "better feature extraction for tissue classification and require\n" +
-                    "less layer freezing. ~100MB download on first use (cached).",
-                    "https://smp.readthedocs.io/en/latest/encoders.html");
+                    "resnet34: Best default. Good balance of speed and accuracy.\n" +
+                    "resnet50: More capacity. For large datasets or complex tasks.\n" +
+                    "efficientnet-b0: Lightweight, fast inference, low VRAM.\n\n" +
+                    "Histology encoders (marked 'Histology') were pretrained on\n" +
+                    "millions of H&E tissue patches at 20x. Best for H&E brightfield.\n" +
+                    "NOT recommended for fluorescence or multi-channel images --\n" +
+                    "use ImageNet backbones (resnet34/50) for IF instead.\n" +
+                    "~100MB download on first use (cached).",
+                    "https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection");
             updateBackboneOptions(architectureCombo.getValue());
 
             grid.add(new Label("Encoder:"), 0, row);
@@ -526,14 +527,16 @@ public class TrainingDialog {
                 if (newVal != null && newVal.contains("_")) {
                     // Histology encoder selected
                     infoLabel.setText(
-                            "This backbone uses histology-pretrained weights (tissue patches). " +
-                            "Features are already tissue-relevant, so less freezing is needed. " +
-                            "~100MB download on first use (cached for future runs).");
+                            "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
+                            "Best for H&E brightfield. Less freezing needed. " +
+                            "For fluorescence or multi-channel images, use an ImageNet backbone instead. " +
+                            "~100MB download on first use (cached).");
                     usePretrainedCheck.setText("Use histology pretrained weights");
                 } else {
                     infoLabel.setText(
-                            "Transfer learning uses pretrained weights from ImageNet. " +
-                            "Freeze early layers to preserve general features, train later layers to adapt to your data.");
+                            "ImageNet-pretrained weights provide general edge/texture features " +
+                            "that transfer to most image types including fluorescence and multi-channel. " +
+                            "Freeze early layers to preserve these features.");
                     usePretrainedCheck.setText("Use ImageNet pretrained weights");
                 }
             });

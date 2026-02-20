@@ -37,6 +37,8 @@ def normalize(img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
 
     # Fall back to per-tile normalization
     if per_channel and img.ndim == 3 and img.shape[2] > 1:
+        if not img.flags.writeable:
+            img = img.copy()
         for c in range(img.shape[2]):
             img[..., c] = _normalize_single(img[..., c], norm_config, strategy)
     else:
@@ -64,6 +66,8 @@ def _normalize_precomputed(
         Normalized image array
     """
     if per_channel and img.ndim == 3 and img.shape[2] > 1:
+        if not img.flags.writeable:
+            img = img.copy()
         for c in range(min(img.shape[2], len(channel_stats))):
             stats = channel_stats[c]
             img[..., c] = _normalize_with_stats(img[..., c], stats, strategy)

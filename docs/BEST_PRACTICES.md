@@ -4,32 +4,64 @@ Guidance for backbone selection, annotation strategy, hyperparameter tuning, and
 
 ## Backbone Selection
 
+### Quick reference by image type
+
+| Image type | Best backbone | Why |
+|-----------|--------------|-----|
+| H&E brightfield (20x) | Histology backbone | Pretrained on millions of H&E patches at 20x -- features transfer directly |
+| H&E brightfield (other mag) | Histology backbone or resnet34 | Histology backbones still help but were trained at 20x; ImageNet is a safe fallback |
+| Fluorescence (1-3 channels) | resnet34 (ImageNet) | ImageNet edge/texture features transfer well; histology H&E colors do not match IF |
+| Multiplex IF (4+ channels) | resnet34 or resnet50 (ImageNet) | The first conv layer is automatically adapted to N input channels; ImageNet is the best starting point |
+| Spectral / hyperspectral | resnet34 (ImageNet) | Same channel adaptation; more channels need more training data |
+
+### Understanding histology-pretrained backbones
+
+The histology-pretrained encoders were all trained on **3-channel H&E-stained brightfield** images at approximately **20x magnification** (0.5 um/px). Their learned features are specific to H&E color distributions and tissue morphology at that resolution:
+
+| Encoder | Training data | Magnification | Channels | Method |
+|---------|-------------|---------------|----------|--------|
+| ResNet-50 Lunit SwAV | 19M TCGA H&E patches | ~20x | 3 (RGB) | SwAV self-supervised |
+| ResNet-50 Lunit Barlow Twins | 19M TCGA H&E patches | ~20x | 3 (RGB) | Barlow Twins self-supervised |
+| ResNet-50 Kather100K | 100K colorectal H&E patches | 20x (0.5 um/px) | 3 (RGB) | Supervised classification |
+| ResNet-50 TCGA-BRCA | TCGA breast cancer H&E | ~20x | 3 (RGB) | SimCLR self-supervised |
+
+**When histology backbones help most:**
+- H&E brightfield at 20x -- this is exactly the domain they were trained on
+- H&E at other magnifications -- features still partially transfer, especially tissue texture patterns
+- Any 3-channel brightfield stain with eosin-like color distributions
+
+**When to use ImageNet backbones instead:**
+- **Fluorescence / IF images**: Histology backbones learned H&E-specific color features (pink eosin, blue hematoxylin). These do not transfer to fluorescence intensity patterns. ImageNet backbones provide better generic edge and texture features.
+- **Multi-channel images (>3 channels)**: When the model has more than 3 input channels, the first convolutional layer must be adapted regardless of pretraining. ImageNet weights for the first conv are replicated across the extra channels. Histology first-conv weights encode H&E color responses that would be meaningless for IF channel combinations.
+- **Non-tissue images**: Bright-field stains other than H&E where color patterns differ significantly.
+
 ### By dataset size
 
 | Dataset size | Recommended backbone | Freeze strategy |
 |-------------|---------------------|-----------------|
-| <200 tiles | resnet34 or efficientnet-b0 | Freeze all encoder |
-| 200-1000 tiles | resnet34 | Freeze early layers |
+| <200 tiles | resnet34 or efficientnet-b0 | Freeze all encoder layers |
+| 200-1000 tiles | resnet34 | Freeze early layers (first 2 blocks) |
 | 1000-5000 tiles | resnet34 or resnet50 | Freeze first 1-2 blocks |
-| >5000 tiles | resnet50 or histology backbone | Unfreeze most/all |
-
-### By image type
-
-| Image type | Recommended backbone | Notes |
-|-----------|---------------------|-------|
-| H&E brightfield | Histology backbone (if available) | Tissue-pretrained features transfer directly |
-| H&E brightfield | resnet34 (ImageNet) | Good alternative, widely tested |
-| Fluorescence | resnet34 | ImageNet features transfer reasonably well |
-| Multi-channel (>3) | resnet34 | First conv layer adapts to channel count |
+| >5000 tiles | resnet50 (or histology for H&E) | Unfreeze most or all layers |
 
 ### By computational resources
 
-| VRAM | Recommended | Max tile size at batch=8 |
+| VRAM | Recommended backbone | Max tile size at batch=8 |
 |------|-------------|--------------------------|
 | 4 GB | efficientnet-b0 | 256px |
 | 8 GB | resnet34 | 512px |
 | 12+ GB | resnet50 | 512-1024px |
 | 24+ GB | resnet50 | 1024px |
+
+### Multi-channel fluorescence tips
+
+When working with multiplex IF or multi-channel images:
+
+- **Use ImageNet backbones** (resnet34 or resnet50), not histology backbones. The model automatically adapts the first convolutional layer to your channel count.
+- **More channels need more training data.** With 7+ channels, each channel adds parameters to the first conv layer that start without meaningful pretrained values. Plan for at least 500-1000 tiles.
+- **Consider per-channel normalization** (`per_channel: true`). Different fluorescence channels often have very different intensity ranges (e.g., DAPI vs. weak markers).
+- **Select only relevant channels** in the channel selection panel rather than using all available channels. Fewer input channels means faster training and less data needed.
+- **resnet34 is sufficient for most IF tasks.** Only move to resnet50 if you have a large dataset (>5000 tiles) and complex tissue patterns. The extra capacity of resnet50 is more likely to overfit on small IF datasets.
 
 ## Annotation Strategy
 

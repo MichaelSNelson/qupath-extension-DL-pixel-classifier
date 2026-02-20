@@ -214,6 +214,76 @@ pytest tests/ -v
 
 Current status: **78 tests passing, 5 skipped**
 
+## Acknowledgements
+
+This extension builds on many excellent open-source projects and pretrained models.
+
+### Segmentation Framework
+
+- **[segmentation-models-pytorch (SMP)](https://github.com/qubvel-org/segmentation_models.pytorch)** (MIT) -- Pavel Iakubovskii. Provides all segmentation architectures (U-Net, U-Net++, DeepLab V3/V3+, FPN, PSPNet, MA-Net, LinkNet) and encoder backbone integration.
+- **[PyTorch](https://pytorch.org/)** (BSD) -- Meta AI. Deep learning framework used for training and inference.
+- **[TorchVision](https://pytorch.org/vision/)** (BSD) -- PyTorch team. Provides ImageNet-pretrained backbone weights (ResNet, EfficientNet, DenseNet, MobileNet, VGG, SE-ResNet).
+
+### Segmentation Architectures (via SMP)
+
+| Architecture | Original Paper |
+|---|---|
+| U-Net | Ronneberger et al., "U-Net: Convolutional Networks for Biomedical Image Segmentation" (MICCAI 2015) |
+| U-Net++ | Zhou et al., "UNet++: A Nested U-Net Architecture for Medical Image Segmentation" (DLMIA 2018) |
+| DeepLab V3 | Chen et al., "Rethinking Atrous Convolution for Semantic Image Segmentation" (2017) |
+| DeepLab V3+ | Chen et al., "Encoder-Decoder with Atrous Separable Convolution for Semantic Image Segmentation" (ECCV 2018) |
+| FPN | Lin et al., "Feature Pyramid Networks for Object Detection" (CVPR 2017) |
+| PSPNet | Zhao et al., "Pyramid Scene Parsing Network" (CVPR 2017) |
+| MA-Net | Fan et al., "MA-Net: A Multi-Scale Attention Network for Liver and Tumor Segmentation" (IEEE Access 2020) |
+| LinkNet | Chaurasia & Culurciello, "LinkNet: Exploiting Encoder Representations for Efficient Semantic Segmentation" (VCIP 2017) |
+
+### Encoder Backbones (via SMP + TorchVision)
+
+| Backbone | Original Paper |
+|---|---|
+| ResNet | He et al., "Deep Residual Learning for Image Recognition" (CVPR 2016) |
+| EfficientNet | Tan & Le, "EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks" (ICML 2019) |
+| SE-ResNet | Hu et al., "Squeeze-and-Excitation Networks" (CVPR 2018) |
+| DenseNet | Huang et al., "Densely Connected Convolutional Networks" (CVPR 2017) |
+| MobileNet V2 | Sandler et al., "MobileNetV2: Inverted Residuals and Linear Bottlenecks" (CVPR 2018) |
+| VGG | Simonyan & Zisserman, "Very Deep Convolutional Networks for Large-Scale Image Recognition" (ICLR 2015) |
+
+### Histology-Pretrained Encoders
+
+Histology-specific encoder weights are loaded via **[timm (PyTorch Image Models)](https://github.com/huggingface/pytorch-image-models)** (Apache 2.0) from the **[HuggingFace Model Hub](https://huggingface.co/)**, using weights curated by [1aurent](https://huggingface.co/1aurent):
+
+| Encoder | Training Data | Method | License | Reference |
+|---|---|---|---|---|
+| ResNet-50 Lunit SwAV | 19M TCGA patches | SwAV self-supervised | Non-commercial | Kang et al., "Benchmarking Self-Supervised Learning on Diverse Pathology Datasets" (2023) |
+| ResNet-50 Lunit Barlow Twins | 19M TCGA patches | Barlow Twins self-supervised | Non-commercial | Kang et al. (2023) |
+| ResNet-50 Kather100K | Kather100K colorectal tissue | Supervised classification | CC-BY-4.0 | Kather et al., "Predicting survival from colorectal cancer histology slides using deep learning" (PLOS Medicine 2019) |
+| ResNet-50 TCGA-BRCA | TCGA breast cancer | SimCLR self-supervised | GPLv3 | Ciga et al., "Self supervised contrastive learning for digital histopathology" (Machine Learning with Applications 2022) |
+
+### Data Augmentation
+
+- **[Albumentations](https://github.com/albumentations-team/albumentations)** (MIT) -- Buslaev et al., "Albumentations: Fast and Flexible Image Augmentations" (Information 2020). Used for training-time augmentations (flips, rotations, elastic deformations, color jitter, noise).
+
+### Model Export and Inference
+
+- **[ONNX](https://onnx.ai/)** (Apache 2.0) -- Open Neural Network Exchange format for model serialization.
+- **[ONNX Runtime](https://github.com/microsoft/onnxruntime)** (MIT) -- Microsoft. High-performance inference engine with CUDA, CoreML, and CPU backends.
+
+### Java-Python Integration
+
+- **[Appose](https://github.com/apposed/appose)** (Apache 2.0) -- SciJava. Shared-memory IPC framework for embedded Python execution with zero-copy tile transfer.
+- **[OkHttp](https://square.github.io/okhttp/)** (Apache 2.0) -- Square. HTTP client for external server mode.
+
+### Image I/O
+
+- **[tifffile](https://github.com/cgohlke/tifffile)** (BSD) -- Christoph Gohlke. Multi-channel TIFF reader/writer for microscopy images.
+- **[imagecodecs](https://github.com/cgohlke/imagecodecs)** (BSD) -- Christoph Gohlke. Image compression codec library.
+- **[Pillow](https://python-pillow.org/)** (HPND) -- PIL fork for standard image format support.
+- **[scikit-image](https://scikit-image.org/)** (BSD) -- Image processing algorithms.
+
+### Host Application
+
+- **[QuPath](https://qupath.github.io/)** (GPL-3.0) -- Bankhead et al., "QuPath: Open source software for digital pathology image analysis" (Scientific Reports 2017). The digital pathology platform this extension integrates with.
+
 ## License
 
 Apache License 2.0

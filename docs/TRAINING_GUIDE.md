@@ -85,12 +85,14 @@ The UNet architecture supports the following backbones:
 
 | Backbone | Pretraining | Notes |
 |----------|-------------|-------|
-| resnet50_lunit-swav (Histology) | Lunit SwAV self-supervised | Best for general tissue classification |
-| resnet50_lunit-bt (Histology) | Lunit Barlow Twins self-supervised | Alternative self-supervised approach |
-| resnet50_kather100k (Histology) | Kather100K supervised | Trained on colorectal tissue patches |
-| resnet50_tcga-brca (Histology) | TCGA-BRCA supervised | Trained on breast cancer tissue patches |
+| resnet50_lunit-swav (Histology) | Lunit SwAV self-supervised on 19M TCGA patches | Best for general tissue classification |
+| resnet50_lunit-bt (Histology) | Lunit Barlow Twins self-supervised on 19M TCGA patches | Alternative self-supervised approach |
+| resnet50_kather100k (Histology) | Supervised on 100K colorectal tissue patches | Trained on colorectal tissue at 20x |
+| resnet50_tcga-brca (Histology) | SimCLR self-supervised on TCGA breast cancer | Trained on breast cancer tissue at 20x |
 
-Histology-pretrained backbones (marked "Histology" in the dropdown) use weights from millions of tissue patches instead of ImageNet. They typically produce better results for histopathology with less training data.
+Histology-pretrained backbones (marked "Histology" in the dropdown) use weights learned from millions of **H&E-stained brightfield patches at approximately 20x magnification (3-channel RGB)**. They typically produce better results for H&E histopathology with less training data.
+
+> **Important:** Histology backbones are designed for H&E brightfield images. For **fluorescence, multiplex IF, or multi-channel (>3 channel) images**, use a standard ImageNet backbone (resnet34 or resnet50) instead. The histology-pretrained first conv layer encodes H&E color responses that do not transfer to fluorescence intensity patterns. See [Backbone Selection](BEST_PRACTICES.md#backbone-selection) for detailed guidance.
 
 ## Step 5: Configure Training Parameters
 
