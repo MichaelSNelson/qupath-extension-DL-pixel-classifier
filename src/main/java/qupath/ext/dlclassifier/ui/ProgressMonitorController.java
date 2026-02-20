@@ -165,7 +165,7 @@ public class ProgressMonitorController {
         // Build layout
         VBox root = new VBox(10);
         root.setPadding(new Insets(15));
-        root.setAlignment(Pos.CENTER);
+        root.setAlignment(Pos.TOP_LEFT);
 
         // Status section
         VBox statusBox = new VBox(5);
