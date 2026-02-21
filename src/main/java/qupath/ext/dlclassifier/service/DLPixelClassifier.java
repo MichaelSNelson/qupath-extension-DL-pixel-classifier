@@ -179,7 +179,8 @@ public class DLPixelClassifier implements PixelClassifier {
                     : channelConfig.getSelectedChannels().size();
         }
 
-        // When multi-scale context is enabled, extract a context tile and concatenate
+        // When multi-scale context is enabled, extract a context tile and interleave
+        // channels per pixel: [detail_ch0..N, context_ch0..N] for each pixel.
         byte[] rawBytes;
         int numChannels;
         if (contextScale > 1) {
@@ -191,10 +192,11 @@ public class DLPixelClassifier implements PixelClassifier {
                 contextBytes = InferenceWorkflow.encodeTileRawFloat(contextImage,
                         channelConfig.getSelectedChannels());
             }
-            // Concatenate detail + context bytes
-            rawBytes = new byte[detailBytes.length + contextBytes.length];
-            System.arraycopy(detailBytes, 0, rawBytes, 0, detailBytes.length);
-            System.arraycopy(contextBytes, 0, rawBytes, detailBytes.length, contextBytes.length);
+            // Interleave detail + context channels per pixel (not sequential concat)
+            int numPixels = tileImage.getWidth() * tileImage.getHeight();
+            int bytesPerChannel = "uint8".equals(dtype) ? 1 : Float.BYTES;
+            rawBytes = InferenceWorkflow.interleaveContextChannels(
+                    detailBytes, contextBytes, numPixels, detailChannels, bytesPerChannel);
             numChannels = detailChannels * 2;
         } else {
             rawBytes = detailBytes;
@@ -398,15 +400,27 @@ public class DLPixelClassifier implements PixelClassifier {
 
         // Priority 1: Use training dataset stats from model metadata
         if (metadata.hasNormalizationStats()) {
+            List<Map<String, Double>> stats = new ArrayList<>(metadata.getNormalizationStats());
+            // For multi-scale context: if training stats only cover detail channels,
+            // duplicate them for context channels (same image data, similar distribution)
+            if (contextScale > 1 && stats.size() == channelConfig.getNumChannels()) {
+                stats.addAll(metadata.getNormalizationStats());
+            }
             logger.info("Using training dataset normalization stats from model metadata " +
-                    "({} channels)", metadata.getNormalizationStats().size());
-            return channelConfig.withPrecomputedStats(metadata.getNormalizationStats());
+                    "({} channels)", stats.size());
+            return channelConfig.withPrecomputedStats(stats);
         }
 
         // Priority 2: Compute image-level stats via sampling
         try {
             List<Map<String, Double>> stats = computeImageNormalizationStats(server);
             if (stats != null && !stats.isEmpty()) {
+                // For multi-scale context: duplicate detail stats for context channels
+                if (contextScale > 1) {
+                    List<Map<String, Double>> expanded = new ArrayList<>(stats);
+                    expanded.addAll(stats);
+                    stats = expanded;
+                }
                 logger.info("Computed image-level normalization stats from {} sample tiles " +
                         "({} channels)", STATS_GRID_SIZE * STATS_GRID_SIZE, stats.size());
                 return channelConfig.withPrecomputedStats(stats);
@@ -494,10 +508,12 @@ public class DLPixelClassifier implements PixelClassifier {
                             int band = selectedChannels.isEmpty() ? c : selectedChannels.get(c);
                             if (band >= bands) continue;
 
+                            // Keep raw pixel values (uint8 in [0, 255], float as-is).
+                            // Must match the scale of values sent to Python for
+                            // normalization: training metadata stats are in raw range.
                             float val;
                             if (isUint8) {
-                                // Match the uint8->float conversion done in the backend
-                                val = (raster.getSample(px, py, band) & 0xFF) / 255.0f;
+                                val = (float) (raster.getSample(px, py, band) & 0xFF);
                             } else {
                                 val = raster.getSampleFloat(px, py, band);
                             }

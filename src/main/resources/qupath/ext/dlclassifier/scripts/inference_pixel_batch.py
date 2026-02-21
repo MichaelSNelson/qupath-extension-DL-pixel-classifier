@@ -98,13 +98,10 @@ os.makedirs(output_dir, exist_ok=True)
 # Read from shared memory
 raw = tile_nd.ndarray().reshape(num_tiles, tile_height, tile_width, num_channels).copy()
 
-# Normalize and select channels
-selected = input_config.get("selected_channels")
+# Normalize tiles (channel selection already handled by Java during encoding)
 preprocessed = []
 for i in range(num_tiles):
     img = _normalize_tile(raw[i], input_config)
-    if selected:
-        img = img[:, :, selected]
     preprocessed.append(img)
 
 # Serialize GPU access. Appose runs each task in its own thread, so

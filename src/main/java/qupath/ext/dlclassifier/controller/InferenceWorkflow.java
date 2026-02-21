@@ -884,7 +884,7 @@ public class InferenceWorkflow {
             }
 
             if (contextScale > 1) {
-                // Read and encode context tile, then concatenate
+                // Read and encode context tile, then interleave channels per pixel
                 BufferedImage contextImage;
                 try {
                     contextImage = contextFutures.get(j).get();
@@ -897,8 +897,11 @@ public class InferenceWorkflow {
                 } else {
                     contextBytes = encodeTileRawFloat(contextImage, null);
                 }
-                rawBuffer.write(detailBytes);
-                rawBuffer.write(contextBytes);
+                int numPixels = tileImage.getWidth() * tileImage.getHeight();
+                int bytesPerChannel = "uint8".equals(dtype) ? 1 : Float.BYTES;
+                byte[] interleaved = interleaveContextChannels(
+                        detailBytes, contextBytes, numPixels, detailChannels, bytesPerChannel);
+                rawBuffer.write(interleaved);
             } else {
                 rawBuffer.write(detailBytes);
             }
@@ -1047,6 +1050,38 @@ public class InferenceWorkflow {
             }
         }
         return buf.array();
+    }
+
+    /**
+     * Interleaves detail and context channel bytes per pixel.
+     * <p>
+     * Input layout: detail bytes are flat HWC, context bytes are flat HWC.
+     * Output layout: for each pixel, [detail_ch0..N, context_ch0..N] (HW-2C order).
+     * <p>
+     * This is required because numpy reshape interprets a flat array as having
+     * contiguous channels per pixel. Sequential concatenation [all_detail | all_context]
+     * reshapes incorrectly; per-pixel interleaving produces the correct (H, W, 2C) layout.
+     *
+     * @param detailBytes      detail tile bytes in HWC order
+     * @param contextBytes     context tile bytes in HWC order
+     * @param numPixels        total pixels (H * W)
+     * @param channelsPerArray number of channels per tile (e.g. 3 for RGB)
+     * @param bytesPerChannel  bytes per channel value (1 for uint8, 4 for float32)
+     * @return interleaved byte array with 2 * channelsPerArray channels per pixel
+     */
+    public static byte[] interleaveContextChannels(byte[] detailBytes, byte[] contextBytes,
+                                                    int numPixels, int channelsPerArray,
+                                                    int bytesPerChannel) {
+        int channelStride = channelsPerArray * bytesPerChannel;
+        int totalStride = channelStride * 2;
+        byte[] result = new byte[numPixels * totalStride];
+        for (int px = 0; px < numPixels; px++) {
+            System.arraycopy(detailBytes, px * channelStride,
+                    result, px * totalStride, channelStride);
+            System.arraycopy(contextBytes, px * channelStride,
+                    result, px * totalStride + channelStride, channelStride);
+        }
+        return result;
     }
 
     /**

@@ -47,8 +47,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     // Limit concurrent Appose inference tasks. The Python side serializes GPU
     // access via inference_lock, but 16+ overlay threads submitting tasks
     // simultaneously creates 16 Python threads that mostly block and die.
-    // Permits=2: one task running on GPU, one preparing (normalization, data copy).
-    private static final Semaphore inferenceSemaphore = new Semaphore(2, true);
+    // Permits=1: serialize all overlay inference to avoid thread death.
+    private static final Semaphore inferenceSemaphore = new Semaphore(1, true);
 
     // ==================== Health & Status ====================
 
@@ -362,11 +362,13 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
                 try {
-                    // Copy raw bytes into shared memory, converting dtype if needed
+                    // Copy raw bytes into shared memory, converting dtype if needed.
+                    // uint8 values are kept in [0, 255] range (not divided by 255)
+                    // because normalization expects raw pixel values matching training stats.
                     FloatBuffer fbuf = inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
                     if ("uint8".equals(dtype)) {
                         for (byte b : rawTileBytes) {
-                            fbuf.put((b & 0xFF) / 255.0f);
+                            fbuf.put((float) (b & 0xFF));
                         }
                     } else {
                         // float32: copy raw bytes directly
@@ -445,14 +447,16 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 int numTiles = tileIds.size();
                 int pixelsPerTile = tileHeight * tileWidth * numChannels;
 
-                // Convert to float32 if needed
+                // Convert to float32 if needed.
+                // uint8 values are kept in [0, 255] range (not divided by 255)
+                // because normalization expects raw pixel values matching training stats.
                 byte[] float32Bytes;
                 if ("uint8".equals(dtype)) {
                     float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
                     FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
                             .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
                     for (byte b : rawTileBytes) {
-                        fbuf.put((b & 0xFF) / 255.0f);
+                        fbuf.put((float) (b & 0xFF));
                     }
                 } else {
                     float32Bytes = rawTileBytes;
@@ -534,14 +538,16 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 int numTiles = tileIds.size();
                 int pixelsPerTile = tileHeight * tileWidth * numChannels;
 
-                // Convert to float32 if needed
+                // Convert to float32 if needed.
+                // uint8 values are kept in [0, 255] range (not divided by 255)
+                // because normalization expects raw pixel values matching training stats.
                 byte[] float32Bytes;
                 if ("uint8".equals(dtype)) {
                     float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
                     FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
                             .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
                     for (byte b : rawTileBytes) {
-                        fbuf.put((b & 0xFF) / 255.0f);
+                        fbuf.put((float) (b & 0xFF));
                     }
                 } else {
                     float32Bytes = rawTileBytes;

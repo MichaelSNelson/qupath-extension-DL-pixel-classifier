@@ -98,10 +98,8 @@ tile_array = tile_nd.ndarray().reshape(tile_height, tile_width, num_channels).co
 # Normalize (thread-safe, no GPU access)
 tile_array = _normalize_tile(tile_array, input_config)
 
-# Select channels if specified
-selected = input_config.get("selected_channels")
-if selected:
-    tile_array = tile_array[:, :, selected]
+# Channel selection is handled by Java during tile encoding.
+# Do NOT re-select here -- it would drop context channels for multi-scale models.
 
 # Serialize GPU access. Appose runs each task in its own thread, so
 # without this lock, 10+ overlay threads would race on model loading,
