@@ -49,10 +49,6 @@ The training and inference menu items now appear automatically. On subsequent la
 
 > **GPU not detected?** If the setup reports CPU-only but you have an NVIDIA GPU, make sure your NVIDIA drivers are installed and try **Utilities > Rebuild DL Environment...** See [Troubleshooting](docs/TROUBLESHOOTING.md) for details.
 
-> **Alternative: External Python Server**
->
-> If you prefer to run the Python backend on a separate machine (e.g., a GPU workstation), disable Appose in **Edit > Preferences > DL Pixel Classifier** and set up the server manually. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for details.
-
 ---
 
 ## Step 3: Train Your First Classifier

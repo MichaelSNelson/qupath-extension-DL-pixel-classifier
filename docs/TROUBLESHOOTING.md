@@ -30,7 +30,7 @@ Use **Copy to Clipboard** to capture the full log for bug reports.
 - PyTorch version and build info
 - CUDA version and GPU details (name, VRAM, driver version)
 - Installed Python package versions
-- Backend mode (Appose or HTTP)
+- Backend mode and environment status
 
 Use **Copy to Clipboard** to share the full output when reporting bugs.
 
@@ -70,40 +70,9 @@ Use **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...**
 
 This is normal on first launch before the environment has been set up. Click it to begin the setup wizard.
 
-If you want to use an external Python server instead, disable Appose in **Edit > Preferences > DL Pixel Classifier** (uncheck "Use Appose"). All workflow menu items will appear immediately.
-
-## HTTP Server Issues (External Server Mode)
-
-> These issues only apply when Appose is **disabled** and you are connecting to an external Python server.
-
-### Server won't start
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `ModuleNotFoundError: No module named 'torch'` | PyTorch not installed | Activate your venv first, then `pip install -e .` |
-| Port 8765 already in use | Another process using the port | Kill the other process, or start with `dlclassifier-server --port 8766` and update QuPath Server Settings |
-| `externally-managed-environment` | System Python is locked | Use a virtual environment (see [INSTALLATION.md](INSTALLATION.md)) |
-| Permission denied | No execute permission | Run `chmod +x` on the script, or use `python -m dlclassifier_server` |
-
-### QuPath can't connect to server
-
-1. Verify the server is running:
-   ```bash
-   curl http://localhost:8765/api/v1/health
-   ```
-2. Check **Extensions > DL Pixel Classifier > Utilities > Server Settings** matches the server's host and port
-3. If the server is on another machine, check firewall rules allow port 8765
-4. Try restarting the server
-
-### Server crashes during training/inference
-
-- Check the server terminal for error messages
-- Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to clear state
-- Restart the server if it becomes unresponsive
-
 ## GPU Issues
 
-### GPU not detected (Appose mode)
+### GPU not detected
 
 1. Open the **Python Console** (Utilities menu) and look for "CUDA available" or "MPS available"
 2. Run **System Info** (Utilities menu) and check the CUDA/GPU section
@@ -111,18 +80,6 @@ If you want to use an external Python server instead, disable Appose in **Edit >
 4. If drivers were installed **after** environment setup: use **Utilities > Rebuild DL Environment...** to reinstall
 5. If still not detected: check that your NVIDIA driver's CUDA version is >= the PyTorch CUDA version shown in System Info
 6. **Apple Silicon:** MPS should be auto-detected. If not, verify you are running macOS 12.3+ and check System Info output
-
-### GPU not detected (HTTP mode)
-
-1. Check the server's startup output for GPU detection messages
-2. Query the GPU endpoint:
-   ```bash
-   curl http://localhost:8765/api/v1/gpu
-   ```
-3. If CUDA is not detected:
-   - Verify the correct PyTorch version is installed: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121`
-   - Verify NVIDIA drivers: `nvidia-smi`
-   - Ensure PyTorch CUDA version matches your driver
 
 ### CUDA out of memory
 
@@ -154,7 +111,7 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 
 | Cause | Fix |
 |-------|-----|
-| Running on CPU | **Appose mode:** Open the Python Console and look for "CUDA available: True". If False, install NVIDIA drivers and rebuild the environment. **HTTP mode:** `curl http://localhost:8765/api/v1/gpu` |
+| Running on CPU | Open the Python Console and look for "CUDA available: True". If False, install NVIDIA drivers and rebuild the environment. |
 | Mixed precision disabled | Enable in Training Strategy section |
 | Very large tile size | Reduce tile size (256 instead of 512) |
 | Very large batch size | Reduce batch size |
@@ -207,9 +164,8 @@ Image-level normalization (enabled by default) should eliminate most tile bounda
 
 ### Menu items are hidden (not visible)
 
-- **First launch (Appose mode):** Only **Setup DL Environment...** and **Utilities > Server Settings** are visible until you complete the environment setup
+- **First launch:** Only **Setup DL Environment...** and **Utilities** are visible until you complete the environment setup
 - **After setup completes:** All workflow items should appear. If not, restart QuPath
-- **HTTP mode:** Disable Appose in preferences to see all menu items immediately
 
 ### Menu items are grayed out (visible but disabled)
 
@@ -228,9 +184,9 @@ Preferences are saved automatically when you click "Start Training" or "Apply" i
 
 ## Advanced Diagnostics
 
-### Appose environment details
+### Environment details
 
-The Appose environment is a self-contained Python installation managed by [pixi](https://pixi.sh/):
+The Python environment is a self-contained installation managed by [pixi](https://pixi.sh/) via [Appose](https://github.com/apposed/appose):
 
 | Item | Location |
 |------|----------|
@@ -263,7 +219,7 @@ File issues at the [GitHub repository](https://github.com/MichaelSNelson/qupath-
 
 ## Diagnostic Commands
 
-### Appose mode diagnostics
+### Built-in diagnostics
 
 Use the built-in tools (no terminal required):
 
@@ -273,25 +229,7 @@ Use the built-in tools (no terminal required):
 | **System Info** | Utilities > System Info | PyTorch/CUDA versions, GPU details, packages |
 | **QuPath log** | View > Show log | Java-side extension messages |
 
-### HTTP mode diagnostics
-
-These commands apply when using the external Python server:
-
-```bash
-# Health check
-curl http://localhost:8765/api/v1/health
-
-# GPU info
-curl http://localhost:8765/api/v1/gpu
-
-# List models
-curl http://localhost:8765/api/v1/models
-
-# Interactive API docs
-# Open in browser: http://localhost:8765/docs
-```
-
-### Terminal GPU verification (both modes)
+### Terminal GPU verification
 
 If you suspect GPU driver issues, verify from a terminal:
 
@@ -311,4 +249,4 @@ if torch.cuda.is_available():
 "
 ```
 
-> **Note:** For Appose mode, the Python Console and System Info utilities provide the same information without requiring terminal access.
+> **Note:** The Python Console and System Info utilities provide the same information without requiring terminal access.

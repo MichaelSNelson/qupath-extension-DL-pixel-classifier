@@ -10,7 +10,7 @@ Complete setup instructions for the DL Pixel Classifier extension.
 | GPU | NVIDIA GPU with CUDA recommended; Apple Silicon (MPS) also works; CPU fallback available |
 | Internet | Required for first-time environment setup (~2-4 GB download) |
 
-> **Note:** A separate Python installation is **not** required for the default Appose backend. The extension manages its own embedded Python environment.
+> **Note:** A separate Python installation is **not** required. The extension manages its own embedded Python environment via [Appose](https://github.com/apposed/appose).
 
 ## Part 1: Install the Extension
 
@@ -106,21 +106,11 @@ If no GPU is detected, the backend automatically falls back to CPU. Training wil
 
 ## Part 4: Verifying the Complete Setup
 
-### Appose mode (default)
-
 1. Open QuPath with the extension installed
 2. You should see **Extensions > DL Pixel Classifier** in the menu bar
-3. If this is first time: only **Setup DL Environment...** and **Utilities > Server Settings** are visible
+3. If this is first time: only **Setup DL Environment...** and **Utilities** are visible
 4. After running setup: all workflow items (Train, Apply, Toggle Prediction Overlay, etc.) appear
 5. Open the **Python Console** (Utilities menu) to verify GPU status
-
-### HTTP mode
-
-1. Start the Python server
-2. Open QuPath with the extension installed
-3. Disable Appose in preferences
-4. All workflow items should be visible immediately
-5. Use **Utilities > Server Settings** to test the connection
 
 If issues occur, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -159,74 +149,3 @@ pytest tests/ -v
 - Java JDK 21+
 - Gradle (wrapper included in the repository)
 
-## Part 6: Alternative -- External Python Server (HTTP Mode)
-
-> This is for **advanced setups** where the Python backend runs on a different machine (e.g., a dedicated GPU workstation). Most users should use the default Appose mode (Part 2).
-
-### 6a. Disable Appose in QuPath
-
-1. Go to **Edit > Preferences > DL Pixel Classifier**
-2. Uncheck **Use Appose (Embedded Python)**
-3. All workflow menu items will appear immediately (no environment setup needed)
-
-### 6b. Set up the Python server
-
-On the machine that will run the server:
-
-**Create a virtual environment:**
-
-```bash
-cd python_server
-python3 -m venv venv
-source venv/bin/activate    # macOS/Linux
-# or: venv\Scripts\activate.bat  (Windows CMD)
-# or: venv\Scripts\Activate.ps1  (Windows PowerShell)
-```
-
-**Install dependencies:**
-
-```bash
-# With NVIDIA GPU (recommended):
-pip install -e ".[cuda]"
-
-# CPU only or Apple Silicon:
-pip install -e .
-```
-
-> **Specific CUDA version?** Install PyTorch first, then the server package:
-> ```bash
-> pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-> pip install -e .
-> ```
-
-### 6c. Start the server
-
-```bash
-dlclassifier-server
-```
-
-You should see output like:
-```
-INFO:     Started server process
-INFO:     Uvicorn running on http://0.0.0.0:8765
-```
-
-### 6d. Configure QuPath
-
-1. In QuPath, go to **Extensions > DL Pixel Classifier > Utilities > Server Settings**
-2. Set the host to the server machine's IP address (or `localhost` for same machine)
-3. Set the port to `8765` (default)
-4. Ensure firewall rules allow traffic on the configured port
-
-### 6e. Verify the connection
-
-```bash
-curl http://localhost:8765/api/v1/health
-```
-
-Expected response:
-```json
-{"status": "healthy"}
-```
-
-> **Windows without curl:** Open `http://localhost:8765/docs` in a browser for the interactive Swagger UI.
