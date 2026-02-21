@@ -117,6 +117,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         architecture.put("input_size", List.of(trainingConfig.getTileSize(), trainingConfig.getTileSize()));
         architecture.put("downsample", trainingConfig.getDownsample());
         architecture.put("use_pretrained", trainingConfig.isUsePretrainedWeights());
+        if (trainingConfig.getContextScale() > 1) {
+            architecture.put("context_scale", trainingConfig.getContextScale());
+        }
         List<String> frozenLayers = trainingConfig.getFrozenLayers();
         if (frozenLayers != null && !frozenLayers.isEmpty()) {
             architecture.put("frozen_layers", frozenLayers);

@@ -603,17 +603,27 @@ class TrainingService:
         try:
             train_images = []
             for i in range(min(len(train_dataset), 200)):  # Sample up to 200 patches
-                img_path = train_dataset.images[i]
+                img_path = train_dataset.image_files[i]
                 img_arr = SegmentationDataset._load_patch(img_path)
                 if img_arr.ndim == 2:
                     img_arr = img_arr[..., np.newaxis]
+                # Concatenate context tile if multi-scale is enabled
+                if train_context_dir:
+                    ctx_path = Path(train_context_dir) / img_path.name
+                    if ctx_path.exists():
+                        ctx_arr = SegmentationDataset._load_patch(ctx_path)
+                        if ctx_arr.ndim == 2:
+                            ctx_arr = ctx_arr[..., np.newaxis]
+                        img_arr = np.concatenate([img_arr, ctx_arr], axis=2)
                 train_images.append(img_arr)
 
+            # Use actual channel count (includes context channels if present)
+            stats_channels = train_images[0].shape[2] if train_images else input_config["num_channels"]
             dataset_norm_stats = compute_dataset_stats(
-                train_images, num_channels=input_config["num_channels"]
+                train_images, num_channels=stats_channels
             )
             logger.info(f"Computed dataset normalization stats from "
-                        f"{len(train_images)} training patches")
+                        f"{len(train_images)} training patches ({stats_channels} channels)")
         except Exception as e:
             logger.warning(f"Failed to compute dataset normalization stats: {e}")
             dataset_norm_stats = None
@@ -1244,8 +1254,13 @@ class TrainingService:
         try:
             model.eval()
             input_size = architecture.get("input_size", [512, 512])
-            num_channels = input_config["num_channels"]
-            dummy_input = torch.randn(1, num_channels, input_size[0], input_size[1])
+            # Detect actual in_channels from model weights (handles context_scale > 1
+            # where model has 2*C channels but input_config.num_channels is C)
+            try:
+                actual_channels = model.encoder.conv1.weight.shape[1]
+            except AttributeError:
+                actual_channels = input_config["num_channels"]
+            dummy_input = torch.randn(1, actual_channels, input_size[0], input_size[1])
             dummy_input = dummy_input.to(self.device)
 
             onnx_path = output_dir / "model.onnx"
