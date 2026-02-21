@@ -14,7 +14,7 @@ import javafx.scene.shape.Rectangle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
-import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.ClassifierClient;  // for nested data types
 
 import java.util.ArrayList;
 import java.util.List;
@@ -146,18 +146,6 @@ public class LayerFreezePanel extends VBox {
      */
     public void setBackend(ClassifierBackend backend) {
         this.backend = backend;
-    }
-
-    /**
-     * Sets the classifier client for fetching layer information.
-     * @deprecated Use {@link #setBackend(ClassifierBackend)} instead.
-     */
-    @Deprecated
-    public void setClient(ClassifierClient client) {
-        // Wrap in HttpClassifierBackend for backward compatibility
-        this.backend = new qupath.ext.dlclassifier.service.HttpClassifierBackend(
-                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getServerHost(),
-                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getServerPort());
     }
 
     /**

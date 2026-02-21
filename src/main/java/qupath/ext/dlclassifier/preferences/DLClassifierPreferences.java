@@ -21,17 +21,6 @@ public final class DLClassifierPreferences {
 
     private static final Logger logger = LoggerFactory.getLogger(DLClassifierPreferences.class);
 
-    // Backend selection
-    private static final BooleanProperty useAppose = PathPrefs.createPersistentPreference(
-            "dlclassifier.useAppose", true);
-
-    // Server settings (HTTP backend)
-    private static final StringProperty serverHost = PathPrefs.createPersistentPreference(
-            "dlclassifier.serverHost", "localhost");
-
-    private static final IntegerProperty serverPort = PathPrefs.createPersistentPreference(
-            "dlclassifier.serverPort", 8765);
-
     // Tile settings
     private static final IntegerProperty tileSize = PathPrefs.createPersistentPreference(
             "dlclassifier.tileSize", 512);
@@ -177,27 +166,6 @@ public final class DLClassifierPreferences {
                         .getPropertySheet()
                         .getItems();
 
-        items.add(new PropertyItemBuilder<>(useAppose, Boolean.class)
-                .name("Use Appose (Embedded Python)")
-                .category(CATEGORY)
-                .description("Use Appose for embedded Python execution instead of connecting " +
-                        "to an external server. Requires first-time environment setup (~2-4 GB download). " +
-                        "When disabled, connects to an external Python server at the configured host/port.")
-                .build());
-
-        items.add(new PropertyItemBuilder<>(serverHost, String.class)
-                .name("DL Server Host")
-                .category(CATEGORY)
-                .description("Hostname or IP address of the Python DL classification server. " +
-                        "Only used when Appose is disabled.")
-                .build());
-
-        items.add(new PropertyItemBuilder<>(serverPort, Integer.class)
-                .name("DL Server Port")
-                .category(CATEGORY)
-                .description("Port number of the Python DL classification server.")
-                .build());
-
         items.add(new PropertyItemBuilder<>(overlayReflectionPadding, Integer.class)
                 .name("Overlay Reflection Padding")
                 .category(CATEGORY)
@@ -222,46 +190,6 @@ public final class DLClassifierPreferences {
                 .description("Use GPU acceleration for inference when available. " +
                         "Falls back to CPU if no GPU is detected.")
                 .build());
-    }
-
-    // ==================== Backend Selection ====================
-
-    public static boolean isUseAppose() {
-        return useAppose.get();
-    }
-
-    public static void setUseAppose(boolean use) {
-        useAppose.set(use);
-    }
-
-    public static BooleanProperty useApposeProperty() {
-        return useAppose;
-    }
-
-    // ==================== Server Settings (HTTP Backend) ====================
-
-    public static String getServerHost() {
-        return serverHost.get();
-    }
-
-    public static void setServerHost(String host) {
-        serverHost.set(host);
-    }
-
-    public static StringProperty serverHostProperty() {
-        return serverHost;
-    }
-
-    public static int getServerPort() {
-        return serverPort.get();
-    }
-
-    public static void setServerPort(int port) {
-        serverPort.set(port);
-    }
-
-    public static IntegerProperty serverPortProperty() {
-        return serverPort;
     }
 
     // ==================== Tile Settings ====================

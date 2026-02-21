@@ -38,6 +38,7 @@ import javafx.scene.layout.GridPane;
 import qupath.lib.common.ColorTools;
 
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -504,6 +505,7 @@ public class TrainingWorkflow {
                                     ProgressMonitorController progress,
                                     String[] jobIdHolder,
                                     Map<String, Integer> classColors) {
+        Path tempDir = null;
         try {
             if (progress != null) {
                 progress.setStatus("Exporting training patches...");
@@ -513,7 +515,7 @@ public class TrainingWorkflow {
             if (progress != null) progress.log("Starting training for classifier: " + classifierName);
 
             // Export training data
-            Path tempDir = Files.createTempDirectory("dl-training");
+            tempDir = Files.createTempDirectory("dl-training");
             logger.info("Exporting training data to: {}", tempDir);
             if (progress != null) progress.log("Export directory: " + tempDir);
 
@@ -730,6 +732,8 @@ public class TrainingWorkflow {
             if (progress != null) progress.log("ERROR: " + e.getMessage());
             return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
                     "Training failed: " + e.getMessage());
+        } finally {
+            cleanupTempDir(tempDir);
         }
     }
 
@@ -766,6 +770,7 @@ public class TrainingWorkflow {
                               List<ProjectImageEntry<BufferedImage>> selectedImages,
                               ProgressMonitorController progress,
                               String[] currentJobId) {
+        Path tempDir = null;
         try {
             // 1. Check for unsaved changes (on FX thread)
             CompletableFuture<Boolean> unsavedCheck = new CompletableFuture<>();
@@ -799,7 +804,7 @@ public class TrainingWorkflow {
             progress.setStatus("Re-exporting training data...");
             progress.log("Re-exporting annotations (includes any new/modified annotations)...");
 
-            Path tempDir = Files.createTempDirectory("dl-training-resume");
+            tempDir = Files.createTempDirectory("dl-training-resume");
             Map<String, Double> resumeMultipliers = trainingConfig.getClassWeightMultipliers();
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
@@ -945,6 +950,8 @@ public class TrainingWorkflow {
             logger.error("Resume failed", e);
             progress.log("ERROR: Resume failed: " + e.getMessage());
             progress.complete(false, "Resume failed: " + e.getMessage());
+        } finally {
+            cleanupTempDir(tempDir);
         }
     }
 
@@ -1131,5 +1138,26 @@ public class TrainingWorkflow {
             alert.setContentText(message);
             alert.showAndWait();
         });
+    }
+
+    /**
+     * Deletes a temporary training data directory and all its contents.
+     * Logs warnings on failure but does not throw.
+     */
+    private static void cleanupTempDir(Path tempDir) {
+        if (tempDir == null || !Files.exists(tempDir)) return;
+        try (java.util.stream.Stream<Path> paths = Files.walk(tempDir)) {
+            paths.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException e) {
+                            logger.warn("Failed to delete temp file: {}", path);
+                        }
+                    });
+            logger.info("Cleaned up training temp directory: {}", tempDir);
+        } catch (IOException e) {
+            logger.warn("Failed to clean up training temp directory: {}", tempDir, e);
+        }
     }
 }

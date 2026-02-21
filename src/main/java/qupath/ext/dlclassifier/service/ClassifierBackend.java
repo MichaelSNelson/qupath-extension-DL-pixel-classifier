@@ -12,16 +12,12 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Abstracts the communication backend for the DL classification server.
+ * Backend interface for the DL classification service.
  * <p>
- * Two implementations exist:
- * <ul>
- *   <li>{@link HttpClassifierBackend} - HTTP/REST via OkHttp (external Python server)</li>
- *   <li>{@link ApposeClassifierBackend} - Appose IPC with shared memory (embedded Python)</li>
- * </ul>
+ * Implemented by {@link ApposeClassifierBackend} which uses Appose IPC
+ * with shared memory for embedded Python execution.
  * <p>
- * Use {@link BackendFactory#getBackend()} to obtain the appropriate backend
- * based on user preferences and availability.
+ * Use {@link BackendFactory#getBackend()} to obtain the backend.
  *
  * @author UW-LOCI
  * @since 0.2.0

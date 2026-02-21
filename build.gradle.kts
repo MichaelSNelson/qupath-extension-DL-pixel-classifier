@@ -38,11 +38,7 @@ dependencies {
     shadow(libs.bundles.qupath)
     shadow(libs.bundles.logging)
     shadow(libs.qupath.fxtras)
-    shadow(libs.snakeyaml)
     shadow(libs.gson)
-
-    // HTTP client for REST API communication (not provided by QuPath, must be bundled)
-    implementation("com.squareup.okhttp3:okhttp:5.3.2")
 
     // Appose for embedded Java-Python IPC with shared memory
     implementation("org.apposed:appose:0.10.0")
@@ -62,7 +58,6 @@ dependencies {
     testImplementation("org.openjfx:javafx-controls:$javafxVersion")
     testImplementation("org.mockito:mockito-core:5.2.0")
     testImplementation("org.mockito:mockito-junit-jupiter:5.2.0")
-    testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
 }
 
 tasks.shadowJar {

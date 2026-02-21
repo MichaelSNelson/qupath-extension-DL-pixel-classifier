@@ -107,35 +107,20 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         // Fast filesystem check to determine environment state (no downloads)
         updateEnvironmentState();
 
-        // Listen for useAppose preference changes to reactively update menu visibility
-        DLClassifierPreferences.useApposeProperty().addListener((obs, oldVal, newVal) ->
-                Platform.runLater(this::updateEnvironmentState));
-
         // Build menu on the FX thread
         Platform.runLater(() -> addMenuItem(qupath));
 
         // If environment is already built, start background initialization of Python service
-        if (environmentReady.get() && DLClassifierPreferences.isUseAppose()) {
+        if (environmentReady.get()) {
             startBackgroundInitialization();
         }
     }
 
     /**
-     * Determines the current environment state based on preferences and filesystem.
-     * <p>
-     * Three states:
-     * <ul>
-     *   <li>useAppose=false (HTTP mode) -> environmentReady=true immediately</li>
-     *   <li>useAppose=true, env built -> environmentReady=true</li>
-     *   <li>useAppose=true, env NOT built -> environmentReady=false</li>
-     * </ul>
+     * Determines the current environment state based on filesystem.
      */
     private void updateEnvironmentState() {
-        if (!DLClassifierPreferences.isUseAppose()) {
-            // HTTP mode - no environment needed
-            environmentReady.set(true);
-            logger.debug("HTTP backend mode - environment check skipped");
-        } else if (ApposeService.isEnvironmentBuilt()) {
+        if (ApposeService.isEnvironmentBuilt()) {
             environmentReady.set(true);
             logger.debug("Appose environment found on disk");
         } else {
@@ -180,16 +165,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         // Create the top level Extensions > DL Pixel Classifier menu
         var extensionMenu = qupath.getMenu("Extensions>" + EXTENSION_NAME, true);
 
-        // === SETUP MENU ITEM (visible only when environment not ready AND useAppose is on) ===
+        // === SETUP MENU ITEM (visible only when environment not ready) ===
         MenuItem setupItem = new MenuItem(res.getString("menu.setupEnvironment"));
         TooltipHelper.installOnMenuItem(setupItem,
                 "Download and configure the Python deep learning environment.\n" +
                         "Required for first-time use. Downloads approximately 2-4 GB.");
         setupItem.setOnAction(e -> showSetupDialog(qupath));
 
-        // Binding: visible when environment is NOT ready AND Appose mode is on
-        BooleanBinding showSetup = environmentReady.not()
-                .and(DLClassifierPreferences.useApposeProperty());
+        // Binding: visible when environment is NOT ready
+        BooleanBinding showSetup = environmentReady.not();
         setupItem.visibleProperty().bind(showSetup);
 
         // Setup separator - visible only with setup item
@@ -295,14 +279,6 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // === UTILITIES SUBMENU ===
         Menu utilitiesMenu = new Menu("Utilities");
-        // Utilities submenu is always visible (contains Server Settings which is always available)
-
-        // Server Settings - always visible
-        MenuItem serverOption = new MenuItem(res.getString("menu.serverSettings"));
-        TooltipHelper.installOnMenuItem(serverOption,
-                "Configure the connection to the Python classification server.\n" +
-                        "Test connectivity, view GPU availability, and check server version.");
-        serverOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("serverSettings"));
 
         // Free GPU Memory - visible when environment ready
         MenuItem freeGpuOption = new MenuItem("Free GPU Memory");
@@ -339,14 +315,12 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         });
         freeGpuOption.visibleProperty().bind(environmentReady);
 
-        // Rebuild DL Environment - always visible in Appose mode so users can
-        // fix broken environments even when initialization has failed
+        // Rebuild DL Environment - always visible so users can fix broken environments
         MenuItem rebuildItem = new MenuItem(res.getString("menu.rebuildEnvironment"));
         TooltipHelper.installOnMenuItem(rebuildItem,
                 "Delete and re-download the Python deep learning environment.\n" +
                         "Use this if the environment becomes corrupted or you want a fresh install.");
         rebuildItem.setOnAction(e -> rebuildEnvironment(qupath));
-        rebuildItem.visibleProperty().bind(DLClassifierPreferences.useApposeProperty());
 
         // System Info - visible when environment ready
         MenuItem systemInfoOption = new MenuItem("System Info...");
@@ -357,16 +331,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         systemInfoOption.setOnAction(e -> showSystemInfo());
         systemInfoOption.visibleProperty().bind(environmentReady);
 
-        // Python Console - visible when Appose mode is active and environment ready
+        // Python Console - visible when environment ready
         MenuItem pythonConsoleOption = new MenuItem(res.getString("menu.pythonConsole"));
         TooltipHelper.installOnMenuItem(pythonConsoleOption,
                 "Show a live console window displaying Python process output.\n" +
                 "Useful for monitoring model loading, inference, and debugging.");
         pythonConsoleOption.setOnAction(e -> PythonConsoleWindow.getInstance().show());
-        pythonConsoleOption.visibleProperty().bind(
-                environmentReady.and(DLClassifierPreferences.useApposeProperty()));
+        pythonConsoleOption.visibleProperty().bind(environmentReady);
 
-        utilitiesMenu.getItems().addAll(serverOption, freeGpuOption, systemInfoOption,
+        utilitiesMenu.getItems().addAll(freeGpuOption, systemInfoOption,
                 pythonConsoleOption, new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
@@ -399,9 +372,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         String extVersion = GeneralTools.getPackageVersion(SetupDLClassifier.class);
         sb.append("Extension: ").append(EXTENSION_NAME)
                 .append(extVersion != null ? " v" + extVersion : "").append("\n");
-        sb.append("Backend mode: ").append(
-                DLClassifierPreferences.isUseAppose() ? "Appose (embedded Python)" : "HTTP (external server)")
-                .append("\n");
+        sb.append("Backend mode: Appose (embedded Python)\n");
 
         ApposeService appose = ApposeService.getInstance();
         if (appose.isAvailable()) {
