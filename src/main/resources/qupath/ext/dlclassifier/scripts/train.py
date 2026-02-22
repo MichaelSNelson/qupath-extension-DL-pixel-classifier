@@ -70,12 +70,13 @@ def _writable_load_patch(img_path):
 _tsm.SegmentationDataset._load_patch = _writable_load_patch
 
 
-# Fix: resize context tiles to match detail tile dimensions before concatenation.
-# Edge tiles near image boundaries may produce smaller context tiles.
-# This patches the installed package which may be stale (Appose pip cache).
+# Safety net: resize context tiles if they don't match detail tile dimensions.
+# Edge tiles should be skipped at export, but stale pip packages may still
+# have mismatched tiles from older exports. This patches the installed package.
 from PIL import Image as _PILImage
 
 _orig_getitem = _tsm.SegmentationDataset.__getitem__
+_ctx_resize_warned = [False]
 
 def _safe_getitem(self, idx):
     """__getitem__ with context tile resize for edge-case size mismatch."""
@@ -92,6 +93,11 @@ def _safe_getitem(self, idx):
                 ctx_array = ctx_array[..., _np.newaxis]
             # Resize context tile if spatial dimensions don't match detail tile
             if ctx_array.shape[0] != img_array.shape[0] or ctx_array.shape[1] != img_array.shape[1]:
+                if not _ctx_resize_warned[0]:
+                    logger.warning("Context tile %s has shape %s but detail is %s -- "
+                                   "resizing (edge tile from old export?)",
+                                   ctx_path.name, ctx_array.shape, img_array.shape)
+                    _ctx_resize_warned[0] = True
                 h, w = img_array.shape[:2]
                 resized_channels = []
                 for c in range(ctx_array.shape[2]):

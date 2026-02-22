@@ -251,10 +251,13 @@ public class AnnotationExtractor {
         int patchIndex = 0;
         int trainCount = 0;
         int valCount = 0;
+        int skippedContext = 0;
+        int candidatesWithLabels = 0;
         long[] classPixelCounts = new long[classNames.size()];
         long totalLabeledPixels = 0;
 
         Random random = new Random(42);
+        int regionSize = (int) (patchSize * downsample);
 
         for (PatchLocation loc : patchLocations) {
             // Create combined mask from all overlapping annotations
@@ -262,10 +265,16 @@ public class AnnotationExtractor {
 
             // Skip patches with no labeled pixels
             if (maskResult.labeledPixelCount == 0) continue;
+            candidatesWithLabels++;
+
+            // Skip patches whose context region exceeds image bounds
+            if (contextScale > 1 && !contextFitsInImage(loc.x, loc.y, regionSize)) {
+                skippedContext++;
+                continue;
+            }
 
             // Read image patch (region covers patchSize*downsample in full-res coords,
             // returned image is patchSize x patchSize pixels)
-            int regionSize = (int) (patchSize * downsample);
             RegionRequest request = RegionRequest.createInstance(
                     server.getPath(), downsample,
                     loc.x, loc.y, regionSize, regionSize,
@@ -301,6 +310,22 @@ public class AnnotationExtractor {
             if (isValidation) valCount++;
             else trainCount++;
             patchIndex++;
+        }
+
+        // Log and validate context-skipped patches
+        if (skippedContext > 0) {
+            double skippedPercent = 100.0 * skippedContext / candidatesWithLabels;
+            logger.info("Skipped {} of {} patches ({}%) -- context region ({}x) "
+                            + "exceeded image bounds",
+                    skippedContext, candidatesWithLabels,
+                    String.format("%.1f", skippedPercent), contextScale);
+            if (skippedPercent > 10.0) {
+                throw new IOException(String.format(
+                        "Too many patches skipped due to context scale: %d of %d (%.1f%%). "
+                        + "Consider reducing context scale from %dx, using a smaller tile size, "
+                        + "or annotating further from image edges.",
+                        skippedContext, candidatesWithLabels, skippedPercent, contextScale));
+            }
         }
 
         logger.info("Exported {} patches ({} train, {} validation)",
@@ -381,15 +406,24 @@ public class AnnotationExtractor {
         int patchIndex = startIndex;
         int trainCount = 0;
         int valCount = 0;
+        int skippedContext = 0;
+        int candidatesWithLabels = 0;
         long[] classPixelCounts = new long[classNames.size()];
         long totalLabeledPixels = 0;
         Random random = new Random(42 + startIndex);
+        int regionSize = (int) (patchSize * downsample);
 
         for (PatchLocation loc : patchLocations) {
             MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
             if (maskResult.labeledPixelCount == 0) continue;
+            candidatesWithLabels++;
 
-            int regionSize = (int) (patchSize * downsample);
+            // Skip patches whose context region exceeds image bounds
+            if (contextScale > 1 && !contextFitsInImage(loc.x, loc.y, regionSize)) {
+                skippedContext++;
+                continue;
+            }
+
             RegionRequest request = RegionRequest.createInstance(
                     server.getPath(), downsample,
                     loc.x, loc.y, regionSize, regionSize, 0, 0);
@@ -418,6 +452,22 @@ public class AnnotationExtractor {
             if (isValidation) valCount++;
             else trainCount++;
             patchIndex++;
+        }
+
+        // Log and validate context-skipped patches
+        if (skippedContext > 0) {
+            double skippedPercent = 100.0 * skippedContext / candidatesWithLabels;
+            logger.info("Skipped {} of {} patches ({}%) from this image -- "
+                            + "context region ({}x) exceeded image bounds",
+                    skippedContext, candidatesWithLabels,
+                    String.format("%.1f", skippedPercent), contextScale);
+            if (skippedPercent > 10.0) {
+                throw new IOException(String.format(
+                        "Too many patches skipped due to context scale: %d of %d (%.1f%%). "
+                        + "Consider reducing context scale from %dx, using a smaller tile size, "
+                        + "or annotating further from image edges.",
+                        skippedContext, candidatesWithLabels, skippedPercent, contextScale));
+            }
         }
 
         int exportedCount = patchIndex - startIndex;
@@ -746,43 +796,41 @@ public class AnnotationExtractor {
      * @return context tile image (patchSize x patchSize pixels)
      * @throws IOException if reading fails
      */
+    /**
+     * Checks whether the full context region for a patch fits within the image bounds.
+     *
+     * @param detailX    top-left X of the detail tile (full-res coords)
+     * @param detailY    top-left Y of the detail tile (full-res coords)
+     * @param detailSize size of the detail region in full-res coords
+     * @return true if the context region fits entirely within the image
+     */
+    private boolean contextFitsInImage(int detailX, int detailY, int detailSize) {
+        int contextRegionSize = detailSize * contextScale;
+        int centerX = detailX + detailSize / 2;
+        int centerY = detailY + detailSize / 2;
+        int cx = centerX - contextRegionSize / 2;
+        int cy = centerY - contextRegionSize / 2;
+        return cx >= 0 && cy >= 0
+                && cx + contextRegionSize <= server.getWidth()
+                && cy + contextRegionSize <= server.getHeight();
+    }
+
     private BufferedImage readContextTile(int detailX, int detailY, int detailSize) throws IOException {
         // Context region is contextScale times larger, centered on the same point
         int contextRegionSize = detailSize * contextScale;
         int centerX = detailX + detailSize / 2;
         int centerY = detailY + detailSize / 2;
 
-        // Top-left of context region, clamped to image bounds
         int cx = centerX - contextRegionSize / 2;
         int cy = centerY - contextRegionSize / 2;
-        cx = Math.max(0, Math.min(cx, server.getWidth() - contextRegionSize));
-        cy = Math.max(0, Math.min(cy, server.getHeight() - contextRegionSize));
-
-        // Clamp region size if it exceeds image dimensions
-        int clampedWidth = Math.min(contextRegionSize, server.getWidth() - cx);
-        int clampedHeight = Math.min(contextRegionSize, server.getHeight() - cy);
 
         // Read at downsample * contextScale -> produces patchSize x patchSize pixels
         double contextDownsample = downsample * contextScale;
         RegionRequest contextRequest = RegionRequest.createInstance(
                 server.getPath(), contextDownsample,
-                cx, cy, clampedWidth, clampedHeight,
+                cx, cy, contextRegionSize, contextRegionSize,
                 0, 0);
-        BufferedImage contextImage = server.readRegion(contextRequest);
-
-        // Pad to patchSize x patchSize if the context region exceeded image bounds
-        if (contextImage.getWidth() != patchSize || contextImage.getHeight() != patchSize) {
-            logger.debug("Context tile {}x{} differs from expected {}x{}, padding",
-                    contextImage.getWidth(), contextImage.getHeight(), patchSize, patchSize);
-            BufferedImage padded = new BufferedImage(patchSize, patchSize, contextImage.getType());
-            java.awt.Graphics2D g = padded.createGraphics();
-            int dx = (patchSize - contextImage.getWidth()) / 2;
-            int dy = (patchSize - contextImage.getHeight()) / 2;
-            g.drawImage(contextImage, dx, dy, null);
-            g.dispose();
-            contextImage = padded;
-        }
-        return contextImage;
+        return server.readRegion(contextRequest);
     }
 
     /**
