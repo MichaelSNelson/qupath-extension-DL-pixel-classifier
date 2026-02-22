@@ -73,6 +73,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private static final int MAX_CONSECUTIVE_ERRORS = 3;
     private final AtomicInteger consecutiveErrors = new AtomicInteger(0);
     private final AtomicBoolean errorNotified = new AtomicBoolean(false);
+    private final AtomicBoolean contextResizeWarned = new AtomicBoolean(false);
     private volatile String lastErrorMessage;
 
     /** Set to true when the overlay is being removed, to suppress error counting on interrupted threads. */
@@ -184,7 +185,8 @@ public class DLPixelClassifier implements PixelClassifier {
         byte[] rawBytes;
         int numChannels;
         if (contextScale > 1) {
-            BufferedImage contextImage = readContextTile(server, request);
+            BufferedImage contextImage = readContextTile(server, request,
+                    tileImage.getWidth(), tileImage.getHeight());
             byte[] contextBytes;
             if ("uint8".equals(dtype)) {
                 contextBytes = InferenceWorkflow.encodeTileRaw(contextImage);
@@ -195,9 +197,19 @@ public class DLPixelClassifier implements PixelClassifier {
             // Interleave detail + context channels per pixel (not sequential concat)
             int numPixels = tileImage.getWidth() * tileImage.getHeight();
             int bytesPerChannel = "uint8".equals(dtype) ? 1 : Float.BYTES;
-            rawBytes = InferenceWorkflow.interleaveContextChannels(
-                    detailBytes, contextBytes, numPixels, detailChannels, bytesPerChannel);
-            numChannels = detailChannels * 2;
+            if (contextBytes.length != detailBytes.length) {
+                // Defense-in-depth: if readContextTile resize didn't produce exact
+                // dimensions (QuPath rounding at different downsamples), fall back
+                // to detail-only rather than crashing with ArrayIndexOutOfBoundsException
+                logger.warn("Context tile byte length ({}) != detail tile byte length ({}), " +
+                        "skipping context for this tile", contextBytes.length, detailBytes.length);
+                rawBytes = detailBytes;
+                numChannels = detailChannels;
+            } else {
+                rawBytes = InferenceWorkflow.interleaveContextChannels(
+                        detailBytes, contextBytes, numPixels, detailChannels, bytesPerChannel);
+                numChannels = detailChannels * 2;
+            }
         } else {
             rawBytes = detailBytes;
             numChannels = detailChannels;
@@ -341,9 +353,23 @@ public class DLPixelClassifier implements PixelClassifier {
      * Reads a context tile centered on the same location as the given detail request,
      * but covering a larger area (contextScale times in each dimension) and downsampled
      * to the same pixel dimensions as the detail tile.
+     * <p>
+     * Three-tier strategy for handling image edges:
+     * <ol>
+     *   <li>Ideal: context region fits entirely within the image</li>
+     *   <li>Clamped: context region is shifted to fit (image >= context size)</li>
+     *   <li>Resized: image smaller than context region -- read entire image, resize to match</li>
+     * </ol>
+     *
+     * @param server        image server
+     * @param detailRequest the detail tile region request
+     * @param expectedW     expected output width (detail tile pixel width)
+     * @param expectedH     expected output height (detail tile pixel height)
+     * @return context tile with dimensions matching expectedW x expectedH
      */
     private BufferedImage readContextTile(ImageServer<BufferedImage> server,
-                                          RegionRequest detailRequest) throws IOException {
+                                          RegionRequest detailRequest,
+                                          int expectedW, int expectedH) throws IOException {
         int detailX = detailRequest.getX();
         int detailY = detailRequest.getY();
         int detailW = detailRequest.getWidth();
@@ -353,29 +379,57 @@ public class DLPixelClassifier implements PixelClassifier {
         int contextW = detailW * contextScale;
         int contextH = detailH * contextScale;
 
-        // Center the context region on the detail tile's center
-        int centerX = detailX + detailW / 2;
-        int centerY = detailY + detailH / 2;
-        int cx = centerX - contextW / 2;
-        int cy = centerY - contextH / 2;
+        int imgW = server.getWidth();
+        int imgH = server.getHeight();
 
-        // Clamp to image bounds
-        cx = Math.max(0, Math.min(cx, server.getWidth() - contextW));
-        cy = Math.max(0, Math.min(cy, server.getHeight() - contextH));
-        int clampedW = Math.min(contextW, server.getWidth() - cx);
-        int clampedH = Math.min(contextH, server.getHeight() - cy);
+        int cx, cy, readW, readH;
+
+        if (imgW >= contextW && imgH >= contextH) {
+            // Tier 1/2: Image large enough -- clamp position to keep context within bounds
+            int centerX = detailX + detailW / 2;
+            int centerY = detailY + detailH / 2;
+            cx = centerX - contextW / 2;
+            cy = centerY - contextH / 2;
+            cx = Math.max(0, Math.min(cx, imgW - contextW));
+            cy = Math.max(0, Math.min(cy, imgH - contextH));
+            readW = contextW;
+            readH = contextH;
+        } else {
+            // Tier 3: Image smaller than context region -- read entire image
+            cx = 0;
+            cy = 0;
+            readW = imgW;
+            readH = imgH;
+            if (contextResizeWarned.compareAndSet(false, true)) {
+                logger.warn("Image ({}x{}) smaller than context region ({}x{}) -- " +
+                        "reading entire image and resizing to match detail tile dimensions",
+                        imgW, imgH, contextW, contextH);
+            }
+        }
 
         // Read at higher downsample so output has same pixel dimensions as detail tile
         double contextDownsample = detailRequest.getDownsample() * contextScale;
         RegionRequest contextRequest = RegionRequest.createInstance(
                 server.getPath(), contextDownsample,
-                cx, cy, clampedW, clampedH,
+                cx, cy, readW, readH,
                 detailRequest.getZ(), detailRequest.getT());
 
         BufferedImage contextImage = server.readRegion(contextRequest);
         if (contextImage == null) {
             throw new IOException("Failed to read context tile at " + contextRequest);
         }
+
+        // Resize to expected dimensions if the read region was smaller than expected
+        if (contextImage.getWidth() != expectedW || contextImage.getHeight() != expectedH) {
+            BufferedImage resized = new BufferedImage(expectedW, expectedH, contextImage.getType());
+            java.awt.Graphics2D g = resized.createGraphics();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(contextImage, 0, 0, expectedW, expectedH, null);
+            g.dispose();
+            contextImage = resized;
+        }
+
         return contextImage;
     }
 

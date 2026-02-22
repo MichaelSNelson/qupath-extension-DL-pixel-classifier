@@ -458,6 +458,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 channelConfig, inferenceConfig, outputDir, reflectionPadding);
     }
 
+    /** Maximum retry attempts for transient "thread death" errors from Appose. */
+    private static final int MAX_THREAD_DEATH_RETRIES = 2;
+    /** Delay between retry attempts to let Appose Python threads clean up. */
+    private static final long THREAD_DEATH_RETRY_DELAY_MS = 100;
+
     /**
      * Single-tile pixel inference with full shared-memory round-trip.
      * No file I/O -- probability map returned directly via shared memory.
@@ -466,6 +471,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
      * NDArray allocation triggers ServiceLoader discovery of ShmFactory,
      * and QuPath's tile-rendering threads don't have the extension classloader
      * as their TCCL.
+     * <p>
+     * Includes retry logic for transient "thread death" errors from Appose.
+     * These occur when a stale Python worker thread's death message is
+     * misrouted to the currently-active task. The actual inference completes
+     * successfully but the COMPLETION arrives after Appose already reported
+     * FAILURE. Retrying with a new task resolves this.
      */
     private ClassifierClient.PixelInferenceResult runSingleTilePixelInference(
             ApposeService appose,
@@ -493,64 +504,87 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         try {
             return ApposeService.withExtensionClassLoader(() -> {
-                // Create shared memory NDArray for input tile
-                NDArray.Shape shape = new NDArray.Shape(
-                        NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
-                NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
+                IOException lastError = null;
 
-                try {
-                    // Copy raw bytes into shared memory, converting dtype if needed.
-                    // uint8 values are kept in [0, 255] range (not divided by 255)
-                    // because normalization expects raw pixel values matching training stats.
-                    FloatBuffer fbuf = inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
-                    if ("uint8".equals(dtype)) {
-                        for (byte b : rawTileBytes) {
-                            fbuf.put((float) (b & 0xFF));
-                        }
-                    } else {
-                        // float32: copy raw bytes directly
-                        FloatBuffer srcBuf = ByteBuffer.wrap(rawTileBytes)
-                                .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-                        fbuf.put(srcBuf);
-                    }
-
-                    // Build input config dict
-                    Map<String, Object> inputConfig = buildInputConfig(channelConfig);
-
-                    Map<String, Object> inputs = new HashMap<>();
-                    inputs.put("model_path", modelPath);
-                    inputs.put("tile_data", inputNd);
-                    inputs.put("tile_height", tileHeight);
-                    inputs.put("tile_width", tileWidth);
-                    inputs.put("num_channels", numChannels);
-                    inputs.put("input_config", inputConfig);
-                    inputs.put("reflection_padding", reflectionPadding);
-
-                    Task task = appose.runTask("inference_pixel", inputs);
-
-                    int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
-                    NDArray resultNd = (NDArray) task.outputs.get("probabilities");
+                for (int attempt = 0; attempt < MAX_THREAD_DEATH_RETRIES; attempt++) {
+                    // Create shared memory NDArray for input tile (fresh per attempt)
+                    NDArray.Shape shape = new NDArray.Shape(
+                            NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
+                    NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
                     try {
-                        // Read probability map from shared memory and save as .bin file
-                        // (matching the existing file-based contract for DLPixelClassifier)
-                        Files.createDirectories(outputDir);
-                        Path outputPath = outputDir.resolve(tileId + ".bin");
+                        // Copy raw bytes into shared memory, converting dtype if needed.
+                        // uint8 values are kept in [0, 255] range (not divided by 255)
+                        // because normalization expects raw pixel values matching training stats.
+                        FloatBuffer fbuf = inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
+                        if ("uint8".equals(dtype)) {
+                            for (byte b : rawTileBytes) {
+                                fbuf.put((float) (b & 0xFF));
+                            }
+                        } else {
+                            // float32: copy raw bytes directly
+                            FloatBuffer srcBuf = ByteBuffer.wrap(rawTileBytes)
+                                    .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                            fbuf.put(srcBuf);
+                        }
 
-                        // Result is in CHW order (C classes, H height, W width) as float32
-                        ByteBuffer resultBuf = resultNd.buffer().order(ByteOrder.nativeOrder());
-                        byte[] resultBytes = new byte[resultBuf.remaining()];
-                        resultBuf.get(resultBytes);
-                        Files.write(outputPath, resultBytes);
+                        // Build input config dict
+                        Map<String, Object> inputConfig = buildInputConfig(channelConfig);
 
-                        Map<String, String> outputPaths = Map.of(tileId, outputPath.toString());
-                        return new ClassifierClient.PixelInferenceResult(outputPaths, numClasses);
+                        Map<String, Object> inputs = new HashMap<>();
+                        inputs.put("model_path", modelPath);
+                        inputs.put("tile_data", inputNd);
+                        inputs.put("tile_height", tileHeight);
+                        inputs.put("tile_width", tileWidth);
+                        inputs.put("num_channels", numChannels);
+                        inputs.put("input_config", inputConfig);
+                        inputs.put("reflection_padding", reflectionPadding);
+
+                        Task task = appose.runTask("inference_pixel", inputs);
+
+                        int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
+                        NDArray resultNd = (NDArray) task.outputs.get("probabilities");
+
+                        try {
+                            // Read probability map from shared memory and save as .bin file
+                            // (matching the existing file-based contract for DLPixelClassifier)
+                            Files.createDirectories(outputDir);
+                            Path outputPath = outputDir.resolve(tileId + ".bin");
+
+                            // Result is in CHW order (C classes, H height, W width) as float32
+                            ByteBuffer resultBuf = resultNd.buffer().order(ByteOrder.nativeOrder());
+                            byte[] resultBytes = new byte[resultBuf.remaining()];
+                            resultBuf.get(resultBytes);
+                            Files.write(outputPath, resultBytes);
+
+                            Map<String, String> outputPaths = Map.of(tileId, outputPath.toString());
+                            return new ClassifierClient.PixelInferenceResult(outputPaths, numClasses);
+                        } finally {
+                            resultNd.close();
+                        }
+                    } catch (IOException e) {
+                        String msg = e.getMessage() != null ? e.getMessage() : "";
+                        if (msg.toLowerCase().contains("thread death")
+                                && attempt < MAX_THREAD_DEATH_RETRIES - 1) {
+                            lastError = e;
+                            logger.debug("Thread death on attempt {}, retrying after {}ms delay",
+                                    attempt + 1, THREAD_DEATH_RETRY_DELAY_MS);
+                            try {
+                                Thread.sleep(THREAD_DEATH_RETRY_DELAY_MS);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                throw new IOException("Interrupted during thread death retry", ie);
+                            }
+                            continue;
+                        }
+                        throw e;
                     } finally {
-                        resultNd.close();
+                        inputNd.close();
                     }
-                } finally {
-                    inputNd.close();
                 }
+                // Should not reach here, but satisfy compiler
+                throw lastError != null ? lastError
+                        : new IOException("Single-tile inference failed after retries");
             });
         } catch (IOException e) {
             throw e;

@@ -55,6 +55,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Workflow for applying a trained classifier to images.
@@ -73,6 +74,9 @@ import java.util.concurrent.Future;
 public class InferenceWorkflow {
 
     private static final Logger logger = LoggerFactory.getLogger(InferenceWorkflow.class);
+
+    /** Warn-once flag for context tiles resized due to small images. */
+    private static final AtomicBoolean contextResizeWarned = new AtomicBoolean(false);
 
     private QuPathGUI qupath;
 
@@ -931,6 +935,13 @@ public class InferenceWorkflow {
      * Reads a context tile for batch inference. The context tile covers
      * {@code contextScale} times the area of the detail tile in each dimension,
      * centered on the same location, and downsampled to the same pixel dimensions.
+     * <p>
+     * Three-tier strategy for handling image edges:
+     * <ol>
+     *   <li>Ideal: context region fits entirely within the image</li>
+     *   <li>Clamped: context region is shifted to fit (image >= context size)</li>
+     *   <li>Resized: image smaller than context region -- read entire image, resize to match</li>
+     * </ol>
      */
     private static BufferedImage readContextTileBatch(
             TileProcessor.TileSpec spec,
@@ -949,28 +960,60 @@ public class InferenceWorkflow {
         int contextW = fullResW * contextScale;
         int contextH = fullResH * contextScale;
 
-        // Center context on same location as detail tile
-        int centerX = fullResX + fullResW / 2;
-        int centerY = fullResY + fullResH / 2;
-        int cx = centerX - contextW / 2;
-        int cy = centerY - contextH / 2;
+        int imgW = server.getWidth();
+        int imgH = server.getHeight();
 
-        // Clamp to image bounds
-        cx = Math.max(0, Math.min(cx, server.getWidth() - contextW));
-        cy = Math.max(0, Math.min(cy, server.getHeight() - contextH));
-        int clampedW = Math.min(contextW, server.getWidth() - cx);
-        int clampedH = Math.min(contextH, server.getHeight() - cy);
+        // Expected output dimensions: same as detail tile pixel dimensions
+        int expectedW = spec.width();
+        int expectedH = spec.height();
+
+        int cx, cy, readW, readH;
+
+        if (imgW >= contextW && imgH >= contextH) {
+            // Tier 1/2: Image large enough -- clamp position to keep context within bounds
+            int centerX = fullResX + fullResW / 2;
+            int centerY = fullResY + fullResH / 2;
+            cx = centerX - contextW / 2;
+            cy = centerY - contextH / 2;
+            cx = Math.max(0, Math.min(cx, imgW - contextW));
+            cy = Math.max(0, Math.min(cy, imgH - contextH));
+            readW = contextW;
+            readH = contextH;
+        } else {
+            // Tier 3: Image smaller than context region -- read entire image
+            cx = 0;
+            cy = 0;
+            readW = imgW;
+            readH = imgH;
+            if (contextResizeWarned.compareAndSet(false, true)) {
+                logger.warn("Image ({}x{}) smaller than context region ({}x{}) -- " +
+                        "reading entire image and resizing to match detail tile dimensions",
+                        imgW, imgH, contextW, contextH);
+            }
+        }
 
         // Read at higher downsample so output pixel dimensions match detail tile
         double contextDownsample = downsample * contextScale;
         RegionRequest contextRequest = RegionRequest.createInstance(
                 server.getPath(), contextDownsample,
-                cx, cy, clampedW, clampedH);
+                cx, cy, readW, readH);
 
         BufferedImage contextImage = server.readRegion(contextRequest);
         if (contextImage == null) {
             throw new IOException("Failed to read context tile for spec " + spec.index());
         }
+
+        // Resize to expected dimensions if the read region was smaller than expected
+        if (contextImage.getWidth() != expectedW || contextImage.getHeight() != expectedH) {
+            BufferedImage resized = new BufferedImage(expectedW, expectedH, contextImage.getType());
+            java.awt.Graphics2D g = resized.createGraphics();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(contextImage, 0, 0, expectedW, expectedH, null);
+            g.dispose();
+            contextImage = resized;
+        }
+
         return contextImage;
     }
 
