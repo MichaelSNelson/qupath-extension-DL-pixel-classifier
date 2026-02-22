@@ -101,10 +101,19 @@ public class ClassifierClient {
             Map<String, Double> perClassIoU,
             Map<String, Double> perClassLoss,
             String device,
-            String deviceInfo
+            String deviceInfo,
+            String status,
+            String setupPhase
     ) {
         public double getProgress() {
             return (double) epoch / totalEpochs;
+        }
+
+        /**
+         * Whether this is a setup phase update (not an epoch update).
+         */
+        public boolean isSetupPhase() {
+            return "setup".equals(status) || "initializing".equals(status);
         }
     }
 

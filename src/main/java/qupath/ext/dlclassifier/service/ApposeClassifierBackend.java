@@ -868,9 +868,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         String device = obj.has("device") ? obj.get("device").getAsString() : null;
         String deviceInfo = obj.has("device_info") ? obj.get("device_info").getAsString() : null;
 
+        // Setup phase info (present during model initialization)
+        String status = obj.has("status") ? obj.get("status").getAsString() : null;
+        String setupPhase = obj.has("setup_phase") ? obj.get("setup_phase").getAsString() : null;
+
         return new ClassifierClient.TrainingProgress(
                 epoch, totalEpochs, trainLoss, valLoss, accuracy,
-                meanIoU, perClassIoU, perClassLoss, device, deviceInfo);
+                meanIoU, perClassIoU, perClassLoss, device, deviceInfo,
+                status, setupPhase);
     }
 
     private static Map<String, Double> parseStringDoubleMap(JsonObject parent, String fieldName) {

@@ -106,6 +106,21 @@ task.update(
 )
 
 
+def setup_callback(phase):
+    """Forward setup phase updates to Appose task events."""
+    total_epochs = training_params.get("epochs", 50)
+    task.update(
+        message=json.dumps({
+            "status": "setup",
+            "setup_phase": phase,
+            "epoch": 0,
+            "total_epochs": total_epochs,
+        }),
+        current=0,
+        maximum=total_epochs
+    )
+
+
 def progress_callback(epoch, train_loss, val_loss, accuracy,
                        per_class_iou, per_class_loss, mean_iou):
     """Forward training progress to Appose task events."""
@@ -182,7 +197,8 @@ try:
         frozen_layers=frozen_layers,
         pause_flag=pause_flag,
         checkpoint_path=checkpoint_path,
-        start_epoch=start_epoch
+        start_epoch=start_epoch,
+        setup_callback=setup_callback
     )
 except Exception as e:
     logger.error("Training failed: %s", e)

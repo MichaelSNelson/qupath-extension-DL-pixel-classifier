@@ -84,6 +84,9 @@ public final class DLClassifierPreferences {
     private static final IntegerProperty validationSplit = PathPrefs.createPersistentPreference(
             "dlclassifier.validationSplit", 20);
 
+    private static final BooleanProperty rebalanceByDefault = PathPrefs.createPersistentPreference(
+            "dlclassifier.rebalanceByDefault", true);
+
     private static final BooleanProperty augFlipHorizontal = PathPrefs.createPersistentPreference(
             "dlclassifier.augFlipHorizontal", true);
 
@@ -422,6 +425,18 @@ public final class DLClassifierPreferences {
 
     public static IntegerProperty validationSplitProperty() {
         return validationSplit;
+    }
+
+    public static boolean isRebalanceByDefault() {
+        return rebalanceByDefault.get();
+    }
+
+    public static void setRebalanceByDefault(boolean rebalance) {
+        rebalanceByDefault.set(rebalance);
+    }
+
+    public static BooleanProperty rebalanceByDefaultProperty() {
+        return rebalanceByDefault;
     }
 
     public static boolean isAugFlipHorizontal() {

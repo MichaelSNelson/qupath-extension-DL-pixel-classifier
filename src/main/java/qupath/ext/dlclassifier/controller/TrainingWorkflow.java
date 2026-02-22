@@ -605,16 +605,19 @@ public class TrainingWorkflow {
                             return;
                         }
                         if (progress != null) {
-                            // Epoch 0 = pre-training status with device info (no metrics yet)
-                            if (trainingProgress.epoch() == 0) {
-                                // Show device info from the Python backend
-                                String deviceMsg = formatDeviceMessage(
-                                        trainingProgress.device(), trainingProgress.deviceInfo());
-                                progress.log(deviceMsg);
-                                progress.setStatus("Building model on " +
-                                        (trainingProgress.totalEpochs() > 0
-                                            ? trainingProgress.totalEpochs() + " epochs..."
-                                            : "backend..."));
+                            // Handle setup phase updates (before training loop starts)
+                            if (trainingProgress.isSetupPhase()) {
+                                // "initializing" = first update with device info
+                                if ("initializing".equals(trainingProgress.status())) {
+                                    String deviceMsg = formatDeviceMessage(
+                                            trainingProgress.device(), trainingProgress.deviceInfo());
+                                    progress.log(deviceMsg);
+                                    progress.setStatus("Initializing model for "
+                                            + trainingProgress.totalEpochs() + " epoch run...");
+                                } else {
+                                    // "setup" = granular phase updates during setup
+                                    progress.setStatus(formatSetupPhase(trainingProgress.setupPhase()));
+                                }
                                 return;
                             }
 
@@ -1248,6 +1251,29 @@ public class TrainingWorkflow {
                 return "Training on CPU (no GPU detected -- this will be slow)";
             default:
                 return "Training on device: " + device;
+        }
+    }
+
+    /**
+     * Converts a setup phase identifier to a user-friendly status message.
+     */
+    private static String formatSetupPhase(String phase) {
+        if (phase == null) return "Setting up...";
+        switch (phase) {
+            case "creating_model":
+                return "Creating model architecture...";
+            case "loading_data":
+                return "Loading training data...";
+            case "computing_stats":
+                return "Computing normalization statistics...";
+            case "configuring_optimizer":
+                return "Configuring optimizer and scheduler...";
+            case "loading_checkpoint":
+                return "Loading checkpoint...";
+            case "starting_training":
+                return "Starting first epoch...";
+            default:
+                return "Setting up (" + phase + ")...";
         }
     }
 

@@ -149,6 +149,7 @@ public class TrainingDialog {
         // Class selection
         private ListView<ClassItem> classListView;
         private PieChart classDistributionChart;
+        private CheckBox rebalanceByDefaultCheck;
 
         // Augmentation
         private CheckBox flipHorizontalCheck;
@@ -1169,9 +1170,20 @@ public class TrainingDialog {
                     "on weight compensation alone.");
             rebalanceBtn.setOnAction(e -> rebalanceClassWeights());
 
+            rebalanceByDefaultCheck = new CheckBox("Rebalance by default");
+            rebalanceByDefaultCheck.setSelected(DLClassifierPreferences.isRebalanceByDefault());
+            rebalanceByDefaultCheck.selectedProperty().addListener((obs, old, newVal) ->
+                    DLClassifierPreferences.setRebalanceByDefault(newVal));
+            TooltipHelper.install(rebalanceByDefaultCheck,
+                    "Automatically rebalance class weights when classes are loaded.\n\n" +
+                    "When checked, class weights are auto-set each time you load\n" +
+                    "classes, so underrepresented classes receive higher weights.\n" +
+                    "You can still manually adjust weights after loading.");
+
             HBox buttonBox = new HBox(10, selectAllBtn, selectNoneBtn, rebalanceBtn);
 
-            content.getChildren().addAll(infoLabel, classDistributionChart, classListView, buttonBox);
+            content.getChildren().addAll(infoLabel, classDistributionChart, classListView,
+                    rebalanceByDefaultCheck, buttonBox);
 
             TitledPane pane = new TitledPane("ANNOTATION CLASSES", content);
             pane.setExpanded(true);
@@ -1378,6 +1390,11 @@ public class TrainingDialog {
                     }
 
                     refreshPieChart();
+
+                    // Auto-rebalance class weights if preference is set
+                    if (rebalanceByDefaultCheck.isSelected()) {
+                        rebalanceClassWeights();
+                    }
 
                     // Enable gated sections
                     classesLoaded = true;

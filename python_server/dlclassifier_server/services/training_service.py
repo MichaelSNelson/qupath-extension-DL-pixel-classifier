@@ -468,7 +468,8 @@ class TrainingService:
         frozen_layers: Optional[List[str]] = None,
         pause_flag: Optional[threading.Event] = None,
         checkpoint_path: Optional[str] = None,
-        start_epoch: int = 0
+        start_epoch: int = 0,
+        setup_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """Train a model.
 
@@ -487,6 +488,10 @@ class TrainingService:
             pause_flag: Optional threading event for pause requests
             checkpoint_path: Optional path to checkpoint for resuming training
             start_epoch: Epoch to start from when resuming (0-based)
+            setup_callback: Optional callback for setup phase status.
+                Signature: (phase_name: str) where phase_name is one of:
+                "creating_model", "loading_data", "computing_stats",
+                "configuring_optimizer", "loading_checkpoint", "starting_training"
 
         Training params can include:
             - epochs: Number of training epochs (default: 50)
@@ -515,7 +520,8 @@ class TrainingService:
                 frozen_layers=frozen_layers,
                 pause_flag=pause_flag,
                 checkpoint_path=checkpoint_path,
-                start_epoch=start_epoch
+                start_epoch=start_epoch,
+                setup_callback=setup_callback
             )
         finally:
             # Always free GPU memory, even on crash/error/cancellation
@@ -537,9 +543,17 @@ class TrainingService:
         frozen_layers: Optional[List[str]] = None,
         pause_flag: Optional[threading.Event] = None,
         checkpoint_path: Optional[str] = None,
-        start_epoch: int = 0
+        start_epoch: int = 0,
+        setup_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """Internal training implementation. Called by train() with cleanup guarantee."""
+
+        def _report_setup(phase):
+            if setup_callback:
+                try:
+                    setup_callback(phase)
+                except Exception:
+                    pass  # Never let status reporting break training
 
         # Compute effective input channels: doubled when context_scale > 1
         # (detail + context tiles are concatenated along the channel axis)
@@ -551,6 +565,7 @@ class TrainingService:
                         f"{base_channels} -> {effective_channels} (detail + context)")
 
         # Create model with optional frozen layers
+        _report_setup("creating_model")
         if frozen_layers:
             from .pretrained_models import get_pretrained_service
             pretrained_service = get_pretrained_service()
@@ -573,6 +588,7 @@ class TrainingService:
         model = model.to(self.device)
 
         # Create datasets
+        _report_setup("loading_data")
         data_path = Path(data_path)
         augmentation_config = training_params.get("augmentation_config", {})
 
@@ -608,6 +624,7 @@ class TrainingService:
         )
 
         # Compute dataset-level normalization statistics for consistent inference
+        _report_setup("computing_stats")
         try:
             train_images = []
             for i in range(min(len(train_dataset), 200)):  # Sample up to 200 patches
@@ -653,6 +670,7 @@ class TrainingService:
         )
 
         # Setup optimizer - only optimize trainable parameters
+        _report_setup("configuring_optimizer")
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         total_params = sum(p.numel() for p in model.parameters())
         trainable_count = sum(p.numel() for p in trainable_params)
@@ -740,6 +758,7 @@ class TrainingService:
 
         # Restore from checkpoint if resuming
         if checkpoint_path:
+            _report_setup("loading_checkpoint")
             checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -790,6 +809,7 @@ class TrainingService:
                        f"best_score={best_score:.4f}")
 
         # Training loop
+        _report_setup("starting_training")
         num_classes = len(classes)
         best_epoch = 0
         best_loss = 0.0
