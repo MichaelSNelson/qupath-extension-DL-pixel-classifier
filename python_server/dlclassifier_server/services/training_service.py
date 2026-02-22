@@ -347,6 +347,16 @@ class SegmentationDataset(Dataset):
                 ctx_array = self._load_patch(ctx_path)
                 if ctx_array.ndim == 2:
                     ctx_array = ctx_array[..., np.newaxis]
+                # Resize context tile if spatial dims don't match (edge tiles near image boundary)
+                if ctx_array.shape[0] != img_array.shape[0] or ctx_array.shape[1] != img_array.shape[1]:
+                    from PIL import Image as _PILResize
+                    h, w = img_array.shape[:2]
+                    resized = []
+                    for c in range(ctx_array.shape[2]):
+                        ch = _PILResize.fromarray(ctx_array[:, :, c])
+                        ch = ch.resize((w, h), _PILResize.BILINEAR)
+                        resized.append(np.array(ch))
+                    ctx_array = np.stack(resized, axis=2)
                 # Concatenate detail + context along channel axis: (H,W,C) + (H,W,C) -> (H,W,2C)
                 img_array = np.concatenate([img_array, ctx_array], axis=2)
             else:
@@ -639,6 +649,16 @@ class TrainingService:
                         ctx_arr = SegmentationDataset._load_patch(ctx_path)
                         if ctx_arr.ndim == 2:
                             ctx_arr = ctx_arr[..., np.newaxis]
+                        # Resize context if spatial dims differ (edge tiles)
+                        if ctx_arr.shape[0] != img_arr.shape[0] or ctx_arr.shape[1] != img_arr.shape[1]:
+                            from PIL import Image as _PILResize
+                            h, w = img_arr.shape[:2]
+                            resized = []
+                            for c in range(ctx_arr.shape[2]):
+                                ch = _PILResize.fromarray(ctx_arr[:, :, c])
+                                ch = ch.resize((w, h), _PILResize.BILINEAR)
+                                resized.append(np.array(ch))
+                            ctx_arr = np.stack(resized, axis=2)
                         img_arr = np.concatenate([img_arr, ctx_arr], axis=2)
                 train_images.append(img_arr)
 

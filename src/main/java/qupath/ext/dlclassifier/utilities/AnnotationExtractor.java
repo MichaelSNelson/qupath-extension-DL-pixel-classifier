@@ -768,7 +768,21 @@ public class AnnotationExtractor {
                 server.getPath(), contextDownsample,
                 cx, cy, clampedWidth, clampedHeight,
                 0, 0);
-        return server.readRegion(contextRequest);
+        BufferedImage contextImage = server.readRegion(contextRequest);
+
+        // Pad to patchSize x patchSize if the context region exceeded image bounds
+        if (contextImage.getWidth() != patchSize || contextImage.getHeight() != patchSize) {
+            logger.debug("Context tile {}x{} differs from expected {}x{}, padding",
+                    contextImage.getWidth(), contextImage.getHeight(), patchSize, patchSize);
+            BufferedImage padded = new BufferedImage(patchSize, patchSize, contextImage.getType());
+            java.awt.Graphics2D g = padded.createGraphics();
+            int dx = (patchSize - contextImage.getWidth()) / 2;
+            int dy = (patchSize - contextImage.getHeight()) / 2;
+            g.drawImage(contextImage, dx, dy, null);
+            g.dispose();
+            contextImage = padded;
+        }
+        return contextImage;
     }
 
     /**
