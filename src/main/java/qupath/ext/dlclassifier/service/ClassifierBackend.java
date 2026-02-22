@@ -101,6 +101,16 @@ public interface ClassifierBackend {
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck) throws IOException;
 
+    /**
+     * Finalizes training from a saved checkpoint by restoring the best model
+     * weights and saving them as the final classifier.
+     *
+     * @param checkpointPath path to the training checkpoint file
+     * @return training result with the saved model path and best metrics
+     * @throws IOException if finalization fails
+     */
+    ClassifierClient.TrainingResult finalizeTraining(String checkpointPath) throws IOException;
+
     // ==================== Inference ====================
 
     /**

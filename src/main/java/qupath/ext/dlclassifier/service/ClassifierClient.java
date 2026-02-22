@@ -123,17 +123,18 @@ public class ClassifierClient {
             double bestMeanIoU,
             boolean paused,
             int lastEpoch,
-            int totalEpochs
+            int totalEpochs,
+            String checkpointPath
     ) {
         /** Compact constructor for non-paused results. */
         public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy,
                               int bestEpoch, double bestMeanIoU) {
-            this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU, false, 0, 0);
+            this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU, false, 0, 0, null);
         }
 
         /** Compact constructor for cancelled results. */
         public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
-            this(jobId, modelPath, finalLoss, finalAccuracy, 0, 0.0, false, 0, 0);
+            this(jobId, modelPath, finalLoss, finalAccuracy, 0, 0.0, false, 0, 0, null);
         }
 
         /** Returns true if training was cancelled (no model produced and not paused). */

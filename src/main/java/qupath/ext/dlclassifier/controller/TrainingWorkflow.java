@@ -10,6 +10,7 @@ import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.TrainingConfig;
+import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
@@ -417,6 +418,14 @@ public class TrainingWorkflow {
                     currentJobId[0], classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
                     selectedImages, progress, currentJobId));
+        });
+
+        // Wire complete-early callback (save best model from checkpoint)
+        progress.setOnCompleteEarly(v -> {
+            CompletableFuture.runAsync(() -> handleCompleteEarly(
+                    currentJobId[0], classifierName, description, handler,
+                    trainingConfig, channelConfig, classNames,
+                    selectedImages, progress, classColors));
         });
 
         // Suspend overlay during training to prevent Appose "thread death" races
@@ -955,6 +964,89 @@ public class TrainingWorkflow {
             progress.complete(false, "Resume failed: " + e.getMessage());
         } finally {
             cleanupTempDir(tempDir);
+        }
+    }
+
+    /**
+     * Handles the "Complete Training" action from the paused state.
+     * Loads the best model from the training checkpoint and saves it as
+     * the final classifier.
+     */
+    private void handleCompleteEarly(String jobId,
+                                     String classifierName,
+                                     String description,
+                                     ClassifierHandler handler,
+                                     TrainingConfig trainingConfig,
+                                     ChannelConfiguration channelConfig,
+                                     List<String> classNames,
+                                     List<ProjectImageEntry<BufferedImage>> selectedImages,
+                                     ProgressMonitorController progress,
+                                     Map<String, Integer> classColors) {
+        try {
+            ClassifierBackend backend = BackendFactory.getBackend();
+            if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
+                progress.complete(false, "Complete-early requires Appose backend");
+                return;
+            }
+
+            ApposeClassifierBackend.CheckpointInfo checkpoint = apposeBackend.getCheckpointInfo(jobId);
+            if (checkpoint == null || checkpoint.path() == null || checkpoint.path().isEmpty()) {
+                progress.complete(false, "No checkpoint available for this training job");
+                return;
+            }
+
+            progress.setStatus("Finalizing model from checkpoint...");
+            progress.log("Loading best model from checkpoint...");
+
+            ClassifierClient.TrainingResult serverResult =
+                    apposeBackend.finalizeTraining(checkpoint.path());
+
+            if (serverResult.modelPath() == null || serverResult.modelPath().isEmpty()) {
+                progress.complete(false, "Failed to save model from checkpoint");
+                return;
+            }
+
+            // Save metadata (same pattern as normal completion)
+            progress.setStatus("Saving classifier...");
+            String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                    + "_" + System.currentTimeMillis();
+
+            List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
+
+            ClassifierMetadata metadata = ClassifierMetadata.builder()
+                    .id(classifierId)
+                    .name(classifierName)
+                    .description(description)
+                    .modelType(trainingConfig.getModelType())
+                    .backbone(trainingConfig.getBackbone())
+                    .inputChannels(channelConfig.getSelectedChannels().size())
+                    .contextScale(trainingConfig.getContextScale())
+                    .downsample(trainingConfig.getDownsample())
+                    .expectedChannelNames(channelConfig.getChannelNames())
+                    .inputSize(trainingConfig.getTileSize(), trainingConfig.getTileSize())
+                    .classes(classInfoList)
+                    .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                    .bitDepthTrained(channelConfig.getBitDepth())
+                    .trainingEpochs(checkpoint.lastEpoch())
+                    .finalLoss(serverResult.finalLoss())
+                    .finalAccuracy(serverResult.finalAccuracy())
+                    .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                    .build();
+
+            ModelManager modelManager = new ModelManager();
+            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()));
+            progress.log("Classifier saved: " + metadata.getId());
+
+            progress.complete(true, String.format(
+                    "Training completed early!\nBest model: epoch %d\n"
+                    + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                    serverResult.bestEpoch(), serverResult.finalLoss(),
+                    serverResult.finalAccuracy() * 100, serverResult.bestMeanIoU()));
+
+        } catch (Exception e) {
+            logger.error("Complete early failed", e);
+            progress.log("ERROR: " + e.getMessage());
+            progress.complete(false, "Failed to complete training: " + e.getMessage());
         }
     }
 

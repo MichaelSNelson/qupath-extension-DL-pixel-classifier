@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -49,6 +50,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     // simultaneously creates 16 Python threads that mostly block and die.
     // Permits=1: serialize all overlay inference to avoid thread death.
     private static final Semaphore inferenceSemaphore = new Semaphore(1, true);
+
+    // Stores checkpoint info for paused training jobs so resume/finalize can
+    // retrieve the checkpoint path and original training inputs.
+    private static final ConcurrentHashMap<String, CheckpointInfo> checkpointStore = new ConcurrentHashMap<>();
+
+    /**
+     * Stores checkpoint state for a paused training job.
+     *
+     * @param path           path to the checkpoint file on disk
+     * @param lastEpoch      the last completed epoch
+     * @param originalInputs the original Appose task inputs (for resume)
+     */
+    public record CheckpointInfo(String path, int lastEpoch, Map<String, Object> originalInputs) {}
 
     // ==================== Health & Status ====================
 
@@ -151,6 +165,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         // Generate a synthetic job ID for Appose-based training
         String jobId = "appose-" + System.currentTimeMillis();
+        inputs.put("pause_signal_path", getPauseSignalPath(jobId).toString());
         if (jobIdCallback != null) {
             jobIdCallback.accept(jobId);
         }
@@ -196,10 +211,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     @Override
     public void pauseTraining(String jobId) throws IOException {
-        // Appose does not support pause natively -- training can only be cancelled.
-        // For pause/resume, fall back to HTTP backend.
-        throw new IOException("Training pause is not supported via Appose. " +
-                "Use the HTTP backend for pause/resume functionality.");
+        Path signalPath = getPauseSignalPath(jobId);
+        Files.writeString(signalPath, "pause");
+        logger.info("Pause signal written for job {}", jobId);
+    }
+
+    /**
+     * Returns the file path used as a pause signal for the given job.
+     * The Python train.py script polls for this file's existence.
+     */
+    private Path getPauseSignalPath(String jobId) {
+        return Path.of(System.getProperty("java.io.tmpdir"), "dl-pause-" + jobId);
     }
 
     @Override
@@ -211,10 +233,98 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Integer batchSize,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck) throws IOException {
-        // Appose does not support resume natively -- would need to re-start training.
-        // For pause/resume, fall back to HTTP backend.
-        throw new IOException("Training resume is not supported via Appose. " +
-                "Use the HTTP backend for pause/resume functionality.");
+
+        CheckpointInfo checkpoint = checkpointStore.get(jobId);
+        if (checkpoint == null) {
+            throw new IOException("No checkpoint info stored for job: " + jobId);
+        }
+
+        ApposeService appose = ApposeService.getInstance();
+
+        // Rebuild inputs using checkpoint's original config, overriding with resume params
+        Map<String, Object> inputs = new HashMap<>(checkpoint.originalInputs());
+        if (newDataPath != null) {
+            inputs.put("data_path", newDataPath.toString());
+        }
+        inputs.put("checkpoint_path", checkpoint.path());
+        inputs.put("start_epoch", checkpoint.lastEpoch());
+
+        // Override training params with resume values
+        @SuppressWarnings("unchecked")
+        Map<String, Object> trainingParams = new HashMap<>(
+                (Map<String, Object>) inputs.get("training_params"));
+        if (epochs != null) trainingParams.put("epochs", epochs);
+        if (learningRate != null) trainingParams.put("learning_rate", learningRate);
+        if (batchSize != null) trainingParams.put("batch_size", batchSize);
+        inputs.put("training_params", trainingParams);
+
+        String newJobId = "appose-resume-" + System.currentTimeMillis();
+        inputs.put("pause_signal_path", getPauseSignalPath(newJobId).toString());
+
+        ClassLoader extensionCL = ApposeService.class.getClassLoader();
+        ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(extensionCL);
+        try {
+            ClassifierClient.TrainingResult result = executeTrainingTask(
+                    appose, inputs, newJobId, extensionCL,
+                    progressCallback, cancelledCheck);
+            // If paused again, store checkpoint for next resume
+            if (result.isPaused() && result.checkpointPath() != null) {
+                storeCheckpointInfo(newJobId, result.checkpointPath(),
+                        result.lastEpoch(), inputs);
+            }
+            return result;
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalCL);
+        }
+    }
+
+    @Override
+    public ClassifierClient.TrainingResult finalizeTraining(String checkpointPath) throws IOException {
+        ApposeService appose = ApposeService.getInstance();
+        Map<String, Object> inputs = new HashMap<>();
+        inputs.put("checkpoint_path", checkpointPath);
+
+        ClassLoader extensionCL = ApposeService.class.getClassLoader();
+        ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(extensionCL);
+        try {
+            Task task = appose.runTask("finalize_training", inputs);
+
+            String modelPath = String.valueOf(task.outputs.get("model_path"));
+            double loss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
+            double acc = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
+            int bestEpoch = ((Number) task.outputs.getOrDefault("best_epoch", 0)).intValue();
+            double bestMIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
+            int epochsTrained = ((Number) task.outputs.getOrDefault("epochs_trained", 0)).intValue();
+
+            return new ClassifierClient.TrainingResult(
+                    "finalized", modelPath, loss, acc, bestEpoch, bestMIoU);
+        } catch (Exception e) {
+            throw new IOException("Failed to finalize training: " + e.getMessage(), e);
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalCL);
+        }
+    }
+
+    /**
+     * Stores checkpoint info for a paused training job.
+     */
+    void storeCheckpointInfo(String jobId, String path, int lastEpoch,
+                             Map<String, Object> originalInputs) {
+        checkpointStore.put(jobId, new CheckpointInfo(path, lastEpoch, originalInputs));
+        logger.debug("Stored checkpoint info for job {}: epoch={}, path={}",
+                jobId, lastEpoch, path);
+    }
+
+    /**
+     * Retrieves checkpoint info for a paused training job.
+     *
+     * @param jobId the job ID
+     * @return checkpoint info, or null if not found
+     */
+    public CheckpointInfo getCheckpointInfo(String jobId) {
+        return checkpointStore.get(jobId);
     }
 
     /**
@@ -275,11 +385,35 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         } catch (Exception e) {
             if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
                 logger.info("Training cancelled via Appose");
-                return new ClassifierClient.TrainingResult(jobId, null, 0, 0);
+                // Try to recover model_path in case cancel arrived after model was saved
+                String cancelledModelPath = null;
+                if (task.outputs != null && task.outputs.containsKey("model_path")) {
+                    String mp = String.valueOf(task.outputs.get("model_path"));
+                    if (!mp.isEmpty() && !"null".equals(mp)) {
+                        cancelledModelPath = mp;
+                    }
+                }
+                return new ClassifierClient.TrainingResult(jobId, cancelledModelPath, 0, 0);
             }
             throw new IOException("Training failed: " + task.error, e);
         }
 
+        // Check if training was paused (not cancelled, not failed)
+        String status = String.valueOf(task.outputs.getOrDefault("status", "completed"));
+        if ("paused".equals(status)) {
+            String checkpointPath = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
+            int lastEpoch = ((Number) task.outputs.getOrDefault("last_epoch", 0)).intValue();
+            int totalEpochs = ((Number) task.outputs.getOrDefault("total_epochs", 0)).intValue();
+            logger.info("Training paused at epoch {}/{}, checkpoint: {}", lastEpoch, totalEpochs, checkpointPath);
+
+            // Store checkpoint info for resume/finalize
+            storeCheckpointInfo(jobId, checkpointPath, lastEpoch, inputs);
+
+            return new ClassifierClient.TrainingResult(
+                    jobId, null, 0, 0, 0, 0, true, lastEpoch, totalEpochs, checkpointPath);
+        }
+
+        // Normal completion
         String modelPath = String.valueOf(task.outputs.get("model_path"));
         double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
         double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();

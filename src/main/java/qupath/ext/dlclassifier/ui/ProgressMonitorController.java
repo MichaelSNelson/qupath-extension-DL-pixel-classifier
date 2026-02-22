@@ -52,6 +52,7 @@ public class ProgressMonitorController {
     private final TextArea logArea;
     private final Button cancelButton;
     private final Button pauseButton;
+    private final Button completeTrainingButton;
     private final LineChart<Number, Number> lossChart;
     private final XYChart.Series<Number, Number> trainLossSeries;
     private final XYChart.Series<Number, Number> valLossSeries;
@@ -74,6 +75,7 @@ public class ProgressMonitorController {
     private Consumer<Void> onCancelCallback;
     private Consumer<Void> onPauseCallback;
     private Consumer<Void> onResumeCallback;
+    private Consumer<Void> onCompleteEarlyCallback;
 
     /**
      * Creates a new progress monitor for training.
@@ -120,6 +122,10 @@ public class ProgressMonitorController {
 
         cancelButton = new Button("Cancel");
         cancelButton.setOnAction(e -> handleCancel());
+
+        completeTrainingButton = new Button("Complete Training");
+        completeTrainingButton.setVisible(false);
+        completeTrainingButton.setManaged(false);
 
         // Create loss chart
         NumberAxis xAxis = new NumberAxis();
@@ -206,6 +212,7 @@ public class ProgressMonitorController {
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
         if (showLossChart) {
             buttonBox.getChildren().add(pauseButton);
+            buttonBox.getChildren().add(completeTrainingButton);
         }
         buttonBox.getChildren().add(cancelButton);
         root.getChildren().add(buttonBox);
@@ -393,6 +400,16 @@ public class ProgressMonitorController {
     }
 
     /**
+     * Sets the complete-early callback, invoked when the user clicks
+     * "Complete Training" from the paused state.
+     *
+     * @param callback callback to invoke
+     */
+    public void setOnCompleteEarly(Consumer<Void> callback) {
+        this.onCompleteEarlyCallback = callback;
+    }
+
+    /**
      * Sets the QuPath class colors for IoU chart series styling.
      *
      * @param classColors map of class name to packed RGB color integer
@@ -446,7 +463,11 @@ public class ProgressMonitorController {
     public void complete(boolean success, String message) {
         Platform.runLater(() -> {
             isRunning.set(false);
+            pauseButton.setDisable(true);
+            completeTrainingButton.setVisible(false);
+            completeTrainingButton.setManaged(false);
             cancelButton.setText("Close");
+            cancelButton.setDisable(false);
             cancelButton.setOnAction(e -> close());
 
             if (success) {
@@ -477,13 +498,25 @@ public class ProgressMonitorController {
             isRunning.set(false);
             status.set(String.format("Paused at epoch %d/%d", epoch, totalEpochs));
             statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #CC8800;");
+
+            // Resume button
             pauseButton.setText("Resume");
             pauseButton.setDisable(false);
             pauseButton.setOnAction(e -> handleResume());
+
+            // Complete Training button (save best model from checkpoint)
+            completeTrainingButton.setVisible(true);
+            completeTrainingButton.setManaged(true);
+            completeTrainingButton.setDisable(false);
+            completeTrainingButton.setOnAction(e -> handleCompleteEarly());
+
+            // Close button (discard model)
             cancelButton.setText("Close");
             cancelButton.setDisable(false);
             cancelButton.setOnAction(e -> close());
-            log("Training paused. You can add/modify annotations in QuPath, then click Resume.");
+
+            log("Training paused. Options: Resume (add annotations), "
+                    + "Complete Training (save best model), or Close (discard).");
         });
     }
 
@@ -500,6 +533,8 @@ public class ProgressMonitorController {
             pauseButton.setText("Pause");
             pauseButton.setDisable(false);
             pauseButton.setOnAction(e -> handlePause());
+            completeTrainingButton.setVisible(false);
+            completeTrainingButton.setManaged(false);
             cancelButton.setText("Cancel");
             cancelButton.setDisable(false);
             cancelButton.setOnAction(e -> handleCancel());
@@ -534,6 +569,28 @@ public class ProgressMonitorController {
         if (onResumeCallback != null) {
             onResumeCallback.accept(null);
         }
+    }
+
+    private void handleCompleteEarly() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Complete Training Early");
+        confirm.setHeaderText("Save the best model trained so far?");
+        confirm.setContentText("The model with the best validation metrics will be saved "
+                + "as the final classifier.");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                status.set("Saving best model...");
+                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #CC8800;");
+                pauseButton.setDisable(true);
+                completeTrainingButton.setDisable(true);
+                cancelButton.setDisable(true);
+
+                if (onCompleteEarlyCallback != null) {
+                    onCompleteEarlyCallback.accept(null);
+                }
+            }
+        });
     }
 
     private void handleCancel() {

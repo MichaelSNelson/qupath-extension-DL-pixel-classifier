@@ -8,14 +8,24 @@ Inputs:
     training_params: dict
     classes: list of str
     data_path: str
+    pause_signal_path: str (optional) - file path used as pause signal
+    checkpoint_path: str (optional) - checkpoint to resume from
+    start_epoch: int (optional) - epoch to resume from
 
 Outputs:
+    status: str ("completed" or "paused")
     model_path: str
     final_loss: float
     final_accuracy: float
+    best_epoch: int
+    best_mean_iou: float
     epochs_trained: int
+    checkpoint_path: str (when paused)
+    last_epoch: int (when paused)
+    total_epochs: int
 """
 import json
+import os
 import threading
 import time
 import logging
@@ -27,6 +37,22 @@ if inference_service is None:
 
 # Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
 # Required inputs: model_type, architecture, input_config, training_params, classes, data_path
+# Optional inputs (use try/except NameError pattern):
+
+try:
+    pause_signal_path
+except NameError:
+    pause_signal_path = None
+
+try:
+    checkpoint_path
+except NameError:
+    checkpoint_path = None
+
+try:
+    start_epoch
+except NameError:
+    start_epoch = 0
 
 # Import training service (heavier import, done here rather than init)
 from dlclassifier_server.services.training_service import TrainingService
@@ -61,6 +87,8 @@ logger.info("Classes: %s", classes)
 logger.info("Epochs: %s, batch_size: %s, lr: %s",
     training_params.get("epochs"), training_params.get("batch_size"), training_params.get("learning_rate"))
 logger.info("Data path: %s", data_path)
+if checkpoint_path:
+    logger.info("Resuming from checkpoint: %s (start_epoch=%d)", checkpoint_path, start_epoch)
 
 # Send pre-training status update so the Java UI can show device info
 total_epochs = training_params.get("epochs", 50)
@@ -115,6 +143,29 @@ def watch_cancel():
 cancel_watcher = threading.Thread(target=watch_cancel, daemon=True)
 cancel_watcher.start()
 
+# Set up pause bridge: file signal -> threading.Event
+pause_flag = threading.Event()
+
+
+def watch_pause():
+    """Poll for pause signal file and set the pause flag."""
+    if not pause_signal_path:
+        return
+    while not pause_flag.is_set() and not cancel_flag.is_set():
+        if os.path.exists(pause_signal_path):
+            pause_flag.set()
+            logger.info("Pause requested via signal file")
+            try:
+                os.remove(pause_signal_path)
+            except Exception:
+                pass
+            break
+        time.sleep(0.5)
+
+
+pause_watcher = threading.Thread(target=watch_pause, daemon=True)
+pause_watcher.start()
+
 # Extract frozen layers from architecture dict (Java puts them there)
 frozen_layers = architecture.get("frozen_layers", None)
 
@@ -128,18 +179,27 @@ try:
         data_path=data_path,
         progress_callback=progress_callback,
         cancel_flag=cancel_flag,
-        frozen_layers=frozen_layers
+        frozen_layers=frozen_layers,
+        pause_flag=pause_flag,
+        checkpoint_path=checkpoint_path,
+        start_epoch=start_epoch
     )
 except Exception as e:
     logger.error("Training failed: %s", e)
     raise
 finally:
-    # Signal cancel_watcher to stop so the daemon thread terminates cleanly
+    # Signal watchers to stop so daemon threads terminate cleanly
     cancel_flag.set()
+    pause_flag.set()
 
+status = result.get("status", "completed")
+task.outputs["status"] = status
 task.outputs["model_path"] = result.get("model_path", "")
 task.outputs["final_loss"] = result.get("final_loss", 0.0)
 task.outputs["final_accuracy"] = result.get("final_accuracy", 0.0)
 task.outputs["best_epoch"] = result.get("best_epoch", 0)
 task.outputs["best_mean_iou"] = result.get("best_mean_iou", 0.0)
 task.outputs["epochs_trained"] = result.get("epochs_trained", 0)
+task.outputs["checkpoint_path"] = result.get("checkpoint_path", "")
+task.outputs["last_epoch"] = result.get("epoch", 0)
+task.outputs["total_epochs"] = result.get("total_epochs", total_epochs)
