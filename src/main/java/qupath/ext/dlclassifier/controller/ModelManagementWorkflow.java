@@ -234,7 +234,17 @@ public class ModelManagementWorkflow {
         addDetailRow(archGrid, row++, "Backbone:", metadata.getBackbone());
         addDetailRow(archGrid, row++, "Input Size:",
                 metadata.getInputWidth() + " x " + metadata.getInputHeight());
-        addDetailRow(archGrid, row++, "Input Channels:", String.valueOf(metadata.getInputChannels()));
+        String channelDisplay = String.valueOf(metadata.getInputChannels());
+        if (metadata.getContextScale() > 1) {
+            channelDisplay += " (x2 with context = " + metadata.getEffectiveInputChannels() + ")";
+        }
+        addDetailRow(archGrid, row++, "Input Channels:", channelDisplay);
+        if (metadata.getDownsample() > 1.0) {
+            addDetailRow(archGrid, row++, "Downsample:", String.valueOf(metadata.getDownsample()) + "x");
+        }
+        if (metadata.getContextScale() > 1) {
+            addDetailRow(archGrid, row++, "Context Scale:", metadata.getContextScale() + "x");
+        }
 
         detailsPane.getChildren().add(archGrid);
 

@@ -635,6 +635,11 @@ public class InferenceWorkflow {
                                     channelConfig, inferenceConfig, tempDir, 0);
 
                     if (pixelResult == null) {
+                        if (contextScale > 1) {
+                            logger.warn("Binary pixel inference failed for context_scale={} " +
+                                    "model; JSON fallback does not support multi-scale " +
+                                    "context tiles", contextScale);
+                        }
                         pixelResult = backend.runPixelInference(
                                 modelDirPath, currentBatch.tileDataList(), channelConfig,
                                 inferenceConfig, tempDir, 0);
@@ -661,6 +666,11 @@ public class InferenceWorkflow {
                                     channelConfig, inferenceConfig);
 
                     if (result == null) {
+                        if (contextScale > 1) {
+                            logger.warn("Binary inference failed for context_scale={} " +
+                                    "model; JSON fallback does not support multi-scale " +
+                                    "context tiles", contextScale);
+                        }
                         result = backend.runInference(
                                 modelDirPath, currentBatch.tileDataList(), channelConfig,
                                 inferenceConfig);

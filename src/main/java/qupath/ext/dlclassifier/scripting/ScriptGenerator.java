@@ -158,6 +158,16 @@ public class ScriptGenerator {
         appendLine(sb, "        .earlyStoppingMetric(" + quote(config.getEarlyStoppingMetric()) + ")");
         appendLine(sb, "        .earlyStoppingPatience(" + config.getEarlyStoppingPatience() + ")");
         appendLine(sb, "        .mixedPrecision(" + config.isMixedPrecision() + ")");
+        appendLine(sb, "        .downsample(" + config.getDownsample() + ")");
+        if (config.getContextScale() > 1) {
+            appendLine(sb, "        .contextScale(" + config.getContextScale() + ")");
+        }
+        if (config.getLineStrokeWidth() > 0) {
+            appendLine(sb, "        .lineStrokeWidth(" + config.getLineStrokeWidth() + ")");
+        }
+        if (config.getWeightDecay() > 0) {
+            appendLine(sb, "        .weightDecay(" + config.getWeightDecay() + ")");
+        }
 
         // Augmentation config
         Map<String, Boolean> augConfig = config.getAugmentationConfig();

@@ -216,8 +216,15 @@ public class DLPixelClassifier implements PixelClassifier {
                     dtype, channelConfigWithStats, inferenceConfig, sharedTempDir,
                     reflectionPadding);
 
-            // Fall back to JSON/PNG path if binary endpoint unavailable
+            // Fall back to JSON/PNG path if binary endpoint unavailable.
+            // Context tiles are NOT supported in the JSON fallback path -- the model
+            // receives only detail channels, producing incorrect results for context models.
             if (result == null) {
+                if (contextScale > 1) {
+                    logger.warn("Binary inference failed for context_scale={} model; " +
+                            "JSON fallback does not support multi-scale context. " +
+                            "Results will be incorrect.", contextScale);
+                }
                 java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
                 javax.imageio.ImageIO.write(tileImage, "png", baos);
                 String encoded = "data:image/png;base64," +
@@ -401,10 +408,19 @@ public class DLPixelClassifier implements PixelClassifier {
         // Priority 1: Use training dataset stats from model metadata
         if (metadata.hasNormalizationStats()) {
             List<Map<String, Double>> stats = new ArrayList<>(metadata.getNormalizationStats());
-            // For multi-scale context: if training stats only cover detail channels,
-            // duplicate them for context channels (same image data, similar distribution)
-            if (contextScale > 1 && stats.size() == channelConfig.getNumChannels()) {
-                stats.addAll(metadata.getNormalizationStats());
+            int expectedChannels = metadata.getEffectiveInputChannels();
+            // For multi-scale context: if training stats only cover detail channels
+            // (older models), duplicate them for context channels as an approximation.
+            // Newer models trained after the effective_channels fix already have
+            // stats for all channels (detail + context).
+            if (contextScale > 1 && stats.size() < expectedChannels) {
+                logger.info("Expanding {} training stats to {} for context channels",
+                        stats.size(), expectedChannels);
+                List<Map<String, Double>> baseStats = new ArrayList<>(stats);
+                while (stats.size() < expectedChannels) {
+                    // Duplicate from base stats cyclically
+                    stats.add(baseStats.get(stats.size() % baseStats.size()));
+                }
             }
             logger.info("Using training dataset normalization stats from model metadata " +
                     "({} channels)", stats.size());
@@ -415,10 +431,16 @@ public class DLPixelClassifier implements PixelClassifier {
         try {
             List<Map<String, Double>> stats = computeImageNormalizationStats(server);
             if (stats != null && !stats.isEmpty()) {
-                // For multi-scale context: duplicate detail stats for context channels
+                // For multi-scale context: duplicate detail stats for context channels.
+                // Context tiles come from the same image at a different scale, so the
+                // pixel value distribution is similar (same staining, same dynamic range).
                 if (contextScale > 1) {
+                    int expectedChannels = metadata.getEffectiveInputChannels();
                     List<Map<String, Double>> expanded = new ArrayList<>(stats);
-                    expanded.addAll(stats);
+                    List<Map<String, Double>> baseStats = new ArrayList<>(stats);
+                    while (expanded.size() < expectedChannels) {
+                        expanded.add(baseStats.get(expanded.size() % baseStats.size()));
+                    }
                     stats = expanded;
                 }
                 logger.info("Computed image-level normalization stats from {} sample tiles " +

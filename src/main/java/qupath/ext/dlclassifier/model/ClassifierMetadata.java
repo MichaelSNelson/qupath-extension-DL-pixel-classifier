@@ -121,8 +121,32 @@ public class ClassifierMetadata {
         return inputHeight;
     }
 
+    /**
+     * Gets the number of image channels this model requires (base count).
+     * <p>
+     * This is the number of channels selected during training, before any
+     * context scale doubling. Use {@link #getEffectiveInputChannels()} to get
+     * the actual model input channel count (which is doubled when
+     * {@link #getContextScale()} > 1).
+     *
+     * @return base input channel count
+     */
     public int getInputChannels() {
         return inputChannels;
+    }
+
+    /**
+     * Gets the effective number of input channels the model expects.
+     * <p>
+     * When {@code contextScale > 1}, the model receives both a detail tile
+     * and a context tile concatenated along the channel axis, so the effective
+     * input channels are {@code inputChannels * 2}. When {@code contextScale == 1},
+     * this is the same as {@link #getInputChannels()}.
+     *
+     * @return effective model input channels (doubled when context is enabled)
+     */
+    public int getEffectiveInputChannels() {
+        return contextScale > 1 ? inputChannels * 2 : inputChannels;
     }
 
     /**

@@ -230,9 +230,15 @@ public class InferenceDialog {
             typeCol.setPrefWidth(80);
 
             TableColumn<ClassifierMetadata, String> channelsCol = new TableColumn<>("Channels");
-            channelsCol.setCellValueFactory(data -> new SimpleStringProperty(
-                    String.valueOf(data.getValue().getInputChannels())));
-            channelsCol.setPrefWidth(70);
+            channelsCol.setCellValueFactory(data -> {
+                ClassifierMetadata m = data.getValue();
+                String display = String.valueOf(m.getInputChannels());
+                if (m.getContextScale() > 1) {
+                    display += " +" + m.getContextScale() + "x ctx";
+                }
+                return new SimpleStringProperty(display);
+            });
+            channelsCol.setPrefWidth(90);
 
             TableColumn<ClassifierMetadata, String> classesCol = new TableColumn<>("Classes");
             classesCol.setCellValueFactory(data -> new SimpleStringProperty(
@@ -626,7 +632,11 @@ public class InferenceDialog {
                 info.append(" (").append(classifier.getBackbone()).append(")");
             }
             info.append("\n");
-            info.append("Input: ").append(classifier.getInputChannels()).append(" channels, ");
+            info.append("Input: ").append(classifier.getInputChannels()).append(" channels");
+            if (classifier.getContextScale() > 1) {
+                info.append(" + ").append(classifier.getContextScale()).append("x context");
+            }
+            info.append(", ");
             info.append(classifier.getInputWidth()).append("x").append(classifier.getInputHeight()).append(" tiles\n");
             double ds = classifier.getDownsample();
             if (ds > 1.0) {
