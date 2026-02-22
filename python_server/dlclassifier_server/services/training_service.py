@@ -541,6 +541,15 @@ class TrainingService:
     ) -> Dict[str, Any]:
         """Internal training implementation. Called by train() with cleanup guarantee."""
 
+        # Compute effective input channels: doubled when context_scale > 1
+        # (detail + context tiles are concatenated along the channel axis)
+        context_scale = architecture.get("context_scale", 1)
+        base_channels = input_config["num_channels"]
+        effective_channels = base_channels * 2 if context_scale > 1 else base_channels
+        if effective_channels != base_channels:
+            logger.info(f"Context scale {context_scale}: model input channels "
+                        f"{base_channels} -> {effective_channels} (detail + context)")
+
         # Create model with optional frozen layers
         if frozen_layers:
             from .pretrained_models import get_pretrained_service
@@ -549,7 +558,7 @@ class TrainingService:
             model = pretrained_service.create_model_with_frozen_layers(
                 architecture=model_type,
                 encoder=architecture.get("backbone", "resnet34"),
-                num_channels=input_config["num_channels"],
+                num_channels=effective_channels,
                 num_classes=len(classes),
                 frozen_layers=frozen_layers
             )
@@ -558,7 +567,7 @@ class TrainingService:
             model = self._create_model(
                 model_type=model_type,
                 architecture=architecture,
-                num_channels=input_config["num_channels"],
+                num_channels=effective_channels,
                 num_classes=len(classes)
             )
         model = model.to(self.device)
@@ -568,7 +577,6 @@ class TrainingService:
         augmentation_config = training_params.get("augmentation_config", {})
 
         # Multi-scale context: when context_scale > 1, load context tiles from context/ dirs
-        context_scale = architecture.get("context_scale", 1)
         train_context_dir = None
         val_context_dir = None
         if context_scale > 1:

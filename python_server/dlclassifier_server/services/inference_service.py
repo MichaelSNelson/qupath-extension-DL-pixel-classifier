@@ -644,7 +644,14 @@ class InferenceService:
             input_config = metadata.get("input_config", {})
             model_type = arch.get("type", "unet")
             encoder_name = arch.get("backbone", "resnet34")
-            num_channels = input_config.get("num_channels", 3)
+            # Prefer architecture.input_channels (from metadata.json) over
+            # input_config.num_channels (only present in live Appose calls)
+            num_channels = arch.get("input_channels",
+                                    input_config.get("num_channels", 3))
+            # When context_scale > 1, model has 2x channels (detail + context)
+            context_scale = arch.get("context_scale", 1)
+            if context_scale > 1:
+                num_channels = num_channels * 2
             num_classes = len(metadata.get("classes", [{"index": 0}, {"index": 1}]))
 
             model_map = {
