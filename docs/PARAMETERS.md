@@ -4,6 +4,13 @@ Complete reference for every parameter in the training and inference dialogs. Th
 
 ## Training Parameters
 
+### Load Settings from Model
+
+| Parameter | Description |
+|-----------|-------------|
+| **Load Settings from Model...** | Button at the top of the dialog. Opens a model picker with all trained classifiers (name, architecture, classes, date). Populates all dialog fields from the selected model's metadata and saved training settings. Older models without saved training settings will only populate architecture-level fields. |
+| **Loaded model label** | Shows the name of the model whose settings were loaded (or empty if none). |
+
 ### Classifier Info
 
 | Parameter | Type | Description |
@@ -15,8 +22,8 @@ Complete reference for every parameter in the training and inference dialogs. Th
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| **Current image only** | Radio | Train from annotations on the currently open image only. |
-| **Selected project images** | Radio | Train from annotations across multiple project images. Patches from all selected images are combined. |
+| **Image selection list** | Checkbox list | Check project images to include in training. Only images with classified annotations are shown. |
+| **Load Classes from Selected Images** | Button | Reads annotations from selected images, populates the class list, and initializes channel configuration. If a model was loaded, auto-matches classes. |
 
 ### Model Architecture
 

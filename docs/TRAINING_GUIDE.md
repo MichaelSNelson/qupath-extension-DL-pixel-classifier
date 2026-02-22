@@ -38,6 +38,22 @@ Go to **Extensions > DL Pixel Classifier > Train Classifier...**
 
 The dialog has collapsible sections. Sections marked with a collapse arrow can be expanded for advanced options.
 
+## Loading Settings from a Previous Model
+
+When retraining or iterating on a model, you can pre-populate all dialog settings from a previously trained classifier:
+
+1. Click **"Load Settings from Model..."** at the top of the training dialog
+2. Select a model from the table (sorted by date, newest first)
+3. Click **OK**
+
+This populates:
+- **Architecture, backbone, tile size, downsample, context scale, epochs** from the model metadata
+- **Learning rate, batch size, augmentation, scheduler, loss function, early stopping, and all other hyperparameters** from the model's saved training settings
+- **Classifier name** auto-generated as `Retrain_OriginalName_YYYYMMDD`
+- **Class auto-matching** after you load classes from images -- classes matching the source model are auto-selected
+
+All fields can be adjusted before training. Older models (trained before this feature) will only populate the architecture-level settings; hyperparameters will keep their preference defaults.
+
 ## Step 3: Configure Basic Settings
 
 ### Classifier Info
@@ -49,12 +65,14 @@ The dialog has collapsible sections. Sections marked with a collapse arrow can b
 
 ### Training Data Source
 
-| Option | When to use |
-|--------|-------------|
-| **Current image only** | Quick prototyping, single-image datasets |
-| **Selected project images** | Production classifiers, multi-tissue training |
+Check the project images to include in training. Only images with classified annotations are shown.
 
-Multi-image training combines patches from all selected images into one training set, improving generalization.
+| Step | Description |
+|------|-------------|
+| **1. Select images** | Check images in the list. Use "Select All" / "Select None" for bulk selection. |
+| **2. Load Classes** | Click **"Load Classes from Selected Images"** to populate the class list and initialize channels from the first image. |
+
+Multi-image training combines patches from all selected images into one training set, improving generalization. If you previously loaded settings from a model, classes matching the source model are auto-selected after loading.
 
 ## Step 4: Configure Model Architecture
 

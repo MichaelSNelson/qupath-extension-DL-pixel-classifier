@@ -111,14 +111,30 @@ When training completes, the classifier is saved to your QuPath project under `c
 
 ---
 
+## Retraining from a Previous Model
+
+To iterate on a model with updated annotations or adjusted settings:
+
+1. Open the training dialog (**Train Classifier...**)
+2. Click **"Load Settings from Model..."** at the top
+3. Select the model you want to build on
+4. All parameters (architecture, learning rate, augmentation, etc.) are pre-filled
+5. Adjust any settings as needed
+6. Select images and load classes -- classes matching the source model are auto-selected
+7. Click **Start Training**
+
+The new classifier is saved separately; the original model is not modified.
+
+---
+
 ## Multi-Image Training
 
 To train from annotations across multiple project images:
 
 1. Open a QuPath project with multiple annotated images
 2. Open the training dialog (**Train Classifier...**)
-3. Under **TRAINING DATA SOURCE**, select **Selected project images**
-4. Check/uncheck images in the list (only images with classified annotations appear)
+3. Under **TRAINING DATA SOURCE**, check images to include (only images with classified annotations appear)
+4. Click **"Load Classes from Selected Images"**
 5. Train as usual -- patches from all selected images are combined into one training set
 
 ---

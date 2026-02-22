@@ -189,7 +189,8 @@ The extension supports four normalization strategies. The choice affects how pix
 3. **Enable augmentation** (especially flips and rotation)
 4. **Use a histology backbone** for H&E images
 5. **Increase epochs** with early stopping (it is safe to overshoot)
-6. **Re-train models** to save normalization statistics -- new models automatically store training dataset stats for improved inference consistency
+6. **Retrain from a previous model** using "Load Settings from Model..." to iterate quickly with the same hyperparameters
+7. **Re-train models** to save normalization statistics -- new models automatically store training dataset stats for improved inference consistency
 
 ### Medium effort
 

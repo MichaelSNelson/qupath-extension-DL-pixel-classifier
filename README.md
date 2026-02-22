@@ -14,6 +14,7 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Multiple output types**: Measurements, detection objects, or classification overlays
 - **Pixel-level inference** for OBJECTS and OVERLAY output types with full per-pixel probability maps
 - **Image-level normalization** eliminates tile boundary artifacts by computing consistent statistics across the entire image
+- **Load settings from a previous model** for quick retraining iterations with class auto-matching
 - **Dialog preference persistence** -- training and inference settings are remembered across sessions
 - **Combined CE + Dice loss** for improved segmentation quality (default)
 - **IoU-based early stopping** monitors mean IoU instead of validation loss
