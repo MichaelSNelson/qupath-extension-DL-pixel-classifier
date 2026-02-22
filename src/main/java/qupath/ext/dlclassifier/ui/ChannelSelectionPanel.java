@@ -439,6 +439,17 @@ public class ChannelSelectionPanel extends VBox {
         }
     }
 
+    /**
+     * Sets the normalization strategy combo box value.
+     *
+     * @param strategy the normalization strategy to select
+     */
+    public void setNormalizationStrategy(ChannelConfiguration.NormalizationStrategy strategy) {
+        if (strategy != null) {
+            normalizationCombo.setValue(strategy);
+        }
+    }
+
     // ---- Private helper methods ----
 
     private void updateSearchToolbarVisibility(int channelCount) {

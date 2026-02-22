@@ -17,11 +17,13 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.scripting.ScriptGenerator;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
+import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.lib.gui.QuPathGUI;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.prefs.PathPrefs;
@@ -173,6 +175,10 @@ public class TrainingDialog {
         private boolean classesLoaded = false;
         private Button loadClassesButton;
 
+        // Load settings from model
+        private Label loadedModelLabel;
+        private List<String> sourceModelClassNames;
+
         // Error display
         private VBox errorSummaryPanel;
         private VBox errorListBox;
@@ -219,6 +225,9 @@ public class TrainingDialog {
             TitledPane channelSection = createChannelSection();
             TitledPane classSection = createClassSection();
 
+            // Load settings section (always enabled, before image source)
+            HBox loadSettingsSection = createLoadSettingsSection();
+
             // Image source section is always enabled
             TitledPane imageSourceSection = createImageSourceSection();
 
@@ -236,8 +245,9 @@ public class TrainingDialog {
                     channelSection, classSection, augmentationSection
             ));
 
-            // Build layout: image source first, then gated sections, then error panel
+            // Build layout: load settings, image source, then gated sections, then error panel
             content.getChildren().addAll(
+                    loadSettingsSection,
                     imageSourceSection,
                     basicInfoSection,
                     modelSection,
@@ -294,6 +304,187 @@ public class TrainingDialog {
 
             headerBox.getChildren().addAll(titleLabel, subtitleLabel, new Separator());
             dialog.getDialogPane().setHeader(headerBox);
+        }
+
+        private HBox createLoadSettingsSection() {
+            Button loadSettingsButton = new Button("Load Settings from Model...");
+            loadSettingsButton.setStyle("-fx-font-weight: bold;");
+            TooltipHelper.install(loadSettingsButton,
+                    "Populate dialog fields from a previously trained model.\n" +
+                    "Useful when retraining or iterating on a model.\n" +
+                    "All settings can still be adjusted before training.");
+            loadSettingsButton.setOnAction(e -> {
+                ModelManager modelManager = new ModelManager();
+                List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
+                if (classifiers.isEmpty()) {
+                    Dialogs.showWarningNotification("Load Settings",
+                            "No trained classifiers found in the project or user directory.");
+                    return;
+                }
+                Optional<ClassifierMetadata> selected = ModelPickerDialog.show(
+                        dialog, classifiers);
+                selected.ifPresent(this::loadSettingsFromModel);
+            });
+
+            loadedModelLabel = new Label();
+            loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+
+            HBox box = new HBox(10, loadSettingsButton, loadedModelLabel);
+            box.setAlignment(Pos.CENTER_LEFT);
+            box.setPadding(new Insets(5, 10, 5, 10));
+            return box;
+        }
+
+        @SuppressWarnings("unchecked")
+        private void loadSettingsFromModel(ClassifierMetadata metadata) {
+            logger.info("Loading settings from model: {} ({})", metadata.getName(), metadata.getId());
+
+            // --- Always available from ClassifierMetadata ---
+
+            // Architecture and backbone
+            String modelType = metadata.getModelType();
+            if (modelType != null && architectureCombo.getItems().contains(modelType)) {
+                architectureCombo.setValue(modelType);
+            } else if (modelType != null) {
+                logger.warn("Architecture '{}' from model not available in current registry", modelType);
+                Dialogs.showWarningNotification("Load Settings",
+                        "Architecture '" + modelType + "' is not available.\nKeeping current selection.");
+            }
+
+            String backbone = metadata.getBackbone();
+            if (backbone != null && !backbone.isEmpty()) {
+                // Backbone options may have changed after architecture was set; check after a brief delay
+                Platform.runLater(() -> {
+                    if (backboneCombo.getItems().contains(backbone)) {
+                        backboneCombo.setValue(backbone);
+                    } else {
+                        logger.warn("Backbone '{}' from model not available for architecture '{}'",
+                                backbone, architectureCombo.getValue());
+                    }
+                });
+            }
+
+            // Tile size
+            if (metadata.getInputWidth() > 0) {
+                tileSizeSpinner.getValueFactory().setValue(metadata.getInputWidth());
+            }
+
+            // Downsample
+            if (metadata.getDownsample() > 0) {
+                downsampleCombo.setValue(mapDownsampleToDisplay(metadata.getDownsample()));
+            }
+
+            // Context scale
+            if (metadata.getContextScale() > 0) {
+                contextScaleCombo.setValue(mapContextScaleToDisplay(metadata.getContextScale()));
+            }
+
+            // Epochs
+            if (metadata.getTrainingEpochs() > 0) {
+                epochsSpinner.getValueFactory().setValue(metadata.getTrainingEpochs());
+            }
+
+            // Normalization strategy
+            if (metadata.getNormalizationStrategy() != null && channelPanel != null) {
+                channelPanel.setNormalizationStrategy(metadata.getNormalizationStrategy());
+            }
+
+            // --- From training_settings map (null for older models) ---
+            Map<String, Object> ts = metadata.getTrainingSettings();
+            if (ts != null) {
+                // Learning rate
+                if (ts.containsKey("learning_rate")) {
+                    learningRateSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("learning_rate")).doubleValue());
+                }
+
+                // Batch size
+                if (ts.containsKey("batch_size")) {
+                    batchSizeSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("batch_size")).intValue());
+                }
+
+                // Validation split (stored as 0.0-1.0, display as %)
+                if (ts.containsKey("validation_split")) {
+                    double vs = ((Number) ts.get("validation_split")).doubleValue();
+                    validationSplitSpinner.getValueFactory().setValue(
+                            (int) Math.round(vs * 100));
+                }
+
+                // Overlap
+                if (ts.containsKey("overlap")) {
+                    overlapSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("overlap")).intValue());
+                }
+
+                // Line stroke width
+                if (ts.containsKey("line_stroke_width")) {
+                    lineStrokeWidthSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("line_stroke_width")).intValue());
+                }
+
+                // Pretrained weights
+                if (ts.containsKey("use_pretrained_weights")) {
+                    usePretrainedCheck.setSelected((Boolean) ts.get("use_pretrained_weights"));
+                }
+
+                // Scheduler
+                if (ts.containsKey("scheduler_type")) {
+                    schedulerCombo.setValue(mapSchedulerToDisplay((String) ts.get("scheduler_type")));
+                }
+
+                // Loss function
+                if (ts.containsKey("loss_function")) {
+                    lossFunctionCombo.setValue(mapLossFunctionToDisplay((String) ts.get("loss_function")));
+                }
+
+                // Early stopping
+                if (ts.containsKey("early_stopping_metric")) {
+                    earlyStoppingMetricCombo.setValue(
+                            mapEarlyStoppingMetricToDisplay((String) ts.get("early_stopping_metric")));
+                }
+                if (ts.containsKey("early_stopping_patience")) {
+                    earlyStoppingPatienceSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("early_stopping_patience")).intValue());
+                }
+
+                // Mixed precision
+                if (ts.containsKey("mixed_precision")) {
+                    mixedPrecisionCheck.setSelected((Boolean) ts.get("mixed_precision"));
+                }
+
+                // Augmentation config
+                if (ts.containsKey("augmentation_config")) {
+                    Object augObj = ts.get("augmentation_config");
+                    if (augObj instanceof Map) {
+                        Map<String, Object> augConfig = (Map<String, Object>) augObj;
+                        if (augConfig.containsKey("flip_horizontal"))
+                            flipHorizontalCheck.setSelected(Boolean.TRUE.equals(augConfig.get("flip_horizontal")));
+                        if (augConfig.containsKey("flip_vertical"))
+                            flipVerticalCheck.setSelected(Boolean.TRUE.equals(augConfig.get("flip_vertical")));
+                        if (augConfig.containsKey("rotation_90"))
+                            rotationCheck.setSelected(Boolean.TRUE.equals(augConfig.get("rotation_90")));
+                        if (augConfig.containsKey("color_jitter"))
+                            colorJitterCheck.setSelected(Boolean.TRUE.equals(augConfig.get("color_jitter")));
+                        if (augConfig.containsKey("elastic_deformation"))
+                            elasticCheck.setSelected(Boolean.TRUE.equals(augConfig.get("elastic_deformation")));
+                    }
+                }
+            }
+
+            // --- Classifier name and description ---
+            String timestamp = java.time.LocalDate.now().toString().replace("-", "");
+            classifierNameField.setText("Retrain_" + metadata.getName() + "_" + timestamp);
+            descriptionField.setText("Retrained from: " + metadata.getName());
+
+            // Store source model's class list for auto-matching after class loading
+            sourceModelClassNames = metadata.getClassNames();
+
+            // Update UI label
+            loadedModelLabel.setText("Loaded from: " + metadata.getName());
+
+            logger.info("Settings loaded from model '{}'. {} training settings fields applied.",
+                    metadata.getName(), ts != null ? ts.size() : 0);
         }
 
         private TitledPane createBasicInfoSection() {
@@ -1192,6 +1383,11 @@ public class TrainingDialog {
                     classesLoaded = true;
                     setGatedSectionsEnabled(true);
 
+                    // Auto-match classes from source model if one was loaded
+                    if (sourceModelClassNames != null && !sourceModelClassNames.isEmpty()) {
+                        autoMatchModelClasses();
+                    }
+
                     // Reset button state
                     loadClassesButton.setText("Load Classes from Selected Images");
                     updateLoadClassesButtonState();
@@ -1215,6 +1411,50 @@ public class TrainingDialog {
             loadClassesButton.setText("Reload Classes (images changed)");
             loadClassesButton.setStyle(
                     "-fx-font-weight: bold; -fx-text-fill: #cc6600;");
+        }
+
+        /**
+         * Auto-selects annotation classes that match the source model's class names.
+         * Deselects classes not in the source model.
+         * Shows an info notification if some model classes were not found.
+         */
+        private void autoMatchModelClasses() {
+            Set<String> modelClasses = new HashSet<>(sourceModelClassNames);
+            List<String> matched = new ArrayList<>();
+            List<String> notFound = new ArrayList<>();
+
+            for (ClassItem item : classListView.getItems()) {
+                if (modelClasses.contains(item.name())) {
+                    item.selected().set(true);
+                    matched.add(item.name());
+                } else {
+                    item.selected().set(false);
+                }
+            }
+
+            // Check which model classes were not found in annotations
+            Set<String> annotationClassNames = classListView.getItems().stream()
+                    .map(ClassItem::name)
+                    .collect(Collectors.toSet());
+            for (String modelClass : sourceModelClassNames) {
+                if (!annotationClassNames.contains(modelClass)) {
+                    notFound.add(modelClass);
+                }
+            }
+
+            refreshPieChart();
+            updateValidation();
+
+            if (!notFound.isEmpty()) {
+                Dialogs.showInfoNotification("Class Auto-Match",
+                        "Matched " + matched.size() + " of " + sourceModelClassNames.size()
+                        + " model classes.\nNot found in annotations: "
+                        + String.join(", ", notFound));
+                logger.info("Class auto-match: {} matched, {} not found: {}",
+                        matched.size(), notFound.size(), notFound);
+            } else {
+                logger.info("Class auto-match: all {} model classes matched", matched.size());
+            }
         }
 
         /** Enables or disables all gated sections (everything except image source). */
@@ -1743,6 +1983,95 @@ public class TrainingDialog {
             PauseTransition pause = new PauseTransition(Duration.seconds(2));
             pause.setOnFinished(e -> tooltip.hide());
             pause.play();
+        }
+    }
+
+    /**
+     * A lightweight modal dialog for selecting a trained classifier model.
+     * Displays a table of all available classifiers with key metadata.
+     */
+    private static class ModelPickerDialog {
+
+        static Optional<ClassifierMetadata> show(Dialog<?> owner,
+                                                   List<ClassifierMetadata> classifiers) {
+            Dialog<ClassifierMetadata> dialog = new Dialog<>();
+            dialog.initOwner(owner.getDialogPane().getScene().getWindow());
+            dialog.setTitle("Select Model");
+            dialog.setHeaderText("Choose a previously trained model to load settings from");
+            dialog.setResizable(true);
+
+            ButtonType okType = new ButtonType("OK", ButtonBar.ButtonData.OK_DONE);
+            dialog.getDialogPane().getButtonTypes().addAll(okType, ButtonType.CANCEL);
+
+            TableView<ClassifierMetadata> table = new TableView<>();
+            table.setPrefHeight(300);
+            table.setPrefWidth(600);
+
+            TableColumn<ClassifierMetadata, String> nameCol = new TableColumn<>("Name");
+            nameCol.setCellValueFactory(cd ->
+                    new javafx.beans.property.SimpleStringProperty(cd.getValue().getName()));
+            nameCol.setPrefWidth(180);
+
+            TableColumn<ClassifierMetadata, String> archCol = new TableColumn<>("Architecture");
+            archCol.setCellValueFactory(cd ->
+                    new javafx.beans.property.SimpleStringProperty(
+                            cd.getValue().getModelType() + " / " + cd.getValue().getBackbone()));
+            archCol.setPrefWidth(160);
+
+            TableColumn<ClassifierMetadata, String> classesCol = new TableColumn<>("Classes");
+            classesCol.setCellValueFactory(cd ->
+                    new javafx.beans.property.SimpleStringProperty(
+                            String.join(", ", cd.getValue().getClassNames())));
+            classesCol.setPrefWidth(150);
+
+            TableColumn<ClassifierMetadata, String> dateCol = new TableColumn<>("Date");
+            dateCol.setCellValueFactory(cd -> {
+                var dt = cd.getValue().getCreatedAt();
+                String text = dt != null
+                        ? dt.toLocalDate().toString()
+                        : "";
+                return new javafx.beans.property.SimpleStringProperty(text);
+            });
+            dateCol.setPrefWidth(90);
+
+            table.getColumns().addAll(List.of(nameCol, archCol, classesCol, dateCol));
+            table.getItems().addAll(classifiers);
+
+            // Sort by date descending (newest first)
+            table.getItems().sort((a, b) -> {
+                if (a.getCreatedAt() == null && b.getCreatedAt() == null) return 0;
+                if (a.getCreatedAt() == null) return 1;
+                if (b.getCreatedAt() == null) return -1;
+                return b.getCreatedAt().compareTo(a.getCreatedAt());
+            });
+
+            // Select first row by default
+            if (!table.getItems().isEmpty()) {
+                table.getSelectionModel().select(0);
+            }
+
+            // Disable OK until a row is selected
+            Button okButton = (Button) dialog.getDialogPane().lookupButton(okType);
+            okButton.disableProperty().bind(
+                    table.getSelectionModel().selectedItemProperty().isNull());
+
+            // Double-click to confirm
+            table.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && table.getSelectionModel().getSelectedItem() != null) {
+                    okButton.fire();
+                }
+            });
+
+            dialog.getDialogPane().setContent(table);
+
+            dialog.setResultConverter(button -> {
+                if (button == okType) {
+                    return table.getSelectionModel().getSelectedItem();
+                }
+                return null;
+            });
+
+            return dialog.showAndWait();
         }
     }
 

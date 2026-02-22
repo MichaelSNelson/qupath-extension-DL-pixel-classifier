@@ -202,6 +202,28 @@ public class ModelManager {
                 finalAccuracy = train.has("final_accuracy") ? train.get("final_accuracy").getAsDouble() : 0.0;
             }
 
+            // Parse training settings (full hyperparameters, may be absent in older models)
+            Map<String, Object> trainingSettings = null;
+            if (obj.has("training_settings") && obj.get("training_settings").isJsonObject()) {
+                trainingSettings = new LinkedHashMap<>();
+                JsonObject tsObj = obj.getAsJsonObject("training_settings");
+                for (String key : tsObj.keySet()) {
+                    var element = tsObj.get(key);
+                    if (element.isJsonPrimitive()) {
+                        var prim = element.getAsJsonPrimitive();
+                        if (prim.isBoolean()) {
+                            trainingSettings.put(key, prim.getAsBoolean());
+                        } else if (prim.isNumber()) {
+                            trainingSettings.put(key, prim.getAsNumber());
+                        } else {
+                            trainingSettings.put(key, prim.getAsString());
+                        }
+                    } else if (element.isJsonObject() || element.isJsonArray()) {
+                        trainingSettings.put(key, gson.fromJson(element, Object.class));
+                    }
+                }
+            }
+
             // Parse normalization stats (from models trained with Phase 2)
             List<Map<String, Double>> normalizationStats = null;
             if (obj.has("normalization_stats") && obj.get("normalization_stats").isJsonArray()) {
@@ -239,6 +261,7 @@ public class ModelManager {
                     .trainingEpochs(trainingEpochs)
                     .finalLoss(finalLoss)
                     .finalAccuracy(finalAccuracy)
+                    .trainingSettings(trainingSettings)
                     .normalizationStats(normalizationStats);
             if (createdAt != null) {
                 builder.createdAt(createdAt);

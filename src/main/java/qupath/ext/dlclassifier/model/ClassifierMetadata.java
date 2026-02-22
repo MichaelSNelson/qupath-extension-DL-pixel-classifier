@@ -53,6 +53,9 @@ public class ClassifierMetadata {
     private final double finalLoss;
     private final double finalAccuracy;
 
+    // Full training hyperparameters (may be null for older models)
+    private final Map<String, Object> trainingSettings;
+
     // Normalization stats computed from training dataset (may be null for older models)
     private final List<Map<String, Double>> normalizationStats;
 
@@ -76,6 +79,9 @@ public class ClassifierMetadata {
         this.trainingEpochs = builder.trainingEpochs;
         this.finalLoss = builder.finalLoss;
         this.finalAccuracy = builder.finalAccuracy;
+        this.trainingSettings = builder.trainingSettings != null
+                ? Collections.unmodifiableMap(new LinkedHashMap<>(builder.trainingSettings))
+                : null;
         this.normalizationStats = builder.normalizationStats != null
                 ? Collections.unmodifiableList(new ArrayList<>(builder.normalizationStats))
                 : null;
@@ -198,6 +204,26 @@ public class ClassifierMetadata {
     }
 
     /**
+     * Returns the full training hyperparameters map, or null if not available
+     * (older models trained before this feature was added).
+     * <p>
+     * Keys include: learning_rate, batch_size, weight_decay, validation_split,
+     * overlap, line_stroke_width, use_pretrained_weights, frozen_layers,
+     * scheduler_type, loss_function, early_stopping_metric, early_stopping_patience,
+     * mixed_precision, augmentation_config, class_weight_multipliers.
+     */
+    public Map<String, Object> getTrainingSettings() {
+        return trainingSettings;
+    }
+
+    /**
+     * Returns true if this model has saved training settings.
+     */
+    public boolean hasTrainingSettings() {
+        return trainingSettings != null && !trainingSettings.isEmpty();
+    }
+
+    /**
      * Returns a list of class names.
      */
     public List<String> getClassNames() {
@@ -247,6 +273,10 @@ public class ClassifierMetadata {
         training.put("final_loss", finalLoss);
         training.put("final_accuracy", finalAccuracy);
         map.put("training", training);
+
+        if (trainingSettings != null && !trainingSettings.isEmpty()) {
+            map.put("training_settings", trainingSettings);
+        }
 
         if (normalizationStats != null && !normalizationStats.isEmpty()) {
             map.put("normalization_stats", normalizationStats);
@@ -313,6 +343,7 @@ public class ClassifierMetadata {
         private int trainingEpochs = 0;
         private double finalLoss = 0.0;
         private double finalAccuracy = 0.0;
+        private Map<String, Object> trainingSettings;
         private List<Map<String, Double>> normalizationStats;
 
         public Builder id(String id) {
@@ -418,6 +449,18 @@ public class ClassifierMetadata {
 
         public Builder finalAccuracy(double accuracy) {
             this.finalAccuracy = accuracy;
+            return this;
+        }
+
+        /**
+         * Sets the full training hyperparameters map for metadata persistence.
+         * <p>
+         * This allows reloading training settings when retraining a model.
+         *
+         * @param settings map of training parameter names to values
+         */
+        public Builder trainingSettings(Map<String, Object> settings) {
+            this.trainingSettings = settings != null ? new LinkedHashMap<>(settings) : null;
             return this;
         }
 

@@ -42,6 +42,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -708,6 +709,7 @@ public class TrainingWorkflow {
                     .trainingEpochs(trainingConfig.getEpochs())
                     .finalLoss(serverResult.finalLoss())
                     .finalAccuracy(serverResult.finalAccuracy())
+                    .trainingSettings(buildTrainingSettingsMap(trainingConfig))
                     .build();
 
             // Save the classifier
@@ -933,6 +935,7 @@ public class TrainingWorkflow {
                         .trainingEpochs(params.totalEpochs())
                         .finalLoss(serverResult.finalLoss())
                         .finalAccuracy(serverResult.finalAccuracy())
+                        .trainingSettings(buildTrainingSettingsMap(trainingConfig))
                         .build();
 
                 ModelManager modelManager = new ModelManager();
@@ -1069,6 +1072,35 @@ public class TrainingWorkflow {
             logger.info("Current image has unsaved changes - these will be included in single-image training");
             return true;
         }
+    }
+
+    /**
+     * Builds a map of all training hyperparameters for metadata persistence.
+     * This allows loading settings from a previously trained model.
+     *
+     * @param config the training configuration
+     * @return map of parameter names to values
+     */
+    static Map<String, Object> buildTrainingSettingsMap(TrainingConfig config) {
+        Map<String, Object> settings = new LinkedHashMap<>();
+        settings.put("learning_rate", config.getLearningRate());
+        settings.put("batch_size", config.getBatchSize());
+        settings.put("weight_decay", config.getWeightDecay());
+        settings.put("validation_split", config.getValidationSplit());
+        settings.put("overlap", config.getOverlap());
+        settings.put("line_stroke_width", config.getLineStrokeWidth());
+        settings.put("use_pretrained_weights", config.isUsePretrainedWeights());
+        settings.put("frozen_layers", config.getFrozenLayers());
+        settings.put("scheduler_type", config.getSchedulerType());
+        settings.put("loss_function", config.getLossFunction());
+        settings.put("early_stopping_metric", config.getEarlyStoppingMetric());
+        settings.put("early_stopping_patience", config.getEarlyStoppingPatience());
+        settings.put("mixed_precision", config.isMixedPrecision());
+        settings.put("augmentation_config", config.getAugmentationConfig());
+        if (!config.getClassWeightMultipliers().isEmpty()) {
+            settings.put("class_weight_multipliers", config.getClassWeightMultipliers());
+        }
+        return settings;
     }
 
     /**
