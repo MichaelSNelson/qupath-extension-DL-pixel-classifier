@@ -185,6 +185,11 @@ public class TrainingDialog {
         private Label loadedModelLabel;
         private List<String> sourceModelClassNames;
 
+        // Spatial info labels
+        private Label resolutionInfoLabel;
+        private Label contextInfoLabel;
+        private double nativePixelSizeMicrons = Double.NaN;
+
         // Error display
         private VBox errorSummaryPanel;
         private VBox errorListBox;
@@ -947,6 +952,13 @@ public class TrainingDialog {
             grid.add(downsampleCombo, 1, row);
             row++;
 
+            // Resolution info label
+            resolutionInfoLabel = new Label();
+            resolutionInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            resolutionInfoLabel.setWrapText(true);
+            grid.add(resolutionInfoLabel, 0, row, 2, 1);
+            row++;
+
             // Context scale
             contextScaleCombo = new ComboBox<>(FXCollections.observableArrayList(
                     "None (single scale)",
@@ -969,6 +981,20 @@ public class TrainingDialog {
             grid.add(new Label("Context Scale:"), 0, row);
             grid.add(contextScaleCombo, 1, row);
             row++;
+
+            // Context info label
+            contextInfoLabel = new Label();
+            contextInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            contextInfoLabel.setWrapText(true);
+            grid.add(contextInfoLabel, 0, row, 2, 1);
+            row++;
+
+            // Wire up listeners to update spatial info when any relevant value changes
+            tileSizeSpinner.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
+            downsampleCombo.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
+            contextScaleCombo.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
+            // Initial update (will show pixel-only info until image is loaded)
+            updateSpatialInfoLabels();
 
             // Overlap
             overlapSpinner = new Spinner<>(0, 50, DLClassifierPreferences.getTileOverlap(), 5);
@@ -1415,6 +1441,9 @@ public class TrainingDialog {
                 Map<String, Double> classAreas = new LinkedHashMap<>();
                 ImageData<BufferedImage> firstImageData = null;
 
+                // Collect pixel sizes from all selected images for spatial info display
+                Set<Double> pixelSizes = new LinkedHashSet<>();
+
                 for (ImageSelectionItem selItem : selectedItems) {
                     try {
                         ImageData<BufferedImage> data = selItem.entry.readImageData();
@@ -1422,6 +1451,19 @@ public class TrainingDialog {
                         // Keep the first image's data for channel initialization
                         if (firstImageData == null) {
                             firstImageData = data;
+                        }
+
+                        // Collect pixel size from each image
+                        try {
+                            double ps = data.getServer().getPixelCalibration()
+                                    .getAveragedPixelSizeMicrons();
+                            if (!Double.isNaN(ps) && ps > 0) {
+                                // Round to 4 decimal places for comparison
+                                pixelSizes.add(Math.round(ps * 10000.0) / 10000.0);
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Could not read pixel size from '{}': {}",
+                                    selItem.entry.getImageName(), e.getMessage());
                         }
 
                         for (PathObject annotation : data.getHierarchy().getAnnotationObjects()) {
@@ -1463,8 +1505,18 @@ public class TrainingDialog {
                 final ImageData<BufferedImage> channelImageData = firstImageData;
                 final Map<String, PathClass> finalClassMap = classMap;
                 final Map<String, Double> finalClassAreas = classAreas;
+                final Set<Double> finalPixelSizes = new LinkedHashSet<>(pixelSizes);
 
                 Platform.runLater(() -> {
+                    // Update native pixel size for spatial info labels
+                    if (finalPixelSizes.size() == 1) {
+                        nativePixelSizeMicrons = finalPixelSizes.iterator().next();
+                    } else {
+                        // Mixed or missing pixel sizes -- can't show physical units
+                        nativePixelSizeMicrons = Double.NaN;
+                    }
+                    updateSpatialInfoLabels();
+
                     // Initialize channel panel from first image
                     if (channelImageData != null) {
                         channelPanel.setImageData(channelImageData);
@@ -1618,6 +1670,64 @@ public class TrainingDialog {
         private static String mapFocusClassFromDisplay(String display) {
             if (display == null || display.startsWith("None")) return null;
             return display;
+        }
+
+        /**
+         * Updates the resolution and context info labels based on current
+         * tile size, downsample, context scale, and native pixel size.
+         * <p>
+         * Handles three pixel calibration states:
+         * - Single consistent pixel size across all images -> show physical units (um)
+         * - Mixed pixel sizes across images -> warn user, show pixels only
+         * - No pixel calibration -> note unavailability, show pixels only
+         */
+        private void updateSpatialInfoLabels() {
+            int tileSize = tileSizeSpinner.getValue();
+            double downsample = parseDownsample(downsampleCombo.getValue());
+            int contextScale = parseContextScale(contextScaleCombo.getValue());
+
+            // Detail tile covers tileSize * downsample native pixels
+            int detailCoveragePixels = (int) (tileSize * downsample);
+            boolean hasCalibration = !Double.isNaN(nativePixelSizeMicrons) && nativePixelSizeMicrons > 0;
+
+            if (hasCalibration) {
+                double effectivePixelSize = nativePixelSizeMicrons * downsample;
+                double detailCoverageUm = detailCoveragePixels * nativePixelSizeMicrons;
+                resolutionInfoLabel.setText(String.format(
+                        "Detail tile: %dpx x %dpx = %.0f x %.0fum (%.3f um/px effective)",
+                        tileSize, tileSize, detailCoverageUm, detailCoverageUm, effectivePixelSize));
+            } else if (classesLoaded) {
+                // Classes loaded but no calibration -- tell the user why
+                resolutionInfoLabel.setText(String.format(
+                        "Detail tile: %dpx x %dpx covers %d x %d native pixels " +
+                        "(pixel size not available -- images lack calibration or have mixed pixel sizes)",
+                        tileSize, tileSize, detailCoveragePixels, detailCoveragePixels));
+            } else {
+                resolutionInfoLabel.setText(String.format(
+                        "Detail tile: %dpx x %dpx covers %d x %d native pixels " +
+                        "(load classes to show physical dimensions)",
+                        tileSize, tileSize, detailCoveragePixels, detailCoveragePixels));
+            }
+
+            if (contextScale <= 1) {
+                contextInfoLabel.setText("No context -- model sees only the detail tile.");
+            } else {
+                int contextCoveragePixels = detailCoveragePixels * contextScale;
+                if (hasCalibration) {
+                    double contextCoverageUm = contextCoveragePixels * nativePixelSizeMicrons;
+                    contextInfoLabel.setText(String.format(
+                            "Context window: %.0f x %.0fum (%dx the detail tile area, " +
+                            "downsampled to %dpx x %dpx)",
+                            contextCoverageUm, contextCoverageUm, contextScale * contextScale,
+                            tileSize, tileSize));
+                } else {
+                    contextInfoLabel.setText(String.format(
+                            "Context window: %d x %d native pixels (%dx the detail tile area, " +
+                            "downsampled to %dpx x %dpx)",
+                            contextCoveragePixels, contextCoveragePixels, contextScale * contextScale,
+                            tileSize, tileSize));
+                }
+            }
         }
 
         private boolean isBrightfield(ImageData<BufferedImage> imageData) {
