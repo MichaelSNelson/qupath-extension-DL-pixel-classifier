@@ -530,7 +530,8 @@ class TrainingService:
         pause_flag: Optional[threading.Event] = None,
         checkpoint_path: Optional[str] = None,
         start_epoch: int = 0,
-        setup_callback: Optional[Callable] = None
+        setup_callback: Optional[Callable] = None,
+        pretrained_model_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """Train a model.
 
@@ -553,6 +554,10 @@ class TrainingService:
                 Signature: (phase_name: str) where phase_name is one of:
                 "creating_model", "loading_data", "computing_stats",
                 "configuring_optimizer", "loading_checkpoint", "starting_training"
+            pretrained_model_path: Optional path to a previously trained model's
+                .pt file for weight initialization (fine-tuning). Only network
+                weights are loaded; optimizer/scheduler/early stopping start fresh.
+                Ignored when checkpoint_path is set (checkpoint takes precedence).
 
         Training params can include:
             - epochs: Number of training epochs (default: 50)
@@ -582,7 +587,8 @@ class TrainingService:
                 pause_flag=pause_flag,
                 checkpoint_path=checkpoint_path,
                 start_epoch=start_epoch,
-                setup_callback=setup_callback
+                setup_callback=setup_callback,
+                pretrained_model_path=pretrained_model_path
             )
         finally:
             # Always free GPU memory, even on crash/error/cancellation
@@ -605,7 +611,8 @@ class TrainingService:
         pause_flag: Optional[threading.Event] = None,
         checkpoint_path: Optional[str] = None,
         start_epoch: int = 0,
-        setup_callback: Optional[Callable] = None
+        setup_callback: Optional[Callable] = None,
+        pretrained_model_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """Internal training implementation. Called by train() with cleanup guarantee."""
 
@@ -647,6 +654,52 @@ class TrainingService:
                 num_classes=len(classes)
             )
         model = model.to(self.device)
+
+        # Load pretrained weights from a previously trained model (fine-tuning).
+        # Only loads network weights -- optimizer/scheduler start fresh.
+        # Skipped when checkpoint_path is set (checkpoint loading restores everything).
+        if pretrained_model_path and not checkpoint_path:
+            _report_setup("loading_pretrained_weights")
+            try:
+                logger.info(f"Loading pretrained weights from: {pretrained_model_path}")
+                saved = torch.load(pretrained_model_path, map_location=self.device,
+                                   weights_only=True)
+
+                # Handle both bare state_dict and {"model_state_dict": ...} checkpoint format
+                if isinstance(saved, dict) and "model_state_dict" in saved:
+                    state_dict = saved["model_state_dict"]
+                else:
+                    state_dict = saved
+
+                # Detect shape mismatches (e.g. different class count) and skip those keys
+                model_state = model.state_dict()
+                matched_keys = []
+                mismatched_keys = []
+                for key in state_dict:
+                    if key in model_state:
+                        if state_dict[key].shape == model_state[key].shape:
+                            matched_keys.append(key)
+                        else:
+                            mismatched_keys.append(key)
+                            logger.warning(f"  Shape mismatch for '{key}': "
+                                           f"pretrained={list(state_dict[key].shape)} "
+                                           f"vs model={list(model_state[key].shape)} -- skipping")
+
+                # Build filtered state dict with only shape-compatible keys
+                filtered_state = {k: state_dict[k] for k in matched_keys}
+                missing_in_pretrained = set(model_state.keys()) - set(state_dict.keys())
+
+                result = model.load_state_dict(filtered_state, strict=False)
+                logger.info(f"Loaded {len(matched_keys)} weight tensors from pretrained model")
+                if mismatched_keys:
+                    logger.info(f"  Skipped {len(mismatched_keys)} mismatched keys "
+                                f"(likely segmentation head due to class count change)")
+                if missing_in_pretrained:
+                    logger.debug(f"  {len(missing_in_pretrained)} keys not in pretrained model "
+                                 f"(randomly initialized)")
+            except Exception as e:
+                logger.warning(f"Failed to load pretrained weights: {e} -- "
+                               f"training will start from scratch")
 
         # Create datasets
         _report_setup("loading_data")

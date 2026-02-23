@@ -62,6 +62,9 @@ public class TrainingConfig {
     // Intensity augmentation mode: "none", "brightfield", or "fluorescence"
     private final String intensityAugMode;
 
+    // Continue training: path to a previously trained model's .pt file to load weights from
+    private final String pretrainedModelPath;
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -88,6 +91,7 @@ public class TrainingConfig {
         this.focusClass = builder.focusClass;
         this.focusClassMinIoU = builder.focusClassMinIoU;
         this.intensityAugMode = builder.intensityAugMode;
+        this.pretrainedModelPath = builder.pretrainedModelPath;
     }
 
     // Getters
@@ -300,6 +304,23 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the path to a previously trained model's .pt file for weight initialization.
+     * <p>
+     * When set, the model weights are loaded from this file before training begins.
+     * Only network weights are loaded -- optimizer, scheduler, and early stopping
+     * state all start fresh (correct for fine-tuning on new data).
+     * <p>
+     * If the new training has different classes, the segmentation head weights
+     * won't match and are skipped (randomly initialized). Encoder/decoder weights
+     * (the valuable part) transfer correctly.
+     *
+     * @return path to .pt file, or null if not using pretrained weights from a previous model
+     */
+    public String getPretrainedModelPath() {
+        return pretrainedModelPath;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -335,7 +356,8 @@ public class TrainingConfig {
                 Objects.equals(lossFunction, that.lossFunction) &&
                 Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
                 Objects.equals(focusClass, that.focusClass) &&
-                Objects.equals(intensityAugMode, that.intensityAugMode);
+                Objects.equals(intensityAugMode, that.intensityAugMode) &&
+                Objects.equals(pretrainedModelPath, that.pretrainedModelPath);
     }
 
     @Override
@@ -345,15 +367,15 @@ public class TrainingConfig {
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
                 earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU, intensityAugMode);
+                focusClass, focusClassMinIoU, intensityAugMode, pretrainedModelPath);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s}",
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, pretrainedModel=%s}",
                 modelType, backbone, epochs, learningRate, tileSize, downsample, contextScale, lineStrokeWidth,
                 schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU, intensityAugMode);
+                focusClass, focusClassMinIoU, intensityAugMode, pretrainedModelPath);
     }
 
     public static Builder builder() {
@@ -389,6 +411,7 @@ public class TrainingConfig {
         private String focusClass = null;
         private double focusClassMinIoU = 0.0;
         private String intensityAugMode = "none";
+        private String pretrainedModelPath = null;
 
         public Builder() {
             // Default augmentation configuration (spatial transforms only)
@@ -637,6 +660,19 @@ public class TrainingConfig {
          */
         public Builder intensityAugMode(String intensityAugMode) {
             this.intensityAugMode = intensityAugMode;
+            return this;
+        }
+
+        /**
+         * Sets the path to a previously trained model's .pt file for weight initialization.
+         * <p>
+         * When set, model weights are loaded from this file before training begins.
+         * Optimizer and scheduler start fresh (fine-tuning behavior).
+         *
+         * @param pretrainedModelPath path to .pt file, or null to disable
+         */
+        public Builder pretrainedModelPath(String pretrainedModelPath) {
+            this.pretrainedModelPath = pretrainedModelPath;
             return this;
         }
 

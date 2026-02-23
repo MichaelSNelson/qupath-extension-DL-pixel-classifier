@@ -176,6 +176,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("classes", classNames);
         inputs.put("data_path", trainingDataPath.toString());
 
+        // Continue training: load weights from a previously trained model
+        if (trainingConfig.getPretrainedModelPath() != null) {
+            inputs.put("pretrained_model_path", trainingConfig.getPretrainedModelPath());
+        }
+
         // Generate a synthetic job ID for Appose-based training
         String jobId = "appose-" + System.currentTimeMillis();
         inputs.put("pause_signal_path", getPauseSignalPath(jobId).toString());

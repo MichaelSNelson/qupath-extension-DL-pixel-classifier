@@ -134,9 +134,11 @@ public class DLPixelClassifier implements PixelClassifier {
     @Override
     public BufferedImage applyClassification(ImageData<BufferedImage> imageData,
                                               RegionRequest request) throws IOException {
-        // If shutting down (overlay being removed), bail out immediately
+        // If shutting down (overlay being removed), return blank image instead of throwing.
+        // Throwing IOException here causes QuPath's PixelClassificationOverlay to log ERROR,
+        // which is noisy and misleading during normal overlay removal.
         if (shuttingDown || Thread.currentThread().isInterrupted()) {
-            throw new IOException("Classifier is shutting down");
+            return createEmptyClassificationImage(request);
         }
 
         // Circuit breaker: stop retrying after persistent server errors
@@ -276,11 +278,12 @@ public class DLPixelClassifier implements PixelClassifier {
             return createClassIndexImage(probMap, tileWidth, tileHeight);
 
         } catch (IOException e) {
-            // During shutdown, interrupted threads and missing temp files are expected - don't count as errors
+            // During shutdown, interrupted threads and missing temp files are expected.
+            // Return blank image instead of re-throwing to avoid QuPath logging ERROR.
             if (shuttingDown || Thread.currentThread().isInterrupted()
                     || e instanceof java.io.InterruptedIOException) {
                 logger.debug("Classification interrupted during shutdown");
-                throw new IOException("Classification interrupted during shutdown", e);
+                return createEmptyClassificationImage(request);
             }
 
             // "thread death" is transient (Python worker thread contention under high
@@ -686,6 +689,20 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         return indexed;
+    }
+
+    /**
+     * Creates a blank classification image (all pixels = class 0) for the given request.
+     * Used during shutdown to return a valid image instead of throwing, which prevents
+     * QuPath's PixelClassificationOverlay from logging spurious ERROR messages.
+     */
+    private BufferedImage createEmptyClassificationImage(RegionRequest request) {
+        int width = (int) (request.getWidth() / request.getDownsample());
+        int height = (int) (request.getHeight() / request.getDownsample());
+        // Ensure at least 1x1 to avoid invalid image
+        width = Math.max(1, width);
+        height = Math.max(1, height);
+        return new BufferedImage(width, height, BufferedImage.TYPE_BYTE_INDEXED, colorModel);
     }
 
     /**

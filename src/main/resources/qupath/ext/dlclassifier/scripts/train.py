@@ -54,6 +54,11 @@ try:
 except NameError:
     start_epoch = 0
 
+try:
+    pretrained_model_path
+except NameError:
+    pretrained_model_path = None
+
 # Import training service (heavier import, done here rather than init)
 from dlclassifier_server.services.training_service import TrainingService
 import dlclassifier_server.services.training_service as _tsm
@@ -152,6 +157,8 @@ logger.info("Epochs: %s, batch_size: %s, lr: %s",
 logger.info("Data path: %s", data_path)
 if checkpoint_path:
     logger.info("Resuming from checkpoint: %s (start_epoch=%d)", checkpoint_path, start_epoch)
+if pretrained_model_path:
+    logger.info("Loading pretrained weights from: %s", pretrained_model_path)
 
 # Send pre-training status update so the Java UI can show device info
 total_epochs = training_params.get("epochs", 50)
@@ -261,7 +268,8 @@ try:
         pause_flag=pause_flag,
         checkpoint_path=checkpoint_path,
         start_epoch=start_epoch,
-        setup_callback=setup_callback
+        setup_callback=setup_callback,
+        pretrained_model_path=pretrained_model_path
     )
 except Exception as e:
     logger.error("Training failed: %s", e)

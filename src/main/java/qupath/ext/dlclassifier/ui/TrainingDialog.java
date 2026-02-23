@@ -184,6 +184,8 @@ public class TrainingDialog {
         // Load settings from model
         private Label loadedModelLabel;
         private List<String> sourceModelClassNames;
+        private CheckBox continueTrainingCheck;
+        private String pretrainedModelPtPath;
 
         // Spatial info labels
         private Label resolutionInfoLabel;
@@ -237,7 +239,7 @@ public class TrainingDialog {
             TitledPane classSection = createClassSection();
 
             // Load settings section (always enabled, before image source)
-            HBox loadSettingsSection = createLoadSettingsSection();
+            VBox loadSettingsSection = createLoadSettingsSection();
 
             // Image source section is always enabled
             TitledPane imageSourceSection = createImageSourceSection();
@@ -317,7 +319,7 @@ public class TrainingDialog {
             dialog.getDialogPane().setHeader(headerBox);
         }
 
-        private HBox createLoadSettingsSection() {
+        private VBox createLoadSettingsSection() {
             Button loadSettingsButton = new Button("Load Settings from Model...");
             loadSettingsButton.setStyle("-fx-font-weight: bold;");
             TooltipHelper.install(loadSettingsButton,
@@ -340,8 +342,25 @@ public class TrainingDialog {
             loadedModelLabel = new Label();
             loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
 
-            HBox box = new HBox(10, loadSettingsButton, loadedModelLabel);
-            box.setAlignment(Pos.CENTER_LEFT);
+            continueTrainingCheck = new CheckBox("Initialize weights from this model");
+            continueTrainingCheck.setDisable(true);
+            TooltipHelper.install(continueTrainingCheck,
+                    "Load the trained model's neural network weights as the starting point.\n" +
+                    "The optimizer and learning rate schedule start fresh.\n" +
+                    "Useful for fine-tuning on additional data or adjusted classes.\n" +
+                    "If the new training has different classes, the segmentation head\n" +
+                    "is randomly initialized while encoder/decoder weights transfer.");
+            continueTrainingCheck.selectedProperty().addListener((obs, oldVal, newVal) -> {
+                if (newVal != null && newVal) {
+                    // Our own weights replace ImageNet weights, so uncheck that
+                    usePretrainedCheck.setSelected(false);
+                }
+            });
+
+            HBox topRow = new HBox(10, loadSettingsButton, loadedModelLabel);
+            topRow.setAlignment(Pos.CENTER_LEFT);
+
+            VBox box = new VBox(5, topRow, continueTrainingCheck);
             box.setPadding(new Insets(5, 10, 5, 10));
             return box;
         }
@@ -523,6 +542,23 @@ public class TrainingDialog {
 
             // Store source model's class list for auto-matching after class loading
             sourceModelClassNames = metadata.getClassNames();
+
+            // Resolve the model's .pt file path for continue-training
+            ModelManager modelManager2 = new ModelManager();
+            pretrainedModelPtPath = null;
+            modelManager2.getModelPath(metadata.getId()).ifPresent(modelPath -> {
+                // getModelPath prefers ONNX; we need the .pt file specifically
+                java.nio.file.Path ptPath = modelPath.getParent().resolve("model.pt");
+                if (java.nio.file.Files.exists(ptPath)) {
+                    pretrainedModelPtPath = ptPath.toString();
+                }
+            });
+            continueTrainingCheck.setDisable(pretrainedModelPtPath == null);
+            continueTrainingCheck.setSelected(false);
+            if (pretrainedModelPtPath == null) {
+                logger.warn("No model.pt found for '{}' -- continue training not available",
+                        metadata.getName());
+            }
 
             // Update UI label
             loadedModelLabel.setText("Loaded from: " + metadata.getName());
@@ -2079,6 +2115,8 @@ public class TrainingDialog {
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
                     .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
                     .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
+                    .pretrainedModelPath(
+                            continueTrainingCheck.isSelected() ? pretrainedModelPtPath : null)
                     .build();
 
             // Get channel config
