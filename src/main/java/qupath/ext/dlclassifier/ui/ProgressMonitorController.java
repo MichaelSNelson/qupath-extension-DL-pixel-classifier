@@ -180,12 +180,19 @@ public class ProgressMonitorController {
         overallLabel.setMinWidth(Region.USE_PREF_SIZE);
         Label currentLabel = new Label("Current:");
         currentLabel.setMinWidth(Region.USE_PREF_SIZE);
+        HBox currentRow = new HBox(10, currentLabel, currentProgressBar);
         statusBox.getChildren().addAll(
                 statusLabel,
                 new HBox(10, overallLabel, overallProgressBar),
-                new HBox(10, currentLabel, currentProgressBar),
+                currentRow,
                 new HBox(20, timeLabel, detailLabel)
         );
+        // Current progress is only meaningful for inference (tiles within annotation).
+        // Training has a single progress level (epochs) shown in Overall.
+        if (showLossChart) {
+            currentRow.setVisible(false);
+            currentRow.setManaged(false);
+        }
 
         root.getChildren().add(statusBox);
 
