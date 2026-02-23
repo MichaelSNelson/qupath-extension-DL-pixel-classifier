@@ -186,6 +186,8 @@ public class TrainingDialog {
         private List<String> sourceModelClassNames;
         private CheckBox continueTrainingCheck;
         private String pretrainedModelPtPath;
+        private String pretrainedModelArchitecture;
+        private String pretrainedModelBackbone;
 
         // Spatial info labels
         private Label resolutionInfoLabel;
@@ -546,6 +548,8 @@ public class TrainingDialog {
             // Resolve the model's .pt file path for continue-training
             ModelManager modelManager2 = new ModelManager();
             pretrainedModelPtPath = null;
+            pretrainedModelArchitecture = metadata.getModelType();
+            pretrainedModelBackbone = metadata.getBackbone();
             modelManager2.getModelPath(metadata.getId()).ifPresent(modelPath -> {
                 // getModelPath prefers ONNX; we need the .pt file specifically
                 java.nio.file.Path ptPath = modelPath.getParent().resolve("model.pt");
@@ -553,11 +557,13 @@ public class TrainingDialog {
                     pretrainedModelPtPath = ptPath.toString();
                 }
             });
-            continueTrainingCheck.setDisable(pretrainedModelPtPath == null);
             continueTrainingCheck.setSelected(false);
             if (pretrainedModelPtPath == null) {
+                continueTrainingCheck.setDisable(true);
                 logger.warn("No model.pt found for '{}' -- continue training not available",
                         metadata.getName());
+            } else {
+                validatePretrainedModelCompatibility();
             }
 
             // Update UI label
@@ -565,6 +571,37 @@ public class TrainingDialog {
 
             logger.info("Settings loaded from model '{}'. {} training settings fields applied.",
                     metadata.getName(), ts != null ? ts.size() : 0);
+        }
+
+        /**
+         * Checks if the current architecture/backbone selection matches the pretrained model.
+         * Disables and unchecks the "Initialize weights" checkbox if they don't match,
+         * since loading weights from an incompatible architecture would fail or produce
+         * garbage results.
+         */
+        private void validatePretrainedModelCompatibility() {
+            if (pretrainedModelPtPath == null || continueTrainingCheck == null) {
+                return;
+            }
+
+            String currentArch = architectureCombo.getValue();
+            String currentBackbone = backboneCombo.getValue();
+
+            boolean archMatch = Objects.equals(currentArch, pretrainedModelArchitecture);
+            boolean backboneMatch = Objects.equals(currentBackbone, pretrainedModelBackbone);
+
+            if (archMatch && backboneMatch) {
+                continueTrainingCheck.setDisable(false);
+            } else {
+                continueTrainingCheck.setDisable(true);
+                if (continueTrainingCheck.isSelected()) {
+                    continueTrainingCheck.setSelected(false);
+                    logger.info("Unchecked 'Initialize weights' -- architecture/backbone changed " +
+                            "from {}/{} to {}/{}",
+                            pretrainedModelArchitecture, pretrainedModelBackbone,
+                            currentArch, currentBackbone);
+                }
+            }
         }
 
         private TitledPane createBasicInfoSection() {
@@ -759,6 +796,13 @@ public class TrainingDialog {
                     "~100MB download on first use (cached).",
                     "https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection");
             updateBackboneOptions(architectureCombo.getValue());
+
+            // When architecture or backbone changes, invalidate pretrained weight loading
+            // if the new selection doesn't match the source model
+            architectureCombo.valueProperty().addListener((obs, old, newVal) ->
+                    validatePretrainedModelCompatibility());
+            backboneCombo.valueProperty().addListener((obs, old, newVal) ->
+                    validatePretrainedModelCompatibility());
 
             grid.add(new Label("Encoder:"), 0, row);
             grid.add(backboneCombo, 1, row);
