@@ -154,6 +154,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
         trainingParams.put("early_stopping_metric", trainingConfig.getEarlyStoppingMetric());
         trainingParams.put("mixed_precision", trainingConfig.isMixedPrecision());
+        if (trainingConfig.getFocusClass() != null) {
+            trainingParams.put("focus_class", trainingConfig.getFocusClass());
+            trainingParams.put("focus_class_min_iou", trainingConfig.getFocusClassMinIoU());
+        }
 
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("model_type", trainingConfig.getModelType());

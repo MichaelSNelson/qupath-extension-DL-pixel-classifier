@@ -55,6 +55,10 @@ public class TrainingConfig {
     private final int earlyStoppingPatience;
     private final boolean mixedPrecision;
 
+    // Focus class for best model selection and early stopping
+    private final String focusClass;       // null = disabled (use earlyStoppingMetric as-is)
+    private final double focusClassMinIoU; // 0.0 = no minimum threshold
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -78,6 +82,8 @@ public class TrainingConfig {
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
         this.mixedPrecision = builder.mixedPrecision;
+        this.focusClass = builder.focusClass;
+        this.focusClassMinIoU = builder.focusClassMinIoU;
     }
 
     // Getters
@@ -247,6 +253,31 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the focus class name for best model selection and early stopping.
+     * <p>
+     * When set, the focus class's per-class IoU is used instead of mean IoU
+     * or validation loss for determining the best model and early stopping.
+     *
+     * @return focus class name, or null if disabled (uses earlyStoppingMetric)
+     */
+    public String getFocusClass() {
+        return focusClass;
+    }
+
+    /**
+     * Gets the minimum IoU threshold for the focus class.
+     * <p>
+     * When greater than 0, early stopping is suppressed until the focus class
+     * reaches this IoU, regardless of patience. Training will continue until
+     * either max epochs or the threshold is reached and patience expires.
+     *
+     * @return minimum IoU threshold (0.0 = no threshold)
+     */
+    public double getFocusClassMinIoU() {
+        return focusClassMinIoU;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -272,6 +303,7 @@ public class TrainingConfig {
                 contextScale == that.contextScale &&
                 earlyStoppingPatience == that.earlyStoppingPatience &&
                 mixedPrecision == that.mixedPrecision &&
+                Double.compare(that.focusClassMinIoU, focusClassMinIoU) == 0 &&
                 Objects.equals(modelType, that.modelType) &&
                 Objects.equals(backbone, that.backbone) &&
                 Objects.equals(augmentationConfig, that.augmentationConfig) &&
@@ -279,7 +311,8 @@ public class TrainingConfig {
                 Objects.equals(classWeightMultipliers, that.classWeightMultipliers) &&
                 Objects.equals(schedulerType, that.schedulerType) &&
                 Objects.equals(lossFunction, that.lossFunction) &&
-                Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric);
+                Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
+                Objects.equals(focusClass, that.focusClass);
     }
 
     @Override
@@ -288,14 +321,16 @@ public class TrainingConfig {
                 weightDecay, tileSize, overlap, downsample, validationSplit, augmentationConfig,
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
-                earlyStoppingMetric, earlyStoppingPatience, mixedPrecision);
+                earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
+                focusClass, focusClassMinIoU);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b}",
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f}",
                 modelType, backbone, epochs, learningRate, tileSize, downsample, contextScale, lineStrokeWidth,
-                schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision);
+                schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
+                focusClass, focusClassMinIoU);
     }
 
     public static Builder builder() {
@@ -328,6 +363,8 @@ public class TrainingConfig {
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
         private boolean mixedPrecision = true;
+        private String focusClass = null;
+        private double focusClassMinIoU = 0.0;
 
         public Builder() {
             // Default augmentation configuration
@@ -544,6 +581,32 @@ public class TrainingConfig {
             return this;
         }
 
+        /**
+         * Sets the focus class for best model selection and early stopping.
+         * <p>
+         * When set, the focus class's per-class IoU is used instead of the
+         * configured early stopping metric for determining the best model
+         * and triggering early stopping.
+         *
+         * @param focusClass class name, or null to disable
+         */
+        public Builder focusClass(String focusClass) {
+            this.focusClass = focusClass;
+            return this;
+        }
+
+        /**
+         * Sets the minimum IoU threshold for the focus class.
+         * <p>
+         * Early stopping is suppressed until the focus class reaches this IoU.
+         *
+         * @param focusClassMinIoU minimum IoU threshold (0.0-1.0, 0.0 = no threshold)
+         */
+        public Builder focusClassMinIoU(double focusClassMinIoU) {
+            this.focusClassMinIoU = focusClassMinIoU;
+            return this;
+        }
+
         public TrainingConfig build() {
             if (modelType == null || modelType.isEmpty()) {
                 throw new IllegalStateException("Model type must be specified");
@@ -565,6 +628,9 @@ public class TrainingConfig {
             }
             if (batchSize < 1) {
                 throw new IllegalStateException("Batch size must be at least 1");
+            }
+            if (focusClassMinIoU < 0.0 || focusClassMinIoU > 1.0) {
+                throw new IllegalStateException("Focus class min IoU must be between 0.0 and 1.0");
             }
             return new TrainingConfig(this);
         }

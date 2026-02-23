@@ -168,6 +168,12 @@ public class ScriptGenerator {
         if (config.getWeightDecay() > 0) {
             appendLine(sb, "        .weightDecay(" + config.getWeightDecay() + ")");
         }
+        if (config.getFocusClass() != null) {
+            appendLine(sb, "        .focusClass(" + quote(config.getFocusClass()) + ")");
+            if (config.getFocusClassMinIoU() > 0) {
+                appendLine(sb, "        .focusClassMinIoU(" + config.getFocusClassMinIoU() + ")");
+            }
+        }
 
         // Augmentation config
         Map<String, Boolean> augConfig = config.getAugmentationConfig();

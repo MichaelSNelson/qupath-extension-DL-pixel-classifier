@@ -1195,6 +1195,10 @@ public class TrainingWorkflow {
         if (!config.getClassWeightMultipliers().isEmpty()) {
             settings.put("class_weight_multipliers", config.getClassWeightMultipliers());
         }
+        if (config.getFocusClass() != null) {
+            settings.put("focus_class", config.getFocusClass());
+            settings.put("focus_class_min_iou", config.getFocusClassMinIoU());
+        }
         return settings;
     }
 

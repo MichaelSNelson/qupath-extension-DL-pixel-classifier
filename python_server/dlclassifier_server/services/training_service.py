@@ -718,8 +718,20 @@ class TrainingService:
         # Setup early stopping
         early_stopping = None
         early_stopping_metric = training_params.get("early_stopping_metric", "mean_iou")
+
+        # Focus class: override metric behavior for best model selection and early stopping
+        focus_class = training_params.get("focus_class", None)
+        focus_class_min_iou = training_params.get("focus_class_min_iou", 0.0)
+        if focus_class:
+            logger.info(f"Focus class '{focus_class}' IoU will be used for "
+                       f"best model selection and early stopping")
+            if focus_class_min_iou > 0:
+                logger.info(f"  Min IoU threshold: {focus_class_min_iou:.2f} "
+                           f"-- early stopping suppressed until reached")
+
         if training_params.get("early_stopping", True):
-            es_mode = "max" if early_stopping_metric == "mean_iou" else "min"
+            # When focus class is set, always use "max" mode (higher IoU is better)
+            es_mode = "max" if (focus_class or early_stopping_metric == "mean_iou") else "min"
             early_stopping = EarlyStopping(
                 patience=training_params.get("early_stopping_patience", 15),
                 min_delta=training_params.get("early_stopping_min_delta", 0.001),
@@ -766,7 +778,8 @@ class TrainingService:
             logger.info("Mixed precision training enabled")
 
         # Determine best-model tracking mode (same metric as early stopping)
-        best_score_mode = "max" if early_stopping_metric == "mean_iou" else "min"
+        # When focus class is set, always use "max" mode (higher IoU is better)
+        best_score_mode = "max" if (focus_class or early_stopping_metric == "mean_iou") else "min"
         best_score = float("-inf") if best_score_mode == "max" else float("inf")
         best_model_state = None
         training_history = []
@@ -987,7 +1000,10 @@ class TrainingService:
                     scheduler.step()
 
             # Save best model checkpoint (independent of early stopping)
-            current_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+            if focus_class and focus_class in per_class_iou:
+                current_metric = per_class_iou[focus_class]
+            else:
+                current_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
             if _is_best(current_metric, best_score):
                 best_score = current_metric
                 best_epoch = epoch + 1
@@ -995,12 +1011,32 @@ class TrainingService:
                 best_accuracy = accuracy
                 best_mean_iou = mean_iou
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
+                if focus_class:
+                    metric_name = f"{focus_class} IoU"
+                else:
+                    metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
                 logger.info(f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})")
+
+            # Log focus class status
+            if focus_class:
+                fc_iou = per_class_iou.get(focus_class, 0.0)
+                logger.info(f"  Focus class '{focus_class}' IoU={fc_iou:.4f}"
+                           f" (min threshold={focus_class_min_iou:.2f})")
 
             # Check early stopping
             if early_stopping is not None:
-                es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                if focus_class and focus_class in per_class_iou:
+                    es_value = per_class_iou[focus_class]
+                else:
+                    es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+
+                # Suppress early stopping if focus class hasn't reached minimum IoU
+                if (focus_class and focus_class_min_iou > 0
+                        and focus_class in per_class_iou
+                        and per_class_iou[focus_class] < focus_class_min_iou):
+                    # Reset early stopping counter -- don't stop yet
+                    early_stopping.counter = 0
+
                 if early_stopping(epoch + 1, es_value, model):
                     logger.info(f"Early stopping triggered at epoch {epoch+1}")
                     break

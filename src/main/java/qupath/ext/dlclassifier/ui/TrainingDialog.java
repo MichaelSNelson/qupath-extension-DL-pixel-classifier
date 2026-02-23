@@ -165,6 +165,11 @@ public class TrainingDialog {
         private Spinner<Integer> earlyStoppingPatienceSpinner;
         private CheckBox mixedPrecisionCheck;
 
+        // Focus class
+        private ComboBox<String> focusClassCombo;
+        private Spinner<Double> focusClassMinIoUSpinner;
+        private Label focusClassMinIoULabel;
+
         // Transfer learning
         private LayerFreezePanel layerFreezePanel;
         private CheckBox usePretrainedCheck;
@@ -452,6 +457,30 @@ public class TrainingDialog {
                 // Mixed precision
                 if (ts.containsKey("mixed_precision")) {
                     mixedPrecisionCheck.setSelected((Boolean) ts.get("mixed_precision"));
+                }
+
+                // Focus class
+                if (ts.containsKey("focus_class")) {
+                    Object fc = ts.get("focus_class");
+                    if (fc != null) {
+                        String focusClassName = String.valueOf(fc);
+                        // Defer to after classes are loaded if combo not yet populated
+                        if (focusClassCombo.getItems().contains(focusClassName)) {
+                            focusClassCombo.setValue(focusClassName);
+                        } else {
+                            // Will be set when classes are loaded via updateFocusClassCombo
+                            // Store temporarily for post-load matching
+                            Platform.runLater(() -> {
+                                if (focusClassCombo.getItems().contains(focusClassName)) {
+                                    focusClassCombo.setValue(focusClassName);
+                                }
+                            });
+                        }
+                    }
+                }
+                if (ts.containsKey("focus_class_min_iou")) {
+                    focusClassMinIoUSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("focus_class_min_iou")).doubleValue());
                 }
 
                 // Augmentation config
@@ -1079,6 +1108,87 @@ public class TrainingDialog {
             grid.add(earlyStoppingPatienceSpinner, 1, row);
             row++;
 
+            // Focus class
+            focusClassCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "None (use Mean IoU)"));
+            focusClassCombo.setValue("None (use Mean IoU)");
+            TooltipHelper.install(focusClassCombo,
+                    "Optionally select a class to focus on for best model selection.\n\n" +
+                    "When set, the focus class's per-class IoU is used instead of\n" +
+                    "the Early Stop Metric for determining the best model and\n" +
+                    "triggering early stopping.\n\n" +
+                    "Use this when you care more about one class than the others.\n" +
+                    "For example, if detecting 'Hinge' is critical, set it as the\n" +
+                    "focus class so the best model is the one with the best Hinge IoU,\n" +
+                    "not the best average across all classes.");
+
+            focusClassCombo.valueProperty().addListener((obs, old, newVal) -> {
+                boolean hasFocusClass = newVal != null && !newVal.startsWith("None");
+                // Show/hide min IoU row
+                focusClassMinIoUSpinner.setVisible(hasFocusClass);
+                focusClassMinIoUSpinner.setManaged(hasFocusClass);
+                focusClassMinIoULabel.setVisible(hasFocusClass);
+                focusClassMinIoULabel.setManaged(hasFocusClass);
+                // Visually disable early stopping metric combo when focus class overrides it
+                earlyStoppingMetricCombo.setDisable(hasFocusClass);
+                if (hasFocusClass) {
+                    TooltipHelper.install(earlyStoppingMetricCombo,
+                            "Overridden by Focus Class selection.\n" +
+                            "The focus class's IoU will be used for best model\n" +
+                            "selection and early stopping instead.");
+                } else {
+                    TooltipHelper.install(earlyStoppingMetricCombo,
+                            "Which metric decides the 'best' model checkpoint.\n\n" +
+                            "Mean IoU (recommended): Intersection-over-union averaged across\n" +
+                            "  all classes. Directly measures segmentation quality.\n\n" +
+                            "Validation Loss: Combined loss on held-out data.");
+                }
+            });
+
+            grid.add(new Label("Focus Class:"), 0, row);
+            grid.add(focusClassCombo, 1, row);
+            row++;
+
+            // Focus class min IoU threshold (hidden by default)
+            focusClassMinIoULabel = new Label("Min Focus IoU:");
+            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0, 0.0, 0.05);
+            focusClassMinIoUSpinner.setEditable(true);
+            focusClassMinIoUSpinner.setPrefWidth(100);
+            var minIoUFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) focusClassMinIoUSpinner.getValueFactory();
+            minIoUFactory.setConverter(new javafx.util.StringConverter<Double>() {
+                @Override
+                public String toString(Double value) {
+                    return value == null ? "" : String.format("%.2f", value);
+                }
+                @Override
+                public Double fromString(String string) {
+                    try {
+                        return Double.parseDouble(string.trim());
+                    } catch (NumberFormatException e) {
+                        return minIoUFactory.getValue();
+                    }
+                }
+            });
+            TooltipHelper.install(focusClassMinIoUSpinner,
+                    "Minimum IoU threshold for the focus class.\n\n" +
+                    "Training will not stop early until the focus class\n" +
+                    "reaches this IoU, regardless of patience.\n\n" +
+                    "0.00: No minimum -- early stopping works normally.\n" +
+                    "0.30: Training continues until focus class IoU >= 0.30,\n" +
+                    "  then patience-based stopping resumes.\n\n" +
+                    "Set this to prevent the model from stopping before the\n" +
+                    "focus class has had a chance to learn.");
+
+            // Hidden by default
+            focusClassMinIoUSpinner.setVisible(false);
+            focusClassMinIoUSpinner.setManaged(false);
+            focusClassMinIoULabel.setVisible(false);
+            focusClassMinIoULabel.setManaged(false);
+
+            grid.add(focusClassMinIoULabel, 0, row);
+            grid.add(focusClassMinIoUSpinner, 1, row);
+            row++;
+
             // Mixed precision
             mixedPrecisionCheck = new CheckBox("Enable mixed precision (AMP)");
             mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
@@ -1391,6 +1501,9 @@ public class TrainingDialog {
 
                     refreshPieChart();
 
+                    // Populate focus class combo with loaded class names
+                    updateFocusClassCombo();
+
                     // Auto-rebalance class weights if preference is set
                     if (rebalanceByDefaultCheck.isSelected()) {
                         rebalanceClassWeights();
@@ -1482,6 +1595,29 @@ public class TrainingDialog {
                     pane.setExpanded(false);
                 }
             }
+        }
+
+        /** Updates the focus class combo with current class names from classListView. */
+        private void updateFocusClassCombo() {
+            String currentSelection = focusClassCombo.getValue();
+            List<String> items = new ArrayList<>();
+            items.add("None (use Mean IoU)");
+            for (ClassItem item : classListView.getItems()) {
+                items.add(item.name());
+            }
+            focusClassCombo.setItems(FXCollections.observableArrayList(items));
+            // Restore previous selection if still valid, otherwise reset
+            if (currentSelection != null && items.contains(currentSelection)) {
+                focusClassCombo.setValue(currentSelection);
+            } else {
+                focusClassCombo.setValue("None (use Mean IoU)");
+            }
+        }
+
+        /** Maps focus class combo display value to config value (null for "None"). */
+        private static String mapFocusClassFromDisplay(String display) {
+            if (display == null || display.startsWith("None")) return null;
+            return display;
         }
 
         private boolean isBrightfield(ImageData<BufferedImage> imageData) {
@@ -1817,6 +1953,8 @@ public class TrainingDialog {
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
+                    .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
+                    .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
                     .build();
 
             // Get channel config
@@ -1970,6 +2108,8 @@ public class TrainingDialog {
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
+                    .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
+                    .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
