@@ -148,6 +148,15 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         trainingParams.put("weight_decay", trainingConfig.getWeightDecay());
         trainingParams.put("validation_split", trainingConfig.getValidationSplit());
         trainingParams.put("augmentation", trainingConfig.isAugmentation());
+        // Send full augmentation config dict to Python (not just a boolean)
+        Map<String, Object> augConfig = new HashMap<>();
+        Map<String, Boolean> toggles = trainingConfig.getAugmentationConfig();
+        augConfig.put("p_flip", toggles.getOrDefault("flip_horizontal", false)
+                || toggles.getOrDefault("flip_vertical", false) ? 0.5 : 0.0);
+        augConfig.put("p_rotate", toggles.getOrDefault("rotation_90", false) ? 0.5 : 0.0);
+        augConfig.put("p_elastic", toggles.getOrDefault("elastic_deformation", false) ? 0.3 : 0.0);
+        augConfig.put("intensity_mode", trainingConfig.getIntensityAugMode());
+        trainingParams.put("augmentation_config", augConfig);
         trainingParams.put("scheduler", trainingConfig.getSchedulerType());
         trainingParams.put("loss_function", trainingConfig.getLossFunction());
         trainingParams.put("early_stopping", true);

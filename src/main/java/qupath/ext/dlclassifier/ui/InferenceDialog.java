@@ -428,16 +428,16 @@ public class InferenceDialog {
             row++;
 
             // Overlap percent (preferred - percentage based)
-            overlapPercentSpinner = new Spinner<>(0.0, 20.0, DLClassifierPreferences.getTileOverlapPercent(), 2.5);
+            overlapPercentSpinner = new Spinner<>(0.0, 50.0, DLClassifierPreferences.getTileOverlapPercent(), 2.5);
             overlapPercentSpinner.setEditable(true);
             overlapPercentSpinner.setPrefWidth(100);
             TooltipHelper.install(overlapPercentSpinner,
-                    "Tile overlap as percentage of tile size (0-20%).\n" +
-                    "Higher values improve blending quality but increase processing time.\n\n" +
-                    "0%: No overlap -- objects may be split at tile boundaries.\n" +
-                    "5-10%: Moderate overlap -- some seam reduction.\n" +
-                    "10-15%: Good overlap -- recommended for seamless results.\n" +
-                    "15-20%: High overlap -- best quality but ~2x slower.");
+                    "Tile overlap as percentage of tile size (0-50%).\n" +
+                    "Controls both batch blending AND overlay tile boundary quality.\n" +
+                    "Higher values eliminate edge artifacts but increase processing time.\n\n" +
+                    "0-10%: Fast but may show tile seams in overlays.\n" +
+                    "10-25%: Good balance -- recommended default.\n" +
+                    "25-50%: Best quality -- eliminates all edge artifacts.");
             overlapPercentSpinner.valueProperty().addListener((obs, old, newVal) -> updateOverlapWarning(newVal));
 
             grid.add(new Label("Tile Overlap (%):"), 0, row);
@@ -506,6 +506,9 @@ public class InferenceDialog {
             } else if (overlapPercent < 10.0) {
                 overlapWarningLabel.setText("Note: Low overlap may result in visible seams in output");
                 overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #F57C00;");
+            } else if (overlapPercent >= 25.0) {
+                overlapWarningLabel.setText("High overlap -- best quality, eliminates edge artifacts");
+                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");
             } else {
                 overlapWarningLabel.setText("Good overlap for seamless blending");
                 overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");

@@ -59,6 +59,9 @@ public class TrainingConfig {
     private final String focusClass;       // null = disabled (use earlyStoppingMetric as-is)
     private final double focusClassMinIoU; // 0.0 = no minimum threshold
 
+    // Intensity augmentation mode: "none", "brightfield", or "fluorescence"
+    private final String intensityAugMode;
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -84,6 +87,7 @@ public class TrainingConfig {
         this.mixedPrecision = builder.mixedPrecision;
         this.focusClass = builder.focusClass;
         this.focusClassMinIoU = builder.focusClassMinIoU;
+        this.intensityAugMode = builder.intensityAugMode;
     }
 
     // Getters
@@ -149,10 +153,12 @@ public class TrainingConfig {
     /**
      * Checks if any augmentation is enabled.
      *
-     * @return true if at least one augmentation is enabled
+     * @return true if at least one augmentation or intensity mode is enabled
      */
     public boolean isAugmentation() {
-        return augmentationConfig.values().stream().anyMatch(v -> v);
+        boolean spatialAug = augmentationConfig.values().stream().anyMatch(v -> v);
+        boolean intensityAug = intensityAugMode != null && !"none".equals(intensityAugMode);
+        return spatialAug || intensityAug;
     }
 
     public boolean isUsePretrainedWeights() {
@@ -278,6 +284,22 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the intensity augmentation mode.
+     * <p>
+     * Controls how color/intensity transforms are applied during training:
+     * <ul>
+     *   <li>{@code "none"} -- no intensity transforms</li>
+     *   <li>{@code "brightfield"} -- RGB-correlated brightness/contrast/gamma (for H&amp;E)</li>
+     *   <li>{@code "fluorescence"} -- per-channel independent intensity jitter</li>
+     * </ul>
+     *
+     * @return intensity augmentation mode string
+     */
+    public String getIntensityAugMode() {
+        return intensityAugMode;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -312,7 +334,8 @@ public class TrainingConfig {
                 Objects.equals(schedulerType, that.schedulerType) &&
                 Objects.equals(lossFunction, that.lossFunction) &&
                 Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
-                Objects.equals(focusClass, that.focusClass);
+                Objects.equals(focusClass, that.focusClass) &&
+                Objects.equals(intensityAugMode, that.intensityAugMode);
     }
 
     @Override
@@ -322,15 +345,15 @@ public class TrainingConfig {
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
                 earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU);
+                focusClass, focusClassMinIoU, intensityAugMode);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f}",
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s}",
                 modelType, backbone, epochs, learningRate, tileSize, downsample, contextScale, lineStrokeWidth,
                 schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU);
+                focusClass, focusClassMinIoU, intensityAugMode);
     }
 
     public static Builder builder() {
@@ -365,13 +388,13 @@ public class TrainingConfig {
         private boolean mixedPrecision = true;
         private String focusClass = null;
         private double focusClassMinIoU = 0.0;
+        private String intensityAugMode = "none";
 
         public Builder() {
-            // Default augmentation configuration
+            // Default augmentation configuration (spatial transforms only)
             augmentationConfig.put("flip_horizontal", true);
             augmentationConfig.put("flip_vertical", true);
             augmentationConfig.put("rotation_90", true);
-            augmentationConfig.put("color_jitter", false);
             augmentationConfig.put("elastic_deformation", false);
         }
 
@@ -604,6 +627,16 @@ public class TrainingConfig {
          */
         public Builder focusClassMinIoU(double focusClassMinIoU) {
             this.focusClassMinIoU = focusClassMinIoU;
+            return this;
+        }
+
+        /**
+         * Sets the intensity augmentation mode.
+         *
+         * @param intensityAugMode "none", "brightfield", or "fluorescence"
+         */
+        public Builder intensityAugMode(String intensityAugMode) {
+            this.intensityAugMode = intensityAugMode;
             return this;
         }
 

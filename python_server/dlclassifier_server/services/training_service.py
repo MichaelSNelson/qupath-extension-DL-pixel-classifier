@@ -41,13 +41,50 @@ except ImportError:
     logger.warning("albumentations not available - augmentation will be disabled")
 
 
+class PerChannelIntensityJitter(A.ImageOnlyTransform):
+    """Apply random brightness/contrast independently to each channel.
+
+    Works with arbitrary number of channels (fluorescence, multi-spectral).
+    Each channel receives independent random scaling, unlike albumentations'
+    built-in transforms which assume RGB correlation.
+    """
+
+    def __init__(self, brightness_limit=0.2, contrast_limit=0.2,
+                 always_apply=False, p=0.5):
+        super().__init__(always_apply, p)
+        self.brightness_limit = brightness_limit
+        self.contrast_limit = contrast_limit
+
+    def apply(self, img, **params):
+        result = img.copy().astype(np.float32)
+        num_ch = img.shape[2] if img.ndim == 3 else 1
+        for c in range(num_ch):
+            brightness = 1.0 + np.random.uniform(
+                -self.brightness_limit, self.brightness_limit)
+            contrast = 1.0 + np.random.uniform(
+                -self.contrast_limit, self.contrast_limit)
+            if img.ndim == 3:
+                ch = result[:, :, c]
+            else:
+                ch = result
+            mean_val = ch.mean()
+            ch[:] = np.clip(
+                (ch - mean_val) * contrast + mean_val * brightness,
+                0, 255 if img.dtype == np.uint8 else ch.max() * 2)
+        return result.astype(img.dtype)
+
+    def get_transform_init_args_names(self):
+        return ("brightness_limit", "contrast_limit")
+
+
 def get_training_augmentation(
     image_size: int = 512,
     p_flip: float = 0.5,
     p_rotate: float = 0.5,
     p_elastic: float = 0.3,
     p_color: float = 0.3,
-    p_noise: float = 0.2
+    p_noise: float = 0.2,
+    intensity_mode: str = "none"
 ) -> Optional[A.Compose]:
     """Create training augmentation pipeline.
 
@@ -56,8 +93,9 @@ def get_training_augmentation(
         p_flip: Probability of flip transforms
         p_rotate: Probability of rotation
         p_elastic: Probability of elastic deformation
-        p_color: Probability of color jitter
+        p_color: Probability of color jitter (used when intensity_mode != "none")
         p_noise: Probability of noise addition
+        intensity_mode: "none", "brightfield", or "fluorescence"
 
     Returns:
         Albumentations Compose object or None if not available
@@ -65,7 +103,7 @@ def get_training_augmentation(
     if not ALBUMENTATIONS_AVAILABLE:
         return None
 
-    return A.Compose([
+    transforms = [
         # Spatial transforms (applied to both image and mask)
         A.HorizontalFlip(p=p_flip),
         A.VerticalFlip(p=p_flip),
@@ -92,17 +130,25 @@ def get_training_augmentation(
             distort_limit=0.3,
             p=p_elastic * 0.5
         ),
+    ]
 
-        # Color/intensity transforms (image only, not mask)
-        A.OneOf([
+    # Intensity transforms -- mode-dependent
+    if intensity_mode == "brightfield":
+        # RGB-correlated brightness/contrast/gamma (standard for H&E)
+        transforms.append(A.OneOf([
             A.RandomBrightnessContrast(
                 brightness_limit=0.2,
                 contrast_limit=0.2,
                 p=1.0
             ),
             A.RandomGamma(gamma_limit=(80, 120), p=1.0),
-        ], p=p_color),
+        ], p=p_color))
+    elif intensity_mode == "fluorescence":
+        # Per-channel independent intensity jitter (for fluorescence/multi-spectral)
+        transforms.append(PerChannelIntensityJitter(
+            brightness_limit=0.2, contrast_limit=0.2, p=p_color))
 
+    transforms.extend([
         # Blur - simulates slight defocus
         A.OneOf([
             A.GaussianBlur(blur_limit=(3, 5), p=1.0),
@@ -111,8 +157,9 @@ def get_training_augmentation(
 
         # Noise - std_range is fraction of image max value
         A.GaussNoise(std_range=(0.04, 0.2), p=p_noise),
+    ])
 
-    ], additional_targets={})
+    return A.Compose(transforms, additional_targets={})
 
 
 def get_validation_transform() -> Optional[A.Compose]:
@@ -314,15 +361,19 @@ class SegmentationDataset(Dataset):
         # Setup augmentation
         if self.augment:
             aug_config = augmentation_config or {}
+            intensity_mode = aug_config.get("intensity_mode", "none")
+            # Set color probability based on intensity mode
+            p_color = 0.3 if intensity_mode != "none" else 0.0
             self.transform = get_training_augmentation(
                 image_size=aug_config.get("image_size", 512),
                 p_flip=aug_config.get("p_flip", 0.5),
                 p_rotate=aug_config.get("p_rotate", 0.5),
                 p_elastic=aug_config.get("p_elastic", 0.3),
-                p_color=aug_config.get("p_color", 0.3),
-                p_noise=aug_config.get("p_noise", 0.2)
+                p_color=aug_config.get("p_color", p_color),
+                p_noise=aug_config.get("p_noise", 0.2),
+                intensity_mode=intensity_mode
             )
-            logger.info("Augmentation enabled")
+            logger.info(f"Augmentation enabled (intensity_mode={intensity_mode})")
         else:
             self.transform = None
             if augment and not ALBUMENTATIONS_AVAILABLE:

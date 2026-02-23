@@ -155,7 +155,7 @@ public class TrainingDialog {
         private CheckBox flipHorizontalCheck;
         private CheckBox flipVerticalCheck;
         private CheckBox rotationCheck;
-        private CheckBox colorJitterCheck;
+        private ComboBox<String> intensityAugCombo;
         private CheckBox elasticCheck;
 
         // Training strategy
@@ -499,11 +499,20 @@ public class TrainingDialog {
                             flipVerticalCheck.setSelected(Boolean.TRUE.equals(augConfig.get("flip_vertical")));
                         if (augConfig.containsKey("rotation_90"))
                             rotationCheck.setSelected(Boolean.TRUE.equals(augConfig.get("rotation_90")));
-                        if (augConfig.containsKey("color_jitter"))
-                            colorJitterCheck.setSelected(Boolean.TRUE.equals(augConfig.get("color_jitter")));
+                        // Legacy color_jitter -> map to brightfield intensity mode
+                        if (augConfig.containsKey("color_jitter")
+                                && Boolean.TRUE.equals(augConfig.get("color_jitter"))) {
+                            intensityAugCombo.setValue("Brightfield (color jitter)");
+                        }
                         if (augConfig.containsKey("elastic_deformation"))
                             elasticCheck.setSelected(Boolean.TRUE.equals(augConfig.get("elastic_deformation")));
                     }
+                }
+
+                // New intensity_aug_mode field (overrides legacy color_jitter if present)
+                if (ts.containsKey("intensity_aug_mode")) {
+                    String mode = String.valueOf(ts.get("intensity_aug_mode"));
+                    intensityAugCombo.setValue(mapIntensityModeToDisplay(mode));
                 }
             }
 
@@ -1355,15 +1364,22 @@ public class TrainingDialog {
                     "Beneficial when tissue structures have no preferred\n" +
                     "orientation. Combines well with flips for 8x augmentation.");
 
-            colorJitterCheck = new CheckBox("Color jitter");
-            colorJitterCheck.setSelected(DLClassifierPreferences.isAugColorJitter());
-            TooltipHelper.install(colorJitterCheck,
-                    "Randomly perturb brightness, contrast, and saturation.\n" +
-                    "Helps the model generalize across staining variations\n" +
-                    "and illumination differences between slides.\n\n" +
-                    "Recommended for H&E brightfield images.\n" +
-                    "May not be appropriate for fluorescence or quantitative\n" +
-                    "intensity-based classification.");
+            // Intensity augmentation mode (replaces color jitter checkbox)
+            Label intensityLabel = new Label("Intensity augmentation:");
+            intensityAugCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "None", "Brightfield (color jitter)", "Fluorescence (per-channel)"));
+            intensityAugCombo.setValue(mapIntensityModeToDisplay(DLClassifierPreferences.getAugIntensityMode()));
+            intensityAugCombo.setPrefWidth(220);
+            TooltipHelper.install(intensityAugCombo,
+                    "Intensity augmentation mode.\n\n" +
+                    "None: No intensity/color transforms.\n\n" +
+                    "Brightfield: Correlated brightness, contrast, and gamma\n" +
+                    "  across all channels. Recommended for H&E stained images.\n\n" +
+                    "Fluorescence: Independent random intensity scaling per channel.\n" +
+                    "  Recommended for fluorescence or multi-spectral images where\n" +
+                    "  each channel is an independent signal.");
+            HBox intensityRow = new HBox(10, intensityLabel, intensityAugCombo);
+            intensityRow.setAlignment(Pos.CENTER_LEFT);
 
             elasticCheck = new CheckBox("Elastic deformation");
             elasticCheck.setSelected(DLClassifierPreferences.isAugElasticDeform());
@@ -1380,7 +1396,7 @@ public class TrainingDialog {
                     flipHorizontalCheck,
                     flipVerticalCheck,
                     rotationCheck,
-                    colorJitterCheck,
+                    intensityRow,
                     elasticCheck
             );
 
@@ -1524,16 +1540,13 @@ public class TrainingDialog {
                                 channelImageData.getImageType(),
                                 channelImageData.getServer().nChannels());
 
-                        // Auto-disable color jitter for non-brightfield images
+                        // Auto-select appropriate intensity mode based on image type
                         if (!isBrightfield(channelImageData)) {
-                            colorJitterCheck.setSelected(false);
-                            colorJitterCheck.setDisable(true);
-                            TooltipHelper.install(colorJitterCheck,
-                                    "Color jitter is disabled for non-brightfield images.\n" +
-                                    "This augmentation perturbs brightness/contrast/saturation\n" +
-                                    "which could corrupt quantitative fluorescence intensity data.");
+                            // Fluorescence images default to per-channel mode
+                            intensityAugCombo.setValue("Fluorescence (per-channel)");
                         } else {
-                            colorJitterCheck.setDisable(false);
+                            // Brightfield images default to color jitter
+                            intensityAugCombo.setValue("Brightfield (color jitter)");
                         }
                     }
 
@@ -2009,7 +2022,7 @@ public class TrainingDialog {
             DLClassifierPreferences.setAugFlipHorizontal(flipHorizontalCheck.isSelected());
             DLClassifierPreferences.setAugFlipVertical(flipVerticalCheck.isSelected());
             DLClassifierPreferences.setAugRotation(rotationCheck.isSelected());
-            DLClassifierPreferences.setAugColorJitter(colorJitterCheck.isSelected());
+            DLClassifierPreferences.setAugIntensityMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()));
             DLClassifierPreferences.setAugElasticDeform(elasticCheck.isSelected());
 
             // Get frozen layers for transfer learning
@@ -2054,6 +2067,7 @@ public class TrainingDialog {
                     .downsample(parseDownsample(downsampleCombo.getValue()))
                     .contextScale(parseContextScale(contextScaleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
+                    .intensityAugMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()))
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
@@ -2098,9 +2112,30 @@ public class TrainingDialog {
             config.put("flip_horizontal", flipHorizontalCheck.isSelected());
             config.put("flip_vertical", flipVerticalCheck.isSelected());
             config.put("rotation_90", rotationCheck.isSelected());
-            config.put("color_jitter", colorJitterCheck.isSelected());
             config.put("elastic_deformation", elasticCheck.isSelected());
             return config;
+        }
+
+        /**
+         * Maps intensity augmentation mode from display string to config value.
+         */
+        private static String mapIntensityModeFromDisplay(String display) {
+            if (display == null) return "none";
+            if (display.startsWith("Brightfield")) return "brightfield";
+            if (display.startsWith("Fluorescence")) return "fluorescence";
+            return "none";
+        }
+
+        /**
+         * Maps intensity augmentation mode from config value to display string.
+         */
+        private static String mapIntensityModeToDisplay(String mode) {
+            if (mode == null) return "None";
+            return switch (mode) {
+                case "brightfield" -> "Brightfield (color jitter)";
+                case "fluorescence" -> "Fluorescence (per-channel)";
+                default -> "None";
+            };
         }
 
         /**
@@ -2210,6 +2245,7 @@ public class TrainingDialog {
                     .downsample(parseDownsample(downsampleCombo.getValue()))
                     .contextScale(parseContextScale(contextScaleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
+                    .intensityAugMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()))
                     .usePretrainedWeights(usePretrainedCheck.isSelected())
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())

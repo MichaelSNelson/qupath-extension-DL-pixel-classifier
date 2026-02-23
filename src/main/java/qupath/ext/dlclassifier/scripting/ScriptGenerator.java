@@ -175,6 +175,13 @@ public class ScriptGenerator {
             }
         }
 
+        // Intensity augmentation mode
+        if (config.getIntensityAugMode() != null
+                && !"none".equals(config.getIntensityAugMode())) {
+            appendLine(sb, "        .intensityAugMode("
+                    + quote(config.getIntensityAugMode()) + ")");
+        }
+
         // Augmentation config
         Map<String, Boolean> augConfig = config.getAugmentationConfig();
         if (augConfig != null && !augConfig.isEmpty()) {

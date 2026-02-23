@@ -720,7 +720,7 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         int tileSize = inferenceConfig.getTileSize();
-        int padding = computePhysicalOverlap(cal, tileSize);
+        int padding = computeOverlayPadding(tileSize);
 
         return new PixelClassifierMetadata.Builder()
                 .inputResolution(cal)
@@ -757,6 +757,25 @@ public class DLPixelClassifier implements PixelClassifier {
 
         // Clamp: at least minOverlap, at most tileSize/2
         return Math.max(minOverlap, Math.min(overlapPx, tileSize / 2));
+    }
+
+    /**
+     * Computes overlay tile padding from InferenceConfig overlap.
+     * <p>
+     * Uses the larger of the configured overlap and tileSize/4 to ensure
+     * sufficient CNN context for artifact-free tile boundaries.
+     * The tileSize/4 floor guarantees at least 25% padding even when the
+     * user sets a low overlap percentage.
+     *
+     * @param tileSize tile size in pixels
+     * @return padding in pixels (at least 64, at most tileSize/2)
+     */
+    private int computeOverlayPadding(int tileSize) {
+        int configOverlap = inferenceConfig.getOverlap();
+        int minContextPadding = tileSize / 4;  // 25% minimum padding
+        int padding = Math.max(configOverlap, minContextPadding);
+        // Clamp: at least 64, at most tileSize/2
+        return Math.max(64, Math.min(padding, tileSize / 2));
     }
 
     /**

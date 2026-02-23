@@ -99,6 +99,9 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty augColorJitter = PathPrefs.createPersistentPreference(
             "dlclassifier.augColorJitter", false);
 
+    private static final StringProperty augIntensityMode = PathPrefs.createPersistentPreference(
+            "dlclassifier.augIntensityMode", "none");
+
     private static final BooleanProperty augElasticDeform = PathPrefs.createPersistentPreference(
             "dlclassifier.augElasticDeform", false);
 
@@ -485,6 +488,18 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty augColorJitterProperty() {
         return augColorJitter;
+    }
+
+    public static String getAugIntensityMode() {
+        return augIntensityMode.get();
+    }
+
+    public static void setAugIntensityMode(String mode) {
+        augIntensityMode.set(mode);
+    }
+
+    public static StringProperty augIntensityModeProperty() {
+        return augIntensityMode;
     }
 
     public static boolean isAugElasticDeform() {

@@ -1192,6 +1192,9 @@ public class TrainingWorkflow {
         settings.put("early_stopping_patience", config.getEarlyStoppingPatience());
         settings.put("mixed_precision", config.isMixedPrecision());
         settings.put("augmentation_config", config.getAugmentationConfig());
+        if (config.getIntensityAugMode() != null) {
+            settings.put("intensity_aug_mode", config.getIntensityAugMode());
+        }
         if (!config.getClassWeightMultipliers().isEmpty()) {
             settings.put("class_weight_multipliers", config.getClassWeightMultipliers());
         }
