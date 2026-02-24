@@ -254,6 +254,82 @@ pause_watcher.start()
 # Extract frozen layers from architecture dict (Java puts them there)
 frozen_layers = architecture.get("frozen_layers", None)
 
+# Pretrained weight loading is inlined here rather than passed to
+# training_service.train(), because the installed pip package may be stale
+# (Appose caches pip installs and doesn't reinstall on git push).
+# This script is loaded from JAR resources every run, so it's always current.
+_pretrained_patched_class = None
+_pretrained_orig_frozen = None
+
+if pretrained_model_path and not checkpoint_path:
+    _pretrained_applied = [False]
+
+    def _load_pretrained_weights(model):
+        """Load weights from a previously trained model onto the new model."""
+        if _pretrained_applied[0]:
+            return model
+        _pretrained_applied[0] = True
+        try:
+            logger.info("Loading pretrained weights from: %s", pretrained_model_path)
+            saved = torch.load(pretrained_model_path, map_location='cpu',
+                               weights_only=True)
+
+            # Handle both bare state_dict and checkpoint format
+            if isinstance(saved, dict) and "model_state_dict" in saved:
+                state_dict = saved["model_state_dict"]
+            else:
+                state_dict = saved
+
+            # Detect shape mismatches (e.g. different class count) and skip those keys
+            model_state = model.state_dict()
+            matched = {}
+            mismatched = []
+            for key in state_dict:
+                if key in model_state:
+                    if state_dict[key].shape == model_state[key].shape:
+                        matched[key] = state_dict[key]
+                    else:
+                        mismatched.append(key)
+                        logger.warning("  Shape mismatch for '%s': "
+                                       "pretrained=%s vs model=%s -- skipping",
+                                       key, list(state_dict[key].shape),
+                                       list(model_state[key].shape))
+
+            model.load_state_dict(matched, strict=False)
+            logger.info("Loaded %d/%d weight tensors from pretrained model",
+                        len(matched), len(model_state))
+            if mismatched:
+                logger.info("  Skipped %d mismatched keys "
+                            "(likely segmentation head due to class count change)",
+                            len(mismatched))
+        except Exception as e:
+            logger.warning("Failed to load pretrained weights: %s -- "
+                           "training will start from scratch", e)
+        return model
+
+    # Monkey-patch _create_model on the instance so weights are loaded
+    # right after model creation (before to(device) in _run_training)
+    _orig_create = training_service._create_model
+    def _create_with_pretrained(*args, **kwargs):
+        return _load_pretrained_weights(_orig_create(*args, **kwargs))
+    training_service._create_model = _create_with_pretrained
+
+    # Also patch the frozen-layers model creation path (different code path
+    # in _run_training that bypasses _create_model)
+    if frozen_layers:
+        try:
+            from dlclassifier_server.services.pretrained_models import \
+                PretrainedModelsService as _PMS
+            _pretrained_orig_frozen = _PMS.create_model_with_frozen_layers
+            _pretrained_patched_class = _PMS
+            def _frozen_with_pretrained(self, *args, **kwargs):
+                return _load_pretrained_weights(
+                    _pretrained_orig_frozen(self, *args, **kwargs))
+            _PMS.create_model_with_frozen_layers = _frozen_with_pretrained
+        except Exception as e:
+            logger.warning("Could not patch frozen-layers path for "
+                           "pretrained weights: %s", e)
+
 try:
     result = training_service.train(
         model_type=model_type,
@@ -268,8 +344,7 @@ try:
         pause_flag=pause_flag,
         checkpoint_path=checkpoint_path,
         start_epoch=start_epoch,
-        setup_callback=setup_callback,
-        pretrained_model_path=pretrained_model_path
+        setup_callback=setup_callback
     )
 except Exception as e:
     logger.error("Training failed: %s", e)
@@ -278,6 +353,9 @@ finally:
     # Signal watchers to stop so daemon threads terminate cleanly
     cancel_flag.set()
     pause_flag.set()
+    # Restore class-level patches (Python process persists across Appose tasks)
+    if _pretrained_patched_class is not None and _pretrained_orig_frozen is not None:
+        _pretrained_patched_class.create_model_with_frozen_layers = _pretrained_orig_frozen
 
 status = result.get("status", "completed")
 task.outputs["status"] = status
