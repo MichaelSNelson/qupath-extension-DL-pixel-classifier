@@ -20,9 +20,34 @@ logger = logging.getLogger("dlclassifier.appose.finalize")
 if inference_service is None:
     raise RuntimeError("Services not initialized: " + globals().get("init_error", "unknown"))
 
+try:
+    model_output_dir
+except NameError:
+    model_output_dir = None
+
 from dlclassifier_server.services.training_service import TrainingService
 
 training_service = TrainingService(gpu_manager=gpu_manager)
+
+# Redirect model saving to project directory when specified
+if model_output_dir:
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    _orig_save_model = training_service._save_model
+
+    def _redirected_save_model(*args, **kwargs):
+        orig_path = _orig_save_model(*args, **kwargs)
+        dst = _Path(model_output_dir)
+        dst.mkdir(parents=True, exist_ok=True)
+        src = _Path(orig_path)
+        for item in src.iterdir():
+            _shutil.move(str(item), str(dst / item.name))
+        _shutil.rmtree(str(src), ignore_errors=True)
+        logger.info("Moved finalized model to project: %s", dst)
+        return str(dst)
+
+    training_service._save_model = _redirected_save_model
 
 logger.info("Loading checkpoint: %s", checkpoint_path)
 checkpoint = torch.load(checkpoint_path, map_location=training_service.device, weights_only=False)

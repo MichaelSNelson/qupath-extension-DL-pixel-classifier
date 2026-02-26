@@ -59,6 +59,11 @@ try:
 except NameError:
     pretrained_model_path = None
 
+try:
+    model_output_dir
+except NameError:
+    model_output_dir = None
+
 # Import training service (heavier import, done here rather than init)
 from dlclassifier_server.services.training_service import TrainingService
 import dlclassifier_server.services.training_service as _tsm
@@ -138,6 +143,42 @@ def _safe_getitem(self, idx):
 _tsm.SegmentationDataset.__getitem__ = _safe_getitem
 
 training_service = TrainingService(gpu_manager=gpu_manager)
+
+# Redirect model and checkpoint saving to project directory when specified.
+# This calls the original pip package methods (ONNX export, metadata writing, etc.)
+# then moves all output files to the project directory.
+if model_output_dir:
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    _orig_save_model = training_service._save_model
+
+    def _redirected_save_model(*args, **kwargs):
+        orig_path = _orig_save_model(*args, **kwargs)
+        dst = _Path(model_output_dir)
+        dst.mkdir(parents=True, exist_ok=True)
+        src = _Path(orig_path)
+        for item in src.iterdir():
+            _shutil.move(str(item), str(dst / item.name))
+        _shutil.rmtree(str(src), ignore_errors=True)
+        logger.info("Moved model files to project: %s", dst)
+        return str(dst)
+
+    training_service._save_model = _redirected_save_model
+
+    _orig_save_ckpt = training_service._save_checkpoint
+
+    def _redirected_save_checkpoint(*args, **kwargs):
+        orig_path = _orig_save_ckpt(*args, **kwargs)
+        dst_dir = _Path(model_output_dir)
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        src = _Path(orig_path)
+        dst = dst_dir / src.name
+        _shutil.move(str(src), str(dst))
+        logger.info("Moved checkpoint to project: %s", dst)
+        return str(dst)
+
+    training_service._save_checkpoint = _redirected_save_checkpoint
 
 # Log device and training configuration for diagnostics
 import torch

@@ -181,6 +181,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             inputs.put("pretrained_model_path", trainingConfig.getPretrainedModelPath());
         }
 
+        // Project-local model output directory
+        if (trainingConfig.getModelOutputDir() != null) {
+            inputs.put("model_output_dir", trainingConfig.getModelOutputDir());
+        }
+
         // Generate a synthetic job ID for Appose-based training
         String jobId = "appose-" + System.currentTimeMillis();
         inputs.put("pause_signal_path", getPauseSignalPath(jobId).toString());
@@ -299,9 +304,18 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     @Override
     public ClassifierClient.TrainingResult finalizeTraining(String checkpointPath) throws IOException {
+        return finalizeTraining(checkpointPath, null);
+    }
+
+    @Override
+    public ClassifierClient.TrainingResult finalizeTraining(String checkpointPath,
+            String modelOutputDir) throws IOException {
         ApposeService appose = ApposeService.getInstance();
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("checkpoint_path", checkpointPath);
+        if (modelOutputDir != null) {
+            inputs.put("model_output_dir", modelOutputDir);
+        }
 
         ClassLoader extensionCL = ApposeService.class.getClassLoader();
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();

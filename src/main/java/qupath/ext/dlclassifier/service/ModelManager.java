@@ -283,20 +283,23 @@ public class ModelManager {
      * @throws IOException if saving fails
      */
     public Path saveClassifier(ClassifierMetadata metadata, Path modelPath) throws IOException {
-        return saveClassifier(metadata, modelPath, true);
+        return saveClassifier(metadata, modelPath, true, false);
     }
 
     /**
      * Saves a classifier to the project.
      *
-     * @param metadata    classifier metadata
-     * @param modelPath   path to the model file
-     * @param toProject   true to save to project, false for user directory
+     * @param metadata          classifier metadata
+     * @param modelPath         path to the model file or directory
+     * @param toProject         true to save to project, false for user directory
+     * @param filesAlreadyInPlace true if model files were saved directly to the
+     *                          project directory by the Python training scripts
+     *                          (skips the copy step -- only writes metadata)
      * @return path to the saved classifier
      * @throws IOException if saving fails
      */
-    public Path saveClassifier(ClassifierMetadata metadata, Path modelPath, boolean toProject)
-            throws IOException {
+    public Path saveClassifier(ClassifierMetadata metadata, Path modelPath,
+            boolean toProject, boolean filesAlreadyInPlace) throws IOException {
         // Determine target directory
         Path targetDir;
         if (toProject) {
@@ -313,8 +316,8 @@ public class ModelManager {
 
         Files.createDirectories(targetDir);
 
-        // Copy model files
-        if (Files.exists(modelPath)) {
+        // Copy model files (skip when files were saved directly to project dir)
+        if (!filesAlreadyInPlace && Files.exists(modelPath)) {
             if (Files.isDirectory(modelPath)) {
                 // Copy entire directory
                 try (Stream<Path> paths = Files.walk(modelPath)) {
@@ -324,7 +327,7 @@ public class ModelManager {
                             if (Files.isDirectory(src)) {
                                 Files.createDirectories(dest);
                             } else {
-                                Files.copy(src, dest);
+                                Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING);
                             }
                         } catch (IOException e) {
                             logger.warn("Failed to copy {}: {}", src, e.getMessage());
@@ -333,7 +336,8 @@ public class ModelManager {
                 }
             } else {
                 // Copy single file
-                Files.copy(modelPath, targetDir.resolve(modelPath.getFileName()));
+                Files.copy(modelPath, targetDir.resolve(modelPath.getFileName()),
+                        StandardCopyOption.REPLACE_EXISTING);
             }
         }
 

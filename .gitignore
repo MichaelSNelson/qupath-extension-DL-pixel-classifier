@@ -47,3 +47,6 @@ Thumbs.db
 
 # Codemap (generated)
 codemap/
+
+# Claude Code session scope
+CLAUDE.md

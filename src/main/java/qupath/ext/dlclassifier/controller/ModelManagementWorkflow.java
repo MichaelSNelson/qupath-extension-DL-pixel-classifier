@@ -327,14 +327,51 @@ public class ModelManagementWorkflow {
         fileHeader.setStyle("-fx-font-weight: bold;");
         detailsPane.getChildren().add(fileHeader);
 
-        Optional<Path> modelPath = modelManager.getModelPath(metadata.getId());
-        if (modelPath.isPresent()) {
-            Path path = modelPath.get();
-            String fileType = path.getFileName().toString().endsWith(".onnx") ? "ONNX" : "PyTorch";
-            Label pathLabel = new Label(fileType + ": " + path.getParent().toString());
+        Optional<Path> modelPathOpt = modelManager.getModelPath(metadata.getId());
+        if (modelPathOpt.isPresent()) {
+            Path dir = modelPathOpt.get().getParent();
+
+            GridPane fileGrid = new GridPane();
+            fileGrid.setHgap(10);
+            fileGrid.setVgap(5);
+            int fileRow = 0;
+
+            // Show each model file with size
+            Path ptPath = dir.resolve("model.pt");
+            Path onnxPath = dir.resolve("model.onnx");
+            try {
+                if (Files.exists(ptPath)) {
+                    long sizeMB = Files.size(ptPath) / (1024 * 1024);
+                    addDetailRow(fileGrid, fileRow++, "PyTorch:", "model.pt (" + sizeMB + " MB)");
+                }
+                if (Files.exists(onnxPath)) {
+                    long sizeMB = Files.size(onnxPath) / (1024 * 1024);
+                    addDetailRow(fileGrid, fileRow++, "ONNX:", "model.onnx (" + sizeMB + " MB)");
+                }
+            } catch (IOException e) {
+                logger.warn("Could not read model file sizes: {}", e.getMessage());
+            }
+
+            if (fileRow > 0) {
+                detailsPane.getChildren().add(fileGrid);
+            }
+
+            // Directory path (selectable)
+            Label pathLabel = new Label(dir.toString());
             pathLabel.setWrapText(true);
             pathLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
             detailsPane.getChildren().add(pathLabel);
+
+            // Open Folder button
+            Button openFolderBtn = new Button("Open Folder");
+            openFolderBtn.setOnAction(e -> {
+                try {
+                    java.awt.Desktop.getDesktop().open(dir.toFile());
+                } catch (Exception ex) {
+                    logger.warn("Failed to open folder: {}", ex.getMessage());
+                }
+            });
+            detailsPane.getChildren().add(openFolderBtn);
         } else {
             Label noModelLabel = new Label("Model file not found");
             noModelLabel.setStyle("-fx-text-fill: #c00;");

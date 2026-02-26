@@ -65,6 +65,11 @@ public class TrainingConfig {
     // Continue training: path to a previously trained model's .pt file to load weights from
     private final String pretrainedModelPath;
 
+    // Transient runtime field: project-local directory for model output.
+    // Not part of equals/hashCode/builder -- set at runtime by TrainingWorkflow
+    // to redirect model saving directly into the project's classifiers directory.
+    private String modelOutputDir;
+
     private TrainingConfig(Builder builder) {
         this.modelType = builder.modelType;
         this.backbone = builder.backbone;
@@ -318,6 +323,28 @@ public class TrainingConfig {
      */
     public String getPretrainedModelPath() {
         return pretrainedModelPath;
+    }
+
+    /**
+     * Gets the project-local model output directory.
+     * <p>
+     * When set, Python training scripts save model files directly to this
+     * directory instead of the default {@code ~/.dlclassifier/models/}.
+     * This is a transient runtime field set by {@code TrainingWorkflow}.
+     *
+     * @return model output directory path, or null if using default location
+     */
+    public String getModelOutputDir() {
+        return modelOutputDir;
+    }
+
+    /**
+     * Sets the project-local model output directory.
+     *
+     * @param modelOutputDir directory path, or null to use default location
+     */
+    public void setModelOutputDir(String modelOutputDir) {
+        this.modelOutputDir = modelOutputDir;
     }
 
     /**

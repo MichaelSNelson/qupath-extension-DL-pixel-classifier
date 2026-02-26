@@ -17,6 +17,7 @@ import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.utilities.AnnotationExtractor;
@@ -388,6 +389,30 @@ public class TrainingWorkflow {
             logger.debug("Could not check GPU status: {}", e.getMessage());
         }
 
+        // Generate classifierId early so model files can be saved directly
+        // to the project directory during training (not just at the end).
+        String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                + "_" + System.currentTimeMillis();
+
+        // Create project-local model output directory
+        Path modelOutputDir = null;
+        try {
+            var project = qupath.getProject();
+            if (project != null) {
+                modelOutputDir = project.getPath().getParent()
+                        .resolve("classifiers/dl")
+                        .resolve(classifierId);
+                Files.createDirectories(modelOutputDir);
+                trainingConfig.setModelOutputDir(modelOutputDir.toString());
+                logger.info("Model output directory: {}", modelOutputDir);
+            }
+        } catch (IOException e) {
+            logger.warn("Could not create project model directory, using default: {}", e.getMessage());
+        }
+        // Capture for use in closures
+        final Path finalModelOutputDir = modelOutputDir;
+        final String finalClassifierId = classifierId;
+
         // Create progress monitor
         ProgressMonitorController progress = ProgressMonitorController.forTraining();
         if (classColors != null && !classColors.isEmpty()) {
@@ -412,20 +437,22 @@ public class TrainingWorkflow {
             }
         });
 
-        // Wire resume callback
+        // Wire resume callback -- uses the SAME classifierId/modelOutputDir
         progress.setOnResume(v -> {
             CompletableFuture.runAsync(() -> handleResume(
                     currentJobId[0], classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
-                    selectedImages, progress, currentJobId));
+                    selectedImages, progress, currentJobId,
+                    finalClassifierId, finalModelOutputDir));
         });
 
-        // Wire complete-early callback (save best model from checkpoint)
+        // Wire complete-early callback -- uses the SAME classifierId/modelOutputDir
         progress.setOnCompleteEarly(v -> {
             CompletableFuture.runAsync(() -> handleCompleteEarly(
                     currentJobId[0], classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
-                    selectedImages, progress, classColors));
+                    selectedImages, progress, classColors,
+                    finalClassifierId, finalModelOutputDir));
         });
 
         // Suspend overlay during training to prevent Appose "thread death" races
@@ -438,7 +465,7 @@ public class TrainingWorkflow {
                 TrainingResult result = trainCore(classifierName, description, handler,
                         trainingConfig, channelConfig, classNames,
                         null, selectedImages, progress, currentJobId,
-                        classColors);
+                        classColors, finalClassifierId, finalModelOutputDir);
 
                 if (result.success()) {
                     progress.complete(true, String.format(
@@ -515,6 +542,42 @@ public class TrainingWorkflow {
                                     ProgressMonitorController progress,
                                     String[] jobIdHolder,
                                     Map<String, Integer> classColors) {
+        return trainCore(classifierName, description, handler, trainingConfig,
+                channelConfig, classNames, imageData, selectedImages, progress,
+                jobIdHolder, classColors, null, null);
+    }
+
+    /**
+     * Core training logic shared by GUI and headless paths.
+     *
+     * @param classifierName  name for the classifier
+     * @param description     classifier description
+     * @param handler         the classifier handler
+     * @param trainingConfig  training configuration
+     * @param channelConfig   channel configuration
+     * @param classNames      list of class names
+     * @param imageData       image data for extracting training patches (single-image mode)
+     * @param selectedImages  project images for multi-image training, or null for single-image
+     * @param progress        progress monitor (nullable for headless execution)
+     * @param jobIdHolder     optional array to receive the job ID (element 0 is set)
+     * @param classColors     map of class name to packed RGB color, or null
+     * @param classifierId    pre-generated classifier ID, or null to generate at save time
+     * @param modelOutputDir  project-local model output directory, or null for default
+     * @return the training result
+     */
+    static TrainingResult trainCore(String classifierName,
+                                    String description,
+                                    ClassifierHandler handler,
+                                    TrainingConfig trainingConfig,
+                                    ChannelConfiguration channelConfig,
+                                    List<String> classNames,
+                                    ImageData<BufferedImage> imageData,
+                                    List<ProjectImageEntry<BufferedImage>> selectedImages,
+                                    ProgressMonitorController progress,
+                                    String[] jobIdHolder,
+                                    Map<String, Integer> classColors,
+                                    String classifierId,
+                                    Path modelOutputDir) {
         Path tempDir = null;
         try {
             if (progress != null) {
@@ -524,8 +587,15 @@ public class TrainingWorkflow {
             logger.info("Starting training for classifier: {}", classifierName);
             if (progress != null) progress.log("Starting training for classifier: " + classifierName);
 
-            // Export training data
-            tempDir = Files.createTempDirectory("dl-training");
+            // Export training data (use configured export directory if set)
+            String exportDirPref = DLClassifierPreferences.getTrainingExportDir();
+            if (exportDirPref != null && !exportDirPref.isEmpty()) {
+                Path exportBase = Path.of(exportDirPref);
+                Files.createDirectories(exportBase);
+                tempDir = Files.createTempDirectory(exportBase, "dl-training");
+            } else {
+                tempDir = Files.createTempDirectory("dl-training");
+            }
             logger.info("Exporting training data to: {}", tempDir);
             if (progress != null) progress.log("Export directory: " + tempDir);
 
@@ -699,13 +769,15 @@ public class TrainingWorkflow {
             // Build and save metadata
             if (progress != null) progress.setStatus("Saving classifier...");
 
-            String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") +
-                    "_" + System.currentTimeMillis();
+            // Use pre-generated classifierId if provided (GUI path), otherwise generate
+            String effectiveId = classifierId != null ? classifierId
+                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                      + "_" + System.currentTimeMillis();
 
             List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
 
             ClassifierMetadata metadata = ClassifierMetadata.builder()
-                    .id(classifierId)
+                    .id(effectiveId)
                     .name(classifierName)
                     .description(description)
                     .modelType(trainingConfig.getModelType())
@@ -724,13 +796,16 @@ public class TrainingWorkflow {
                     .trainingSettings(buildTrainingSettingsMap(trainingConfig))
                     .build();
 
-            // Save the classifier
+            // Save the classifier. When modelOutputDir is set, files are already
+            // in the project directory -- skip the copy step.
+            boolean filesInPlace = modelOutputDir != null;
             ModelManager modelManager = new ModelManager();
-            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()));
+            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
+                    true, filesInPlace);
             if (progress != null) progress.log("Classifier saved: " + metadata.getId());
 
             return new TrainingResult(
-                    classifierId,
+                    effectiveId,
                     classifierName,
                     serverResult.finalLoss(),
                     serverResult.finalAccuracy(),
@@ -744,6 +819,10 @@ public class TrainingWorkflow {
         } catch (Exception e) {
             logger.error("Training failed", e);
             if (progress != null) progress.log("ERROR: " + e.getMessage());
+            // Clean up partial model directory on failure
+            if (modelOutputDir != null) {
+                cleanupTempDir(modelOutputDir);
+            }
             return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
                     "Training failed: " + e.getMessage());
         } finally {
@@ -783,7 +862,9 @@ public class TrainingWorkflow {
                               List<String> classNames,
                               List<ProjectImageEntry<BufferedImage>> selectedImages,
                               ProgressMonitorController progress,
-                              String[] currentJobId) {
+                              String[] currentJobId,
+                              String classifierId,
+                              Path modelOutputDir) {
         Path tempDir = null;
         try {
             // 1. Check for unsaved changes (on FX thread)
@@ -818,7 +899,14 @@ public class TrainingWorkflow {
             progress.setStatus("Re-exporting training data...");
             progress.log("Re-exporting annotations (includes any new/modified annotations)...");
 
-            tempDir = Files.createTempDirectory("dl-training-resume");
+            String exportDirPref = DLClassifierPreferences.getTrainingExportDir();
+            if (exportDirPref != null && !exportDirPref.isEmpty()) {
+                Path exportBase = Path.of(exportDirPref);
+                Files.createDirectories(exportBase);
+                tempDir = Files.createTempDirectory(exportBase, "dl-training-resume");
+            } else {
+                tempDir = Files.createTempDirectory("dl-training-resume");
+            }
             Map<String, Double> resumeMultipliers = trainingConfig.getClassWeightMultipliers();
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
@@ -925,13 +1013,15 @@ public class TrainingWorkflow {
             } else {
                 // Completed -- save the classifier
                 progress.setStatus("Saving classifier...");
-                String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") +
-                        "_" + System.currentTimeMillis();
+                // Use the same classifierId from the initial training
+                String effectiveId = classifierId != null ? classifierId
+                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                          + "_" + System.currentTimeMillis();
 
                 List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, null);
 
                 ClassifierMetadata metadata = ClassifierMetadata.builder()
-                        .id(classifierId)
+                        .id(effectiveId)
                         .name(classifierName)
                         .description(description)
                         .modelType(trainingConfig.getModelType())
@@ -950,8 +1040,10 @@ public class TrainingWorkflow {
                         .trainingSettings(buildTrainingSettingsMap(trainingConfig))
                         .build();
 
+                boolean filesInPlace = modelOutputDir != null;
                 ModelManager modelManager = new ModelManager();
-                modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()));
+                modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
+                        true, filesInPlace);
                 progress.log("Classifier saved: " + metadata.getId());
 
                 progress.complete(true, String.format(
@@ -984,7 +1076,9 @@ public class TrainingWorkflow {
                                      List<String> classNames,
                                      List<ProjectImageEntry<BufferedImage>> selectedImages,
                                      ProgressMonitorController progress,
-                                     Map<String, Integer> classColors) {
+                                     Map<String, Integer> classColors,
+                                     String classifierId,
+                                     Path modelOutputDir) {
         try {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
@@ -1001,8 +1095,9 @@ public class TrainingWorkflow {
             progress.setStatus("Finalizing model from checkpoint...");
             progress.log("Loading best model from checkpoint...");
 
+            String modelOutputDirStr = modelOutputDir != null ? modelOutputDir.toString() : null;
             ClassifierClient.TrainingResult serverResult =
-                    apposeBackend.finalizeTraining(checkpoint.path());
+                    apposeBackend.finalizeTraining(checkpoint.path(), modelOutputDirStr);
 
             if (serverResult.modelPath() == null || serverResult.modelPath().isEmpty()) {
                 progress.complete(false, "Failed to save model from checkpoint");
@@ -1011,13 +1106,14 @@ public class TrainingWorkflow {
 
             // Save metadata (same pattern as normal completion)
             progress.setStatus("Saving classifier...");
-            String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                    + "_" + System.currentTimeMillis();
+            String effectiveId = classifierId != null ? classifierId
+                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                      + "_" + System.currentTimeMillis();
 
             List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
 
             ClassifierMetadata metadata = ClassifierMetadata.builder()
-                    .id(classifierId)
+                    .id(effectiveId)
                     .name(classifierName)
                     .description(description)
                     .modelType(trainingConfig.getModelType())
@@ -1036,8 +1132,10 @@ public class TrainingWorkflow {
                     .trainingSettings(buildTrainingSettingsMap(trainingConfig))
                     .build();
 
+            boolean filesInPlace = modelOutputDir != null;
             ModelManager modelManager = new ModelManager();
-            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()));
+            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
+                    true, filesInPlace);
             progress.log("Classifier saved: " + metadata.getId());
 
             progress.complete(true, String.format(

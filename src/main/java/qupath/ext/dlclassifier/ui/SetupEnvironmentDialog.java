@@ -5,7 +5,6 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.HBox;
@@ -46,7 +45,6 @@ public class SetupEnvironmentDialog {
     private VBox contentBox;
     private Label statusLabel;
     private ProgressBar progressBar;
-    private CheckBox onnxCheckBox;
     private Button beginButton;
     private Button cancelButton;
     private Button retryButton;
@@ -104,18 +102,6 @@ public class SetupEnvironmentDialog {
         meteredLabel.setWrapText(true);
         meteredLabel.setStyle("-fx-font-style: italic;");
 
-        // Optional components section
-        Label optionalLabel = new Label("Optional components:");
-        optionalLabel.setFont(Font.font(null, FontWeight.BOLD, 12));
-
-        onnxCheckBox = new CheckBox(res.getString("setup.onnxOption"));
-        onnxCheckBox.setSelected(true);
-
-        Label onnxDescLabel = new Label(res.getString("setup.onnxDescription"));
-        onnxDescLabel.setWrapText(true);
-        onnxDescLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666666;");
-        onnxDescLabel.setPadding(new Insets(0, 0, 0, 24));
-
         // Environment location
         Label envLocLabel = new Label(res.getString("setup.envLocation"));
         envLocLabel.setFont(Font.font(null, FontWeight.BOLD, 12));
@@ -144,9 +130,6 @@ public class SetupEnvironmentDialog {
                 descLabel,
                 downloadLabel,
                 meteredLabel,
-                optionalLabel,
-                onnxCheckBox,
-                onnxDescLabel,
                 envLocLabel,
                 envPathLabel,
                 buttonBox
@@ -295,19 +278,18 @@ public class SetupEnvironmentDialog {
     // ==================== Setup Execution ====================
 
     private void startSetup() {
-        boolean includeOnnx = onnxCheckBox != null && onnxCheckBox.isSelected();
-
         showInProgressView();
 
         Thread setupThread = new Thread(() -> {
             try {
+                // ONNX is always included -- required for model export
                 ApposeService.getInstance().initialize(
                         status -> Platform.runLater(() -> {
                             if (statusLabel != null) {
                                 statusLabel.setText(status);
                             }
                         }),
-                        includeOnnx
+                        true
                 );
 
                 Platform.runLater(() -> {

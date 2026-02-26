@@ -111,6 +111,20 @@ public interface ClassifierBackend {
      */
     ClassifierClient.TrainingResult finalizeTraining(String checkpointPath) throws IOException;
 
+    /**
+     * Finalizes training from a saved checkpoint, saving model files directly
+     * to the specified project directory.
+     *
+     * @param checkpointPath path to the training checkpoint file
+     * @param modelOutputDir project-local directory for model output, or null for default
+     * @return training result with the saved model path and best metrics
+     * @throws IOException if finalization fails
+     */
+    default ClassifierClient.TrainingResult finalizeTraining(String checkpointPath,
+            String modelOutputDir) throws IOException {
+        return finalizeTraining(checkpointPath);
+    }
+
     // ==================== Inference ====================
 
     /**

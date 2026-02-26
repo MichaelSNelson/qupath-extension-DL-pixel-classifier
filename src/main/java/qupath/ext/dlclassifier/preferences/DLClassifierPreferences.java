@@ -115,6 +115,10 @@ public final class DLClassifierPreferences {
     private static final IntegerProperty lastLineStrokeWidth = PathPrefs.createPersistentPreference(
             "dlclassifier.lastLineStrokeWidth", 0);
 
+    // Training data export directory (empty = system temp)
+    private static final StringProperty trainingExportDir = PathPrefs.createPersistentPreference(
+            "dlclassifier.trainingExportDir", "");
+
     // ==================== Training Strategy Preferences ====================
 
     private static final StringProperty defaultScheduler = PathPrefs.createPersistentPreference(
@@ -195,6 +199,14 @@ public final class DLClassifierPreferences {
                 .category(CATEGORY)
                 .description("Use GPU acceleration for inference when available. " +
                         "Falls back to CPU if no GPU is detected.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(trainingExportDir, String.class)
+                .name("Training Data Export Directory")
+                .category(CATEGORY)
+                .description("Directory for exporting training data patches. " +
+                        "If empty, the system temporary directory is used. " +
+                        "Set to a directory on a larger drive if temp space is limited.")
                 .build());
     }
 
@@ -390,6 +402,20 @@ public final class DLClassifierPreferences {
 
     public static StringProperty defaultNormalizationProperty() {
         return defaultNormalization;
+    }
+
+    // ==================== Training Export Directory ====================
+
+    public static String getTrainingExportDir() {
+        return trainingExportDir.get();
+    }
+
+    public static void setTrainingExportDir(String dir) {
+        trainingExportDir.set(dir);
+    }
+
+    public static StringProperty trainingExportDirProperty() {
+        return trainingExportDir;
     }
 
     // ==================== Training Dialog Preferences ====================
