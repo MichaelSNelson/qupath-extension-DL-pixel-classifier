@@ -5,6 +5,7 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.gui.viewer.overlays.PixelClassificationOverlay;
@@ -59,17 +60,20 @@ public class OverlayService {
     }
 
     /**
-     * Applies a DL pixel classifier as a native QuPath overlay.
+     * Applies a pixel classifier as a native QuPath overlay.
      * <p>
      * This creates a {@link PixelClassificationOverlay} from the classifier
-     * and sets it on all viewers displaying the given image. Tiles are
-     * classified on demand as the user navigates.
+     * and sets it on all viewers displaying the given image.
+     * <p>
+     * For {@link DLPixelClassifier}, tiles are classified on demand as
+     * the user navigates. For {@link PrecomputedPixelClassifier}, pre-computed
+     * blended classification data is served from memory.
      *
      * @param imageData  the image data to overlay
-     * @param classifier the DL pixel classifier
+     * @param classifier the pixel classifier (DLPixelClassifier or PrecomputedPixelClassifier)
      */
     public void applyClassifierOverlay(ImageData<BufferedImage> imageData,
-                                        DLPixelClassifier classifier) {
+                                        PixelClassifier classifier) {
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) {
             logger.warn("QuPath GUI not available - cannot apply overlay");
@@ -96,9 +100,14 @@ public class OverlayService {
         }
 
         this.currentOverlay = overlay;
-        this.currentClassifier = classifier;
+        // Store DLPixelClassifier specifically for shutdown/cleanup
+        if (classifier instanceof DLPixelClassifier dlc) {
+            this.currentClassifier = dlc;
+        } else {
+            this.currentClassifier = null;
+        }
         livePrediction.set(true);
-        logger.info("Applied DL pixel classifier overlay");
+        logger.info("Applied pixel classifier overlay");
     }
 
     /**

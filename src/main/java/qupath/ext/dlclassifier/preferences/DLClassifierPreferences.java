@@ -139,7 +139,7 @@ public final class DLClassifierPreferences {
     // ==================== Inference Dialog Preferences ====================
 
     private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastOutputType", "MEASUREMENTS");
+            "dlclassifier.lastOutputType", "RENDERED_OVERLAY");
 
     private static final StringProperty lastBlendMode = PathPrefs.createPersistentPreference(
             "dlclassifier.lastBlendMode", "LINEAR");

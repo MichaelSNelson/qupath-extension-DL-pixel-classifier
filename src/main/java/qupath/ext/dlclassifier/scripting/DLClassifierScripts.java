@@ -114,6 +114,7 @@ public class DLClassifierScripts {
         InferenceConfig.OutputType outType = switch (outputType.toLowerCase()) {
             case "objects" -> InferenceConfig.OutputType.OBJECTS;
             case "overlay" -> InferenceConfig.OutputType.OVERLAY;
+            case "rendered_overlay" -> InferenceConfig.OutputType.RENDERED_OVERLAY;
             default -> InferenceConfig.OutputType.MEASUREMENTS;
         };
 

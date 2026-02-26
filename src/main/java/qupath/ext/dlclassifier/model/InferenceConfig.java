@@ -31,7 +31,9 @@ public class InferenceConfig {
         /** Create detection objects from classification */
         OBJECTS,
         /** Create a classification overlay for visualization */
-        OVERLAY
+        OVERLAY,
+        /** Batch-computed overlay with tile blending -- matches OBJECTS quality */
+        RENDERED_OVERLAY
     }
 
     /**

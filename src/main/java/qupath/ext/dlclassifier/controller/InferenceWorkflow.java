@@ -14,6 +14,7 @@ import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.service.PrecomputedPixelClassifier;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.utilities.BitDepthConverter;
@@ -21,12 +22,19 @@ import qupath.ext.dlclassifier.utilities.ChannelNormalizer;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
 import qupath.ext.dlclassifier.utilities.TileProcessor;
 import qupath.fx.dialogs.Dialogs;
+import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
+import qupath.lib.common.ColorTools;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.scripting.QP;
 import qupath.lib.images.ImageData;
+import qupath.lib.images.servers.ImageChannel;
 import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.ImageServerMetadata;
+import qupath.lib.images.servers.PixelCalibration;
+import qupath.lib.images.servers.PixelType;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
+import qupath.lib.objects.classes.PathClass;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.ROIs;
@@ -38,6 +46,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.DataBufferByte;
 import java.awt.image.DataBufferInt;
+import java.awt.image.IndexColorModel;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -48,6 +57,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -254,8 +264,9 @@ public class InferenceWorkflow {
                 imgData.getHierarchy().fireHierarchyChangedEvent(
                         imgData.getHierarchy().getRootObject());
 
-                // Add workflow step for reproducibility (not for OVERLAY -- visual only)
-                if (config.getOutputType() != InferenceConfig.OutputType.OVERLAY) {
+                // Add workflow step for reproducibility (not for visual-only overlay modes)
+                if (config.getOutputType() != InferenceConfig.OutputType.OVERLAY
+                        && config.getOutputType() != InferenceConfig.OutputType.RENDERED_OVERLAY) {
                     addWorkflowStep(imgData, classifier, config);
                 }
 
@@ -424,6 +435,39 @@ public class InferenceWorkflow {
                 ClassifierBackend backend = BackendFactory.getBackend();
                 progress.log("Connected to classification backend");
 
+                // Detect rendered overlay mode
+                boolean isRenderedOverlay = inferenceConfig.getOutputType()
+                        == InferenceConfig.OutputType.RENDERED_OVERLAY;
+                List<PrecomputedPixelClassifier.ClassifiedRegion> classifiedRegions =
+                        isRenderedOverlay ? new ArrayList<>() : null;
+
+                // Memory check for rendered overlay
+                if (isRenderedOverlay) {
+                    long totalPixels = 0;
+                    for (PathObject target : targetObjects) {
+                        ROI roi = target.getROI();
+                        totalPixels += (long) roi.getBoundsWidth() * (long) roi.getBoundsHeight();
+                    }
+                    int numClasses = metadata.getClasses().size();
+                    // During merge: float[H][W][C] + float[H][W] weights + byte[H][W] classMap
+                    long estimatedBytes = totalPixels * (4L * numClasses + 4L + 1L);
+                    long availableMemory = Runtime.getRuntime().maxMemory()
+                            - Runtime.getRuntime().totalMemory()
+                            + Runtime.getRuntime().freeMemory();
+
+                    if (estimatedBytes > availableMemory * 0.5) {
+                        logger.warn("Rendered overlay would require ~{}MB but only ~{}MB available. "
+                                + "Falling back to on-demand overlay.",
+                                estimatedBytes / (1024 * 1024), availableMemory / (1024 * 1024));
+                        progress.log("Region too large for rendered overlay -- using fast overlay instead");
+                        DLPixelClassifier pixelClassifier = new DLPixelClassifier(
+                                metadata, channelConfig, inferenceConfig, imageData);
+                        OverlayService.getInstance().applyClassifierOverlay(imageData, pixelClassifier);
+                        progress.complete(true, "Applied fast overlay (region too large for rendered overlay)");
+                        return;
+                    }
+                }
+
                 // Count total tiles
                 int totalTiles = 0;
                 for (PathObject obj : targetObjects) {
@@ -448,24 +492,47 @@ public class InferenceWorkflow {
                     progress.log("Processing annotation: " + annotationName);
 
                     ROI region = annotation.getROI();
-                    int tilesForRegion = processRegionWithProgress(
-                            region, annotation, tileProcessor, backend, metadata,
-                            channelConfig, inferenceConfig, server, imageData, progress
-                    );
 
-                    processedTiles += tilesForRegion;
+                    if (isRenderedOverlay) {
+                        PrecomputedPixelClassifier.ClassifiedRegion classified =
+                                processRegionForRenderedOverlay(
+                                        region, annotation, tileProcessor, backend, metadata,
+                                        channelConfig, inferenceConfig, server, imageData, progress);
+                        if (classified != null) {
+                            classifiedRegions.add(classified);
+                        }
+                    } else {
+                        int tilesForRegion = processRegionWithProgress(
+                                region, annotation, tileProcessor, backend, metadata,
+                                channelConfig, inferenceConfig, server, imageData, progress
+                        );
+                        processedTiles += tilesForRegion;
+                    }
+
                     processedAnnotations++;
 
                     progress.setOverallProgress((double) processedAnnotations / targetObjects.size());
                     progress.log("Completed " + processedAnnotations + "/" + targetObjects.size() + " annotations");
                 }
 
+                // Apply rendered overlay if applicable
+                if (isRenderedOverlay && classifiedRegions != null && !classifiedRegions.isEmpty()) {
+                    PixelClassifierMetadata pixelMeta = buildPrecomputedMetadata(metadata, imageData);
+                    IndexColorModel colorModel = buildColorModelForPrecomputed(metadata);
+                    PrecomputedPixelClassifier precomputed = new PrecomputedPixelClassifier(
+                            classifiedRegions, pixelMeta, colorModel);
+                    OverlayService.getInstance().applyClassifierOverlay(imageData, precomputed);
+                    progress.log("Rendered overlay applied (" + classifiedRegions.size() + " region(s), "
+                            + processedTiles + " tiles blended)");
+                }
+
                 // Fire hierarchy update
                 imageData.getHierarchy().fireHierarchyChangedEvent(
                         imageData.getHierarchy().getRootObject());
 
-                // Add workflow step for reproducibility (not for OVERLAY -- visual only)
-                if (inferenceConfig.getOutputType() != InferenceConfig.OutputType.OVERLAY) {
+                // Add workflow step for reproducibility (not for visual-only overlay modes)
+                if (inferenceConfig.getOutputType() != InferenceConfig.OutputType.OVERLAY
+                        && inferenceConfig.getOutputType() != InferenceConfig.OutputType.RENDERED_OVERLAY) {
                     addWorkflowStep(imageData, metadata, inferenceConfig);
                 }
 
@@ -734,6 +801,11 @@ public class InferenceWorkflow {
                     // Should not reach here - OVERLAY exits early above
                     logger.warn("OVERLAY case reached in switch - this should not happen");
                     break;
+
+                case RENDERED_OVERLAY:
+                    // Handled by caller (runInferenceWithProgress collects ClassifiedRegions)
+                    // Nothing to do here per-region; the caller assembles the overlay
+                    break;
             }
 
             return tileSpecs.size();
@@ -757,6 +829,264 @@ public class InferenceWorkflow {
                     logger.warn("Failed to clean up temp directory: {}", tempDir, e);
                 }
             }
+        }
+    }
+
+    /**
+     * Processes a region for rendered overlay: runs batch inference with blending
+     * and returns the merged classification map as a ClassifiedRegion.
+     * <p>
+     * Reuses the same tile generation, batch inference, and probability blending
+     * pipeline as OBJECTS mode, but returns the blended classification map instead
+     * of creating PathObjects.
+     *
+     * @return the classified region, or null if no tiles were processed
+     */
+    static PrecomputedPixelClassifier.ClassifiedRegion processRegionForRenderedOverlay(
+            ROI region,
+            PathObject parentObject,
+            TileProcessor tileProcessor,
+            ClassifierBackend backend,
+            ClassifierMetadata metadata,
+            ChannelConfiguration channelConfig,
+            InferenceConfig inferenceConfig,
+            ImageServer<BufferedImage> server,
+            ImageData<BufferedImage> imageData,
+            ProgressMonitorController progress) throws IOException {
+
+        // Resolve classifier ID to filesystem path
+        ModelManager modelManager = new ModelManager();
+        String modelDirPath = modelManager.getModelPath(metadata.getId())
+                .map(p -> p.getParent().toString())
+                .orElse(metadata.getId());
+
+        // Generate tiles
+        List<TileProcessor.TileSpec> tileSpecs = tileProcessor.generateTiles(region, server);
+        if (tileSpecs.isEmpty()) return null;
+        if (progress != null) progress.log("Generated " + tileSpecs.size() + " tiles for rendered overlay");
+
+        int contextScale = metadata.getContextScale();
+        int batchSize = tileProcessor.getMaxTilesInMemory();
+        List<float[][][]> allResults = new ArrayList<>();
+        Path tempDir = null;
+        int tileSize = inferenceConfig.getTileSize();
+
+        int poolSize = Math.min(4, Runtime.getRuntime().availableProcessors());
+        ExecutorService tilePool = Executors.newFixedThreadPool(poolSize);
+
+        try {
+            tempDir = Files.createTempDirectory("dl-rendered-overlay-");
+
+            PreparedBatch nextPrepared = null;
+
+            for (int i = 0; i < tileSpecs.size(); i += batchSize) {
+                if (progress != null && progress.isCancelled()) return null;
+
+                int end = Math.min(i + batchSize, tileSpecs.size());
+
+                if (progress != null) {
+                    progress.setDetail(String.format("Rendered overlay: tiles %d-%d of %d",
+                            i + 1, end, tileSpecs.size()));
+                    progress.setCurrentProgress((double) i / tileSpecs.size());
+                }
+
+                PreparedBatch currentBatch;
+                if (nextPrepared != null) {
+                    currentBatch = nextPrepared;
+                    nextPrepared = null;
+                } else {
+                    List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
+                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale);
+                }
+
+                // Pre-prepare next batch
+                int nextStart = i + batchSize;
+                Future<PreparedBatch> nextBatchFuture = null;
+                if (nextStart < tileSpecs.size()) {
+                    int nextEnd = Math.min(nextStart + batchSize, tileSpecs.size());
+                    List<TileProcessor.TileSpec> nextBatchSpecs = tileSpecs.subList(nextStart, nextEnd);
+                    nextBatchFuture = tilePool.submit(() ->
+                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale));
+                }
+
+                // Run pixel inference (same as processRegionCore)
+                ClassifierClient.PixelInferenceResult pixelResult =
+                        backend.runPixelInferenceBinary(
+                                modelDirPath, currentBatch.rawBytes(), currentBatch.tileIds(),
+                                tileSize, tileSize, currentBatch.numChannels(),
+                                currentBatch.dtype(),
+                                channelConfig, inferenceConfig, tempDir, 0);
+
+                if (pixelResult == null) {
+                    if (contextScale > 1) {
+                        logger.warn("Binary pixel inference failed for context_scale={} "
+                                + "model; JSON fallback does not support multi-scale "
+                                + "context tiles", contextScale);
+                    }
+                    pixelResult = backend.runPixelInference(
+                            modelDirPath, currentBatch.tileDataList(), channelConfig,
+                            inferenceConfig, tempDir, 0);
+                }
+
+                if (pixelResult != null && pixelResult.outputPaths() != null) {
+                    for (ClassifierClient.TileData tile : currentBatch.tileDataList()) {
+                        String outputPath = pixelResult.outputPaths().get(tile.id());
+                        if (outputPath != null) {
+                            float[][][] probMap = ClassifierClient.readProbabilityMap(
+                                    Path.of(outputPath),
+                                    pixelResult.numClasses(),
+                                    tileSize, tileSize);
+                            allResults.add(probMap);
+                        }
+                    }
+                }
+
+                if (nextBatchFuture != null) {
+                    try {
+                        nextPrepared = nextBatchFuture.get();
+                    } catch (Exception e) {
+                        logger.warn("Parallel tile prep failed, will prepare sequentially", e);
+                        nextPrepared = null;
+                    }
+                }
+            }
+
+            if (allResults.isEmpty()) return null;
+
+            // Merge with blending (same as OBJECTS pipeline)
+            int numClasses = metadata.getClasses().size();
+            int regionX = (int) region.getBoundsX();
+            int regionY = (int) region.getBoundsY();
+            int regionWidth = (int) Math.ceil(region.getBoundsWidth());
+            int regionHeight = (int) Math.ceil(region.getBoundsHeight());
+
+            TileProcessor.MergedResult merged = tileProcessor.mergeTileResultsWithEdgeHandling(
+                    tileSpecs, allResults,
+                    regionX, regionY, regionWidth, regionHeight,
+                    numClasses);
+
+            // Convert int[][] to byte[][] for memory efficiency
+            int[][] intMap = merged.classificationMap();
+            byte[][] byteMap = new byte[regionHeight][regionWidth];
+            for (int y = 0; y < regionHeight; y++) {
+                for (int x = 0; x < regionWidth; x++) {
+                    byteMap[y][x] = (byte) intMap[y][x];
+                }
+            }
+
+            if (progress != null) {
+                progress.log("Blended " + allResults.size() + " tiles for region");
+            }
+
+            return new PrecomputedPixelClassifier.ClassifiedRegion(
+                    byteMap, regionX, regionY, regionWidth, regionHeight);
+
+        } finally {
+            tilePool.shutdownNow();
+            if (tempDir != null) {
+                try {
+                    Files.walk(tempDir)
+                            .sorted(Comparator.reverseOrder())
+                            .forEach(path -> {
+                                try {
+                                    Files.deleteIfExists(path);
+                                } catch (IOException e) {
+                                    logger.warn("Failed to delete temp file: {}", path, e);
+                                }
+                            });
+                } catch (IOException e) {
+                    logger.warn("Failed to clean up temp directory: {}", tempDir, e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Builds PixelClassifierMetadata for a PrecomputedPixelClassifier.
+     * No padding needed since data is already blended.
+     */
+    private static PixelClassifierMetadata buildPrecomputedMetadata(
+            ClassifierMetadata metadata, ImageData<BufferedImage> imageData) {
+        PixelCalibration cal = imageData.getServer().getPixelCalibration();
+
+        double downsample = metadata.getDownsample();
+        if (downsample > 1.0) {
+            cal = cal.createScaledInstance(downsample, downsample);
+        }
+
+        Map<Integer, PathClass> labels = new LinkedHashMap<>();
+        List<ImageChannel> channels = new ArrayList<>();
+        for (ClassifierMetadata.ClassInfo classInfo : metadata.getClasses()) {
+            int color = parseClassColorStatic(classInfo.color(), classInfo.index());
+            PathClass pathClass = PathClass.fromString(classInfo.name(), color);
+            int resolvedColor = pathClass.getColor();
+            labels.put(classInfo.index(), pathClass);
+            channels.add(ImageChannel.getInstance(classInfo.name(), resolvedColor));
+        }
+
+        return new PixelClassifierMetadata.Builder()
+                .inputResolution(cal)
+                .inputShape(256, 256)   // arbitrary -- data is pre-computed
+                .inputPadding(0)         // no padding needed
+                .setChannelType(ImageServerMetadata.ChannelType.CLASSIFICATION)
+                .outputPixelType(PixelType.UINT8)
+                .classificationLabels(labels)
+                .outputChannels(channels)
+                .build();
+    }
+
+    /**
+     * Builds IndexColorModel from classifier metadata for the PrecomputedPixelClassifier.
+     */
+    private static IndexColorModel buildColorModelForPrecomputed(ClassifierMetadata metadata) {
+        byte[] r = new byte[256];
+        byte[] g = new byte[256];
+        byte[] b = new byte[256];
+        byte[] a = new byte[256];
+
+        for (ClassifierMetadata.ClassInfo classInfo : metadata.getClasses()) {
+            int idx = classInfo.index();
+            if (idx < 0 || idx >= 256) continue;
+            int color = parseClassColorStatic(classInfo.color(), classInfo.index());
+            PathClass pathClass = PathClass.fromString(classInfo.name(), color);
+            int resolvedColor = pathClass.getColor();
+            r[idx] = (byte) ColorTools.red(resolvedColor);
+            g[idx] = (byte) ColorTools.green(resolvedColor);
+            b[idx] = (byte) ColorTools.blue(resolvedColor);
+            a[idx] = (byte) 255;
+        }
+
+        return new IndexColorModel(8, 256, r, g, b, a);
+    }
+
+    /** Distinct color palette for fallback when class metadata lacks colors. */
+    private static final int[][] FALLBACK_PALETTE = {
+            {255, 0, 0}, {0, 170, 0}, {0, 0, 255}, {255, 255, 0},
+            {255, 0, 255}, {0, 255, 255}, {255, 136, 0}, {136, 0, 255}
+    };
+
+    /**
+     * Parses a hex color string to a packed RGB integer (QuPath format).
+     * Falls back to a distinct palette color for the given class index.
+     * <p>
+     * Static version of the same logic in DLPixelClassifier for use
+     * by the rendered overlay helper methods.
+     */
+    private static int parseClassColorStatic(String colorStr, int classIndex) {
+        if (colorStr == null || colorStr.isEmpty() || "#808080".equals(colorStr)) {
+            int[] c = FALLBACK_PALETTE[classIndex % FALLBACK_PALETTE.length];
+            return ColorTools.packRGB(c[0], c[1], c[2]);
+        }
+        try {
+            String hex = colorStr.startsWith("#") ? colorStr.substring(1) : colorStr;
+            int rgb = Integer.parseInt(hex, 16);
+            return ColorTools.packRGB(
+                    (rgb >> 16) & 0xFF,
+                    (rgb >> 8) & 0xFF,
+                    rgb & 0xFF);
+        } catch (NumberFormatException e) {
+            int[] c = FALLBACK_PALETTE[classIndex % FALLBACK_PALETTE.length];
+            return ColorTools.packRGB(c[0], c[1], c[2]);
         }
     }
 

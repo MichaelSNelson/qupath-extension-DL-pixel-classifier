@@ -295,16 +295,22 @@ public class InferenceDialog {
             try {
                 outputTypeCombo.setValue(InferenceConfig.OutputType.valueOf(DLClassifierPreferences.getLastOutputType()));
             } catch (IllegalArgumentException e) {
-                outputTypeCombo.setValue(InferenceConfig.OutputType.MEASUREMENTS);
+                outputTypeCombo.setValue(InferenceConfig.OutputType.RENDERED_OVERLAY);
             }
             TooltipHelper.install(outputTypeCombo,
                     "How classification results are represented:\n\n" +
-                    "MEASUREMENTS: Add per-class probability measurements to annotations.\n" +
-                    "  Best for quantification workflows (e.g. % area per class).\n\n" +
+                    "RENDERED_OVERLAY (Recommended): Blended classification overlay.\n" +
+                    "  Runs batch inference with tile blending, producing a seamless\n" +
+                    "  overlay that accurately represents what OBJECTS output would\n" +
+                    "  look like. Best for validating classifier quality.\n\n" +
+                    "OVERLAY: Fast on-demand classification overlay.\n" +
+                    "  Each tile is classified independently as you pan/zoom.\n" +
+                    "  Fast for browsing large images, but may show visible tile\n" +
+                    "  boundary artifacts. Does NOT accurately represent OBJECTS output.\n\n" +
                     "OBJECTS: Create detection/annotation objects for classified regions.\n" +
                     "  Best for spatial analysis and counting discrete structures.\n\n" +
-                    "OVERLAY: Display classification as a live color overlay on the viewer.\n" +
-                    "  Best for visual inspection and quality checking before quantification.");
+                    "MEASUREMENTS: Add per-class probability measurements to annotations.\n" +
+                    "  Best for quantification workflows (e.g. % area per class).");
             outputTypeCombo.valueProperty().addListener((obs, old, newVal) -> updateOutputOptions(newVal));
 
             grid.add(new Label("Output Type:"), 0, row);
@@ -797,7 +803,12 @@ public class InferenceDialog {
             holeFillingSpinner.setDisable(!enableObjectOptions);
             smoothingSpinner.setDisable(!enableObjectOptions);
 
-            // Auto-select "Apply to whole image" when overlay is chosen
+            // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY
+            boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
+                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
+            blendModeCombo.setDisable(!enableBlend);
+
+            // Auto-select "Apply to whole image" for on-demand OVERLAY only
             if (outputType == InferenceConfig.OutputType.OVERLAY
                     && applyToWholeImageRadio != null) {
                 applyToWholeImageRadio.setSelected(true);
