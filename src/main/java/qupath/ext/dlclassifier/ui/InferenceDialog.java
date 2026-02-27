@@ -157,7 +157,8 @@ public class InferenceDialog {
                 copyInferenceScript(copyScriptButton);
             });
 
-            // Create content
+            // Create content -- all UI components are constructed first,
+            // THEN listeners are installed, so cross-section references are safe.
             VBox content = new VBox(10);
             content.setPadding(new Insets(10));
 
@@ -169,6 +170,9 @@ public class InferenceDialog {
                     createScopeSection()
             );
 
+            // Install cross-section listeners AFTER all components exist
+            installListeners();
+
             ScrollPane scrollPane = new ScrollPane(content);
             scrollPane.setFitToWidth(true);
             scrollPane.setMaxHeight(Double.MAX_VALUE);
@@ -177,7 +181,7 @@ public class InferenceDialog {
 
             dialog.getDialogPane().setContent(scrollPane);
 
-            // Load available classifiers
+            // Load available classifiers (fires classifier selection listener)
             loadClassifiers();
 
             // Initialize with current image
@@ -257,10 +261,6 @@ public class InferenceDialog {
 
             classifierTable.getColumns().addAll(List.of(nameCol, typeCol, channelsCol, classesCol, dateCol));
 
-            // Selection listener
-            classifierTable.getSelectionModel().selectedItemProperty().addListener(
-                    (obs, old, selected) -> onClassifierSelected(selected));
-
             // Info label
             classifierInfoLabel = new Label("Select a classifier to see details");
             classifierInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
@@ -311,7 +311,6 @@ public class InferenceDialog {
                     "  Best for spatial analysis and counting discrete structures.\n\n" +
                     "MEASUREMENTS: Add per-class probability measurements to annotations.\n" +
                     "  Best for quantification workflows (e.g. % area per class).");
-            outputTypeCombo.valueProperty().addListener((obs, old, newVal) -> updateOutputOptions(newVal));
 
             grid.add(new Label("Output Type:"), 0, row);
             grid.add(outputTypeCombo, 1, row);
@@ -373,9 +372,6 @@ public class InferenceDialog {
             grid.add(new Label("Boundary Smoothing:"), 0, row);
             grid.add(smoothingSpinner, 1, row);
 
-            // Set object-specific options based on restored output type
-            updateOutputOptions(outputTypeCombo.getValue());
-
             TitledPane pane = new TitledPane("OUTPUT OPTIONS", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
@@ -385,7 +381,6 @@ public class InferenceDialog {
 
         private TitledPane createChannelSection() {
             channelPanel = new ChannelSelectionPanel();
-            channelPanel.validProperty().addListener((obs, old, valid) -> updateValidation());
 
             channelMappingPanel = new VBox(5);
             channelMappingPanel.setPadding(new Insets(5, 0, 0, 0));
@@ -591,6 +586,28 @@ public class InferenceDialog {
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Control which region to classify and backup options"));
             return pane;
+        }
+
+        /**
+         * Installs all cross-section listeners AFTER every UI component has been
+         * created.  This guarantees that no listener can fire while a field it
+         * references is still null, eliminating initialization-order NPEs.
+         */
+        private void installListeners() {
+            // Classifier selection -> updates channel panel, tile size, validation
+            classifierTable.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, old, selected) -> onClassifierSelected(selected));
+
+            // Output type -> enables/disables object options, blend mode, scope
+            outputTypeCombo.valueProperty().addListener(
+                    (obs, old, newVal) -> updateOutputOptions(newVal));
+
+            // Channel validity -> enables/disables OK button
+            channelPanel.validProperty().addListener(
+                    (obs, old, valid) -> updateValidation());
+
+            // Apply initial state now that all components exist
+            updateOutputOptions(outputTypeCombo.getValue());
         }
 
         private void loadClassifiers() {
@@ -804,15 +821,12 @@ public class InferenceDialog {
             smoothingSpinner.setDisable(!enableObjectOptions);
 
             // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY
-            if (blendModeCombo != null) {
-                boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
-                        || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
-                blendModeCombo.setDisable(!enableBlend);
-            }
+            boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
+                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
+            blendModeCombo.setDisable(!enableBlend);
 
             // Auto-select "Apply to whole image" for on-demand OVERLAY only
-            if (outputType == InferenceConfig.OutputType.OVERLAY
-                    && applyToWholeImageRadio != null) {
+            if (outputType == InferenceConfig.OutputType.OVERLAY) {
                 applyToWholeImageRadio.setSelected(true);
             }
         }
