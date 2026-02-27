@@ -64,7 +64,7 @@ lines.append("")
 lines.append("=== Python Packages ===")
 packages = [
     "torch", "torchvision", "segmentation_models_pytorch",
-    "albumentations", "timm", "numpy", "PIL", "skimage",
+    "albumentations", "timm", "ttach", "numpy", "PIL", "skimage",
     "onnx", "onnxruntime", "pydantic", "tifffile",
     "imagecodecs", "appose"
 ]

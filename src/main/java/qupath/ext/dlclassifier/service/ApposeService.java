@@ -214,6 +214,7 @@ public class ApposeService {
                         "import albumentations\n" +
                         "import numpy\n" +
                         "import PIL\n" +
+                        "import ttach\n" +
                         "task.outputs['torch_version'] = torch.__version__\n" +
                         "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n" +
                         "mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()\n" +
