@@ -266,55 +266,58 @@ public class AnnotationExtractor {
             }
         }
 
-        // Extract patches and masks
+        // Phase 1: Collect all masks and determine class presence per patch
+        List<PendingPatch> pendingPatches = new ArrayList<>();
+        for (PatchLocation loc : patchLocations) {
+            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
+            if (maskResult.labeledPixelCount == 0) continue;
+
+            Set<Integer> presentClasses = new HashSet<>();
+            for (int i = 0; i < classNames.size(); i++) {
+                if (maskResult.classPixelCounts[i] > 0) presentClasses.add(i);
+            }
+            pendingPatches.add(new PendingPatch(loc, maskResult, presentClasses));
+        }
+
+        // Phase 2: Compute stratified train/validation split
+        boolean[] isValidationArr = computeStratifiedSplit(pendingPatches, validationSplit, classNames.size());
+        logSplitStatistics(pendingPatches, isValidationArr, classNames);
+
+        // Phase 3: Read images and write files based on stratified assignment
         int patchIndex = 0;
         int trainCount = 0;
         int valCount = 0;
         long[] classPixelCounts = new long[classNames.size()];
         long totalLabeledPixels = 0;
 
-        Random random = new Random(42);
+        for (int p = 0; p < pendingPatches.size(); p++) {
+            PendingPatch pp = pendingPatches.get(p);
+            boolean isValidation = isValidationArr[p];
 
-        for (PatchLocation loc : patchLocations) {
-            // Create combined mask from all overlapping annotations
-            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
-
-            // Skip patches with no labeled pixels
-            if (maskResult.labeledPixelCount == 0) continue;
-
-            // Read image patch (region covers patchSize*downsample in full-res coords,
-            // returned image is patchSize x patchSize pixels)
             RegionRequest request = RegionRequest.createInstance(
                     server.getPath(), downsample,
-                    loc.x, loc.y, regionSize, regionSize,
+                    pp.location().x(), pp.location().y(), regionSize, regionSize,
                     0, 0);
             BufferedImage image = server.readRegion(request);
-
-            // Train/validation split
-            boolean isValidation = random.nextDouble() < validationSplit;
 
             Path imgDir = isValidation ? valImages : trainImages;
             Path maskDir = isValidation ? valMasks : trainMasks;
 
-            Path imgPath = imgDir.resolve(String.format("patch_%04d.tiff", patchIndex));
-            Path maskPath = maskDir.resolve(String.format("patch_%04d.png", patchIndex));
+            savePatch(image, imgDir.resolve(String.format("patch_%04d.tiff", patchIndex)));
+            saveMask(pp.maskResult().mask(), maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
 
-            savePatch(image, imgPath);
-            saveMask(maskResult.mask, maskPath);
-
-            // Extract context tile when multi-scale is enabled
             if (contextScale > 1) {
                 Path ctxDir = isValidation ? valContext : trainContext;
                 Path ctxPath = ctxDir.resolve(String.format("patch_%04d.tiff", patchIndex));
-                BufferedImage contextImage = readContextTile(loc.x, loc.y, regionSize);
+                BufferedImage contextImage = readContextTile(
+                        pp.location().x(), pp.location().y(), regionSize);
                 savePatch(contextImage, ctxPath);
             }
 
-            // Track statistics
             for (int i = 0; i < classNames.size(); i++) {
-                classPixelCounts[i] += maskResult.classPixelCounts[i];
+                classPixelCounts[i] += pp.maskResult().classPixelCounts()[i];
             }
-            totalLabeledPixels += maskResult.labeledPixelCount;
+            totalLabeledPixels += pp.maskResult().labeledPixelCount();
 
             if (isValidation) valCount++;
             else trainCount++;
@@ -408,41 +411,57 @@ public class AnnotationExtractor {
             }
         }
 
+        // Phase 1: Collect all masks and determine class presence per patch
+        List<PendingPatch> pendingPatches = new ArrayList<>();
+        for (PatchLocation loc : patchLocations) {
+            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
+            if (maskResult.labeledPixelCount == 0) continue;
+
+            Set<Integer> presentClasses = new HashSet<>();
+            for (int i = 0; i < classNames.size(); i++) {
+                if (maskResult.classPixelCounts[i] > 0) presentClasses.add(i);
+            }
+            pendingPatches.add(new PendingPatch(loc, maskResult, presentClasses));
+        }
+
+        // Phase 2: Compute stratified train/validation split
+        boolean[] isValidationArr = computeStratifiedSplit(pendingPatches, validationSplit, classNames.size());
+        logSplitStatistics(pendingPatches, isValidationArr, classNames);
+
+        // Phase 3: Read images and write files based on stratified assignment
         int patchIndex = startIndex;
         int trainCount = 0;
         int valCount = 0;
         long[] classPixelCounts = new long[classNames.size()];
         long totalLabeledPixels = 0;
-        Random random = new Random(42 + startIndex);
 
-        for (PatchLocation loc : patchLocations) {
-            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
-            if (maskResult.labeledPixelCount == 0) continue;
+        for (int p = 0; p < pendingPatches.size(); p++) {
+            PendingPatch pp = pendingPatches.get(p);
+            boolean isValidation = isValidationArr[p];
 
             RegionRequest request = RegionRequest.createInstance(
                     server.getPath(), downsample,
-                    loc.x, loc.y, regionSize, regionSize, 0, 0);
+                    pp.location().x(), pp.location().y(), regionSize, regionSize, 0, 0);
             BufferedImage image = server.readRegion(request);
 
-            boolean isValidation = random.nextDouble() < validationSplit;
             Path imgDir = isValidation ? valImages : trainImages;
             Path maskDir = isValidation ? valMasks : trainMasks;
 
             savePatch(image, imgDir.resolve(String.format("patch_%04d.tiff", patchIndex)));
-            saveMask(maskResult.mask, maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
+            saveMask(pp.maskResult().mask(), maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
 
-            // Extract context tile when multi-scale is enabled
             if (contextScale > 1) {
                 Path ctxDir = isValidation ? valContext : trainContext;
                 Path ctxPath = ctxDir.resolve(String.format("patch_%04d.tiff", patchIndex));
-                BufferedImage contextImage = readContextTile(loc.x, loc.y, regionSize);
+                BufferedImage contextImage = readContextTile(
+                        pp.location().x(), pp.location().y(), regionSize);
                 savePatch(contextImage, ctxPath);
             }
 
             for (int i = 0; i < classNames.size(); i++) {
-                classPixelCounts[i] += maskResult.classPixelCounts[i];
+                classPixelCounts[i] += pp.maskResult().classPixelCounts()[i];
             }
-            totalLabeledPixels += maskResult.labeledPixelCount;
+            totalLabeledPixels += pp.maskResult().labeledPixelCount();
 
             if (isValidation) valCount++;
             else trainCount++;
@@ -1251,6 +1270,153 @@ public class AnnotationExtractor {
      * Result of creating a combined mask.
      */
     private record MaskResult(BufferedImage mask, long[] classPixelCounts, long labeledPixelCount) {}
+
+    /**
+     * A patch awaiting train/val assignment during the collection phase.
+     * Holds the mask and class presence info but not the image (read later during write phase).
+     */
+    private record PendingPatch(
+            PatchLocation location,
+            MaskResult maskResult,
+            Set<Integer> presentClasses
+    ) {}
+
+    /**
+     * Computes a stratified train/validation split that guarantees every class present
+     * in the dataset is represented in the validation set.
+     * <p>
+     * Algorithm:
+     * <ol>
+     *   <li>Build an inverted index: classIndex -> list of patch indices containing that class</li>
+     *   <li>Sort classes by ascending frequency (rarest first)</li>
+     *   <li>Guarantee phase: for each class not yet in validation, pick the patch covering
+     *       the most still-unrepresented classes (greedy set-cover) and assign to validation</li>
+     *   <li>Fill phase: if more validation slots remain, fill randomly from unassigned patches</li>
+     * </ol>
+     * If the guarantee phase assigns more patches than the target count, all are kept
+     * (class coverage takes priority over exact split ratio).
+     *
+     * @param patches         collected patches with class presence info
+     * @param validationSplit fraction of patches for validation (0.0-1.0)
+     * @param numClasses      total number of classes
+     * @return boolean array where true = validation patch
+     */
+    private static boolean[] computeStratifiedSplit(List<PendingPatch> patches,
+                                                     double validationSplit,
+                                                     int numClasses) {
+        int total = patches.size();
+        boolean[] isValidation = new boolean[total];
+
+        if (validationSplit <= 0.0 || total == 0) {
+            return isValidation; // all false
+        }
+
+        int targetValCount = Math.max(1, (int) Math.round(total * validationSplit));
+
+        // Build inverted index: classIndex -> list of patch indices containing that class
+        Map<Integer, List<Integer>> classToPatchIndices = new HashMap<>();
+        for (int i = 0; i < total; i++) {
+            for (int classIdx : patches.get(i).presentClasses()) {
+                classToPatchIndices.computeIfAbsent(classIdx, k -> new ArrayList<>()).add(i);
+            }
+        }
+
+        // Sort classes by ascending frequency (rarest first)
+        List<Integer> classesByFrequency = new ArrayList<>(classToPatchIndices.keySet());
+        classesByFrequency.sort(Comparator.comparingInt(c -> classToPatchIndices.get(c).size()));
+
+        // Guarantee phase: ensure every class has at least one validation patch
+        Set<Integer> coveredClasses = new HashSet<>();
+        int valAssigned = 0;
+
+        for (int classIdx : classesByFrequency) {
+            if (coveredClasses.contains(classIdx)) continue;
+
+            // Find the unassigned patch that covers the most still-uncovered classes
+            int bestPatch = -1;
+            int bestCoverage = 0;
+
+            for (int patchIdx : classToPatchIndices.get(classIdx)) {
+                if (isValidation[patchIdx]) continue; // already assigned
+
+                int coverage = 0;
+                for (int c : patches.get(patchIdx).presentClasses()) {
+                    if (!coveredClasses.contains(c)) coverage++;
+                }
+                if (coverage > bestCoverage) {
+                    bestCoverage = coverage;
+                    bestPatch = patchIdx;
+                }
+            }
+
+            if (bestPatch >= 0) {
+                isValidation[bestPatch] = true;
+                valAssigned++;
+                coveredClasses.addAll(patches.get(bestPatch).presentClasses());
+            }
+        }
+
+        // Fill phase: if more validation slots remain, fill randomly from unassigned
+        if (valAssigned < targetValCount) {
+            List<Integer> unassigned = new ArrayList<>();
+            for (int i = 0; i < total; i++) {
+                if (!isValidation[i]) unassigned.add(i);
+            }
+            Collections.shuffle(unassigned, new Random(42));
+
+            int remaining = targetValCount - valAssigned;
+            for (int i = 0; i < remaining && i < unassigned.size(); i++) {
+                isValidation[unassigned.get(i)] = true;
+            }
+        }
+
+        return isValidation;
+    }
+
+    /**
+     * Logs per-class patch distribution across train and validation sets.
+     * Warns if any class has zero patches in either set.
+     *
+     * @param patches      collected patches with class presence info
+     * @param isValidation boolean array from computeStratifiedSplit
+     * @param classNames   ordered list of class names
+     */
+    private static void logSplitStatistics(List<PendingPatch> patches,
+                                            boolean[] isValidation,
+                                            List<String> classNames) {
+        int numClasses = classNames.size();
+        int[] trainCounts = new int[numClasses];
+        int[] valCounts = new int[numClasses];
+
+        for (int i = 0; i < patches.size(); i++) {
+            for (int classIdx : patches.get(i).presentClasses()) {
+                if (classIdx < numClasses) {
+                    if (isValidation[i]) valCounts[classIdx]++;
+                    else trainCounts[classIdx]++;
+                }
+            }
+        }
+
+        int totalTrain = 0, totalVal = 0;
+        for (int i = 0; i < patches.size(); i++) {
+            if (isValidation[i]) totalVal++;
+            else totalTrain++;
+        }
+
+        logger.info("Stratified split: {} train, {} validation patches", totalTrain, totalVal);
+        for (int i = 0; i < numClasses; i++) {
+            logger.info("  Class '{}': {} train patches, {} val patches",
+                    classNames.get(i), trainCounts[i], valCounts[i]);
+            if (valCounts[i] == 0) {
+                logger.warn("  WARNING: Class '{}' has ZERO validation patches - "
+                        + "validation metrics for this class will be unreliable", classNames.get(i));
+            }
+            if (trainCounts[i] == 0) {
+                logger.warn("  WARNING: Class '{}' has ZERO training patches - "
+                        + "model cannot learn this class", classNames.get(i));
+            }
+        }
+    }
 
     /**
      * Result of the export operation, including class distribution statistics.
