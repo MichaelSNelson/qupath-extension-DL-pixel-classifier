@@ -38,7 +38,7 @@ Complete reference for every parameter in the training and inference dialogs. Th
 |-----------|---------|-------|-------------|
 | **Epochs** | 50 | 1-1000 | Complete passes through training data. Early stopping prevents overfitting. 50-200 for small datasets, 20-100 for large. |
 | **Batch Size** | 8 | 1-128 | Tiles per training step. Larger = more stable gradients, more VRAM. 4-8 for 8GB VRAM with 512px tiles. |
-| **Learning Rate** | 0.001 | 0.00001-1.0 | Step size for gradient descent. 1e-3 for Adam default, 1e-4 if oscillating, 1e-5 for full fine-tuning. |
+| **Learning Rate** | 0.001 | 0.00001-1.0 | Step size for gradient descent. 1e-3 for AdamW default, 1e-4 if oscillating, 1e-5 for full fine-tuning. When using OneCycleLR, an automatic LR finder runs before training to suggest an optimal max learning rate. |
 | **Validation Split** | 20% | 5-50% | Percentage held out for validation. 15-25% typical. |
 | **Tile Size** | 512 | 64-1024 | Patch size in pixels. Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
 | **Resolution** | 1x | 1x, 2x, 4x, 8x | Image downsample level. Higher = more context per tile, less detail. |
@@ -49,11 +49,13 @@ Complete reference for every parameter in the training and inference dialogs. Th
 
 | Parameter | Default | Options | Description |
 |-----------|---------|---------|-------------|
-| **LR Scheduler** | One Cycle | One Cycle, Cosine Annealing, Step Decay, None | Learning rate schedule. One Cycle is recommended. See [PyTorch schedulers](https://pytorch.org/docs/stable/optim.html). |
+| **LR Scheduler** | One Cycle | One Cycle, Cosine Annealing, Step Decay, Reduce on Plateau, None | Learning rate schedule. One Cycle is recommended for most cases. Reduce on Plateau automatically lowers the LR when the monitored metric stops improving (factor=0.5, patience=10). See [PyTorch schedulers](https://pytorch.org/docs/stable/optim.html). |
 | **Loss Function** | CE + Dice | CE + Dice, Cross Entropy | CE + Dice is recommended. Dice directly optimizes IoU. See [smp losses](https://smp.readthedocs.io/en/latest/losses.html). |
 | **Early Stop Metric** | Mean IoU | Mean IoU, Validation Loss | Mean IoU is more reliable than loss for stopping. |
 | **Early Stop Patience** | 15 | 3-50 | Epochs without improvement before stopping. 10-15 default, 20-30 for noisy curves. |
-| **Mixed Precision** | Enabled | On/Off | FP16/FP32 automatic mixed precision. ~2x speedup on NVIDIA GPUs. See [PyTorch AMP](https://pytorch.org/docs/stable/amp.html). |
+| **Mixed Precision** | Enabled | On/Off | Automatic mixed precision. Auto-detects BF16 on Ampere+ GPUs (RTX 3000+), falls back to FP16 with gradient scaling on older GPUs. ~2x speedup. See [PyTorch AMP](https://pytorch.org/docs/stable/amp.html). |
+| **Gradient Accumulation** | 1 | 1-8 | Number of batches to accumulate before updating weights. Effectively multiplies batch size without increasing VRAM. Set to 2-4 to simulate larger batches on limited GPU memory. |
+| **Progressive Resizing** | Off | On/Off | Train at half resolution for the first 40% of epochs, then switch to full resolution. Speeds up early training and acts as implicit regularization. Inspired by fast.ai. |
 
 ### Transfer Learning (advanced)
 
@@ -116,6 +118,7 @@ Complete reference for every parameter in the training and inference dialogs. Th
 | **Tile Overlap (%)** | 12.5% | 0-50%. Higher = better blending, slower processing. |
 | **Blend Mode** | LINEAR | LINEAR (recommended), GAUSSIAN (smoothest), NONE (fastest). |
 | **Use GPU** | On | 10-50x faster than CPU. Falls back automatically. |
+| **Test-Time Augmentation (TTA)** | Off | Applies D4 transforms (flips + 90-degree rotations) during inference and averages the predictions. Typically improves segmentation quality by 1-3% at the cost of ~8x slower inference. Best for final production runs where quality matters most. |
 
 ### Normalization
 

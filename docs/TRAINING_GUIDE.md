@@ -120,7 +120,7 @@ Histology-pretrained backbones (marked "Histology" in the dropdown) use weights 
 |-----------|---------|----------|
 | **Epochs** | 50 | 50-200 for small datasets, 20-100 for large. Early stopping prevents overfitting. |
 | **Batch Size** | 8 | 4-8 for 8GB VRAM with 512px tiles. Reduce if out-of-memory. |
-| **Learning Rate** | 0.001 | Safe default for Adam. Reduce to 1e-4 if loss oscillates. |
+| **Learning Rate** | 0.001 | Safe default for AdamW. Reduce to 1e-4 if loss oscillates. When using OneCycleLR, an LR finder auto-runs to suggest the optimal max learning rate. |
 | **Validation Split** | 20% | 15-25% typical. 10% for very small datasets. |
 | **Tile Size** | 512 | Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
 | **Resolution** | 1x | 1x for cell-level, 2-4x for tissue-level classification. |
@@ -131,11 +131,13 @@ Histology-pretrained backbones (marked "Histology" in the dropdown) use weights 
 
 | Parameter | Default | Guidance |
 |-----------|---------|----------|
-| **LR Scheduler** | One Cycle | Best default. [PyTorch docs](https://pytorch.org/docs/stable/optim.html) |
+| **LR Scheduler** | One Cycle | Best default. "Reduce on Plateau" is a good alternative when training is noisy. [PyTorch docs](https://pytorch.org/docs/stable/optim.html) |
 | **Loss Function** | CE + Dice | Recommended. Dice optimizes IoU directly. [smp losses](https://smp.readthedocs.io/en/latest/losses.html) |
 | **Early Stop Metric** | Mean IoU | More reliable than validation loss. |
 | **Early Stop Patience** | 15 | Epochs without improvement before stopping. |
-| **Mixed Precision** | Enabled | ~2x speedup on NVIDIA GPUs. [PyTorch AMP](https://pytorch.org/docs/stable/amp.html) |
+| **Mixed Precision** | Enabled | Auto-detects BF16 (Ampere+ GPUs) or FP16. ~2x speedup. [PyTorch AMP](https://pytorch.org/docs/stable/amp.html) |
+| **Gradient Accumulation** | 1 | Accumulate gradients over N batches. Set 2-4 to simulate larger batches on limited VRAM. |
+| **Progressive Resizing** | Off | Train at half resolution first (40% of epochs), then full resolution. Speeds up early training. |
 
 ### Transfer Learning (advanced, collapsed by default)
 
@@ -144,6 +146,15 @@ Histology-pretrained backbones (marked "Histology" in the dropdown) use weights 
   - Small datasets (<500 tiles): Freeze most encoder layers
   - Medium datasets (500-5000 tiles): Freeze early layers only
   - Large datasets (>5000 tiles): Unfreeze nearly all layers
+
+### Automatic Optimizations
+
+The following optimizations are applied automatically -- no configuration needed:
+
+- **AdamW optimizer** with fast.ai-tuned hyperparameters (betas=0.9/0.99, eps=1e-5, weight_decay=0.01). AdamW decouples weight decay from the gradient update, producing better generalization than Adam.
+- **Discriminative learning rates**: When using pretrained weights, the encoder automatically receives 1/10th of the base learning rate while the decoder and segmentation head train at the full rate. This prevents catastrophic forgetting of pretrained features.
+- **LR Finder**: When using the One Cycle scheduler on a new training run (not resuming from checkpoint), an automatic learning rate range test runs before training to find the optimal max learning rate. The suggested LR is logged and used as the OneCycleLR max_lr.
+- **BF16 auto-detection**: On Ampere+ GPUs (RTX 3000 series and newer), training and inference automatically use BF16 mixed precision instead of FP16. BF16 has a larger dynamic range and does not require gradient scaling, improving stability.
 
 ### Data Augmentation (collapsed by default)
 

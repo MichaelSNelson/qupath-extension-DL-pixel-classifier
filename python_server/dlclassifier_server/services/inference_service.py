@@ -422,6 +422,7 @@ class InferenceService:
         reflection_padding: int = 0,
         gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
         use_amp: bool = True,
+        use_tta: bool = False,
     ) -> List[np.ndarray]:
         """Run batched inference on a list of preprocessed images.
 
@@ -434,6 +435,7 @@ class InferenceService:
             reflection_padding: Pixels of reflection padding to add
             gpu_batch_size: Max images per forward pass
             use_amp: Use FP16 mixed precision on CUDA
+            use_tta: Use Test-Time Augmentation (D4 transforms)
 
         Returns:
             List of probability maps, each with shape (C, H, W)
@@ -442,6 +444,10 @@ class InferenceService:
             return []
 
         model_type, model = model_tuple
+
+        # Wrap model with TTA if requested (PyTorch models only)
+        if use_tta and model_type != "onnx":
+            model = self._wrap_with_tta(model)
 
         # Apply reflection padding and convert HWC -> CHW for all tiles
         pad = reflection_padding
@@ -488,7 +494,11 @@ class InferenceService:
                 batch_tensor = torch.from_numpy(batch_np).to(self.device)
                 with torch.no_grad():
                     if use_amp and self._device_str == "cuda":
-                        with torch.amp.autocast("cuda", dtype=torch.float16):
+                        # Prefer BF16 on Ampere+ GPUs, fall back to FP16
+                        amp_dtype = (torch.bfloat16
+                                     if torch.cuda.is_bf16_supported()
+                                     else torch.float16)
+                        with torch.amp.autocast("cuda", dtype=amp_dtype):
                             outputs = model(batch_tensor)
                     else:
                         outputs = model(batch_tensor)
@@ -517,6 +527,7 @@ class InferenceService:
         tile_array: np.ndarray,
         input_config: Dict[str, Any],
         reflection_padding: int = 0,
+        use_tta: bool = False,
     ) -> np.ndarray:
         """Run inference on a single pre-loaded tile array.
 
@@ -528,6 +539,7 @@ class InferenceService:
             tile_array: numpy array (H, W, C), float32, already normalized
             input_config: dict with normalization config
             reflection_padding: pixels of padding
+            use_tta: Use Test-Time Augmentation (D4 transforms)
 
         Returns:
             numpy array (C, H, W), float32 probability map
@@ -537,7 +549,8 @@ class InferenceService:
             model_tuple,
             [tile_array],
             reflection_padding=reflection_padding,
-            gpu_batch_size=1
+            gpu_batch_size=1,
+            use_tta=use_tta
         )
         return prob_maps[0]  # (C, H, W)
 
@@ -577,6 +590,36 @@ class InferenceService:
             reflection_padding=reflection_padding
         )
         return results[0]
+
+    # ==================== TTA Support ====================
+
+    @staticmethod
+    def _wrap_with_tta(model):
+        """Wrap a PyTorch model with Test-Time Augmentation (D4 transforms).
+
+        Uses ttach library for horizontal/vertical flips and 90-degree rotations.
+        The wrapper averages predictions across all augmented views.
+
+        Args:
+            model: PyTorch segmentation model
+
+        Returns:
+            TTA-wrapped model, or original model if ttach is not available
+        """
+        try:
+            import ttach as tta
+            transforms = tta.Compose([
+                tta.HorizontalFlip(),
+                tta.VerticalFlip(),
+                tta.Rotate90(angles=[0, 90, 180, 270]),
+            ])
+            wrapped = tta.SegmentationTTAWrapper(model, transforms, merge_mode='mean')
+            logger.debug("TTA: wrapped model with D4 transforms")
+            return wrapped
+        except ImportError:
+            logger.warning("ttach not installed -- TTA disabled. "
+                          "Install with: pip install ttach")
+            return model
 
     # ==================== Model Loading ====================
 

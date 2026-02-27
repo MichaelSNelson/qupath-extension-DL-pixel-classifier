@@ -163,6 +163,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
         trainingParams.put("early_stopping_metric", trainingConfig.getEarlyStoppingMetric());
         trainingParams.put("mixed_precision", trainingConfig.isMixedPrecision());
+        if (trainingConfig.getGradientAccumulationSteps() > 1) {
+            trainingParams.put("gradient_accumulation_steps", trainingConfig.getGradientAccumulationSteps());
+        }
+        if (trainingConfig.isProgressiveResize()) {
+            trainingParams.put("progressive_resize", true);
+        }
         if (trainingConfig.getFocusClass() != null) {
             trainingParams.put("focus_class", trainingConfig.getFocusClass());
             trainingParams.put("focus_class_min_iou", trainingConfig.getFocusClassMinIoU());
@@ -571,6 +577,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         inputs.put("num_channels", numChannels);
                         inputs.put("input_config", inputConfig);
                         inputs.put("reflection_padding", reflectionPadding);
+                        if (inferenceConfig.isUseTTA()) {
+                            inputs.put("use_tta", true);
+                        }
 
                         Task task = appose.runTask("inference_pixel", inputs);
 
@@ -687,6 +696,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     inputs.put("input_config", inputConfig);
                     inputs.put("output_dir", outputDir.toString());
                     inputs.put("reflection_padding", reflectionPadding);
+                    if (inferenceConfig.isUseTTA()) {
+                        inputs.put("use_tta", true);
+                    }
 
                     Task task = appose.runTask("inference_pixel_batch", inputs);
 

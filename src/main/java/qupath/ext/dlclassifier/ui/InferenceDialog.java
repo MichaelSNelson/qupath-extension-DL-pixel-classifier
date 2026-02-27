@@ -120,6 +120,7 @@ public class InferenceDialog {
         private Label overlapWarningLabel;
         private ComboBox<InferenceConfig.BlendMode> blendModeCombo;
         private CheckBox useGPUCheck;
+        private CheckBox useTTACheck;
 
         // Channel section (for brightfield auto-configuration)
         private TitledPane channelSectionPane;
@@ -489,6 +490,19 @@ public class InferenceDialog {
                     "Apple Silicon (MPS) is also supported.");
 
             grid.add(useGPUCheck, 0, row, 2, 1);
+            row++;
+
+            // Test-Time Augmentation
+            useTTACheck = new CheckBox("Test-Time Augmentation (TTA)");
+            useTTACheck.setSelected(false);
+            TooltipHelper.install(useTTACheck,
+                    "Run inference with D4 augmentations (flips + 90-degree rotations)\n" +
+                    "and average the predictions.\n\n" +
+                    "Typically improves segmentation quality by 1-3%,\n" +
+                    "but inference is ~8x slower.\n\n" +
+                    "Recommended for final results, not for iterative testing.");
+
+            grid.add(useTTACheck, 0, row, 2, 1);
 
             // Initialize warning based on default value
             updateOverlapWarning(overlapPercentSpinner.getValue());
@@ -872,6 +886,7 @@ public class InferenceDialog {
                     .holeFilling(holeFillingSpinner.getValue())
                     .smoothing(smoothingSpinner.getValue())
                     .useGPU(useGPUCheck.isSelected())
+                    .useTTA(useTTACheck.isSelected())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
@@ -906,6 +921,7 @@ public class InferenceDialog {
                     .holeFilling(holeFillingSpinner.getValue())
                     .smoothing(smoothingSpinner.getValue())
                     .useGPU(useGPUCheck.isSelected())
+                    .useTTA(useTTACheck.isSelected())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();

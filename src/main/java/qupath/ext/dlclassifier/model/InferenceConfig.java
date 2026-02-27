@@ -74,6 +74,7 @@ public class InferenceConfig {
     // Processing options
     private final int maxTilesInMemory;
     private final boolean useGPU;
+    private final boolean useTTA;
 
     private InferenceConfig(Builder builder) {
         this.tileSize = builder.tileSize;
@@ -87,6 +88,7 @@ public class InferenceConfig {
         this.boundarySmoothing = builder.boundarySmoothing;
         this.maxTilesInMemory = builder.maxTilesInMemory;
         this.useGPU = builder.useGPU;
+        this.useTTA = builder.useTTA;
     }
 
     // Getters
@@ -136,6 +138,19 @@ public class InferenceConfig {
     }
 
     /**
+     * Checks whether Test-Time Augmentation (TTA) is enabled.
+     * <p>
+     * When enabled, inference runs the model on multiple augmented versions
+     * of each tile (flips and 90-degree rotations) and averages the predictions.
+     * This typically improves segmentation quality by 1-3% but is ~8x slower.
+     *
+     * @return true if TTA is enabled
+     */
+    public boolean isUseTTA() {
+        return useTTA;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -162,6 +177,7 @@ public class InferenceConfig {
                 Double.compare(that.boundarySmoothing, boundarySmoothing) == 0 &&
                 maxTilesInMemory == that.maxTilesInMemory &&
                 useGPU == that.useGPU &&
+                useTTA == that.useTTA &&
                 blendMode == that.blendMode &&
                 outputType == that.outputType &&
                 objectType == that.objectType;
@@ -171,13 +187,13 @@ public class InferenceConfig {
     public int hashCode() {
         return Objects.hash(tileSize, overlap, overlapPercent, blendMode, outputType, objectType,
                 minObjectSizeMicrons, holeFillingMicrons, boundarySmoothing,
-                maxTilesInMemory, useGPU);
+                maxTilesInMemory, useGPU, useTTA);
     }
 
     @Override
     public String toString() {
-        return String.format("InferenceConfig{tile=%d, overlap=%d (%.1f%%), output=%s, objectType=%s, blend=%s}",
-                tileSize, overlap, overlapPercent, outputType, objectType, blendMode);
+        return String.format("InferenceConfig{tile=%d, overlap=%d (%.1f%%), output=%s, objectType=%s, blend=%s, tta=%b}",
+                tileSize, overlap, overlapPercent, outputType, objectType, blendMode, useTTA);
     }
 
     public static Builder builder() {
@@ -199,6 +215,7 @@ public class InferenceConfig {
         private double boundarySmoothing = 2.0;
         private int maxTilesInMemory = 50;
         private boolean useGPU = true;
+        private boolean useTTA = false;
 
         public Builder tileSize(int tileSize) {
             this.tileSize = tileSize;
@@ -303,6 +320,20 @@ public class InferenceConfig {
 
         public Builder useGPU(boolean useGPU) {
             this.useGPU = useGPU;
+            return this;
+        }
+
+        /**
+         * Sets whether to use Test-Time Augmentation (TTA).
+         * <p>
+         * TTA runs inference with D4 transforms (flips + 90-degree rotations)
+         * and averages the predictions. Improves quality by 1-3% but ~8x slower.
+         *
+         * @param useTTA true to enable TTA
+         * @return this builder
+         */
+        public Builder useTTA(boolean useTTA) {
+            this.useTTA = useTTA;
             return this;
         }
 

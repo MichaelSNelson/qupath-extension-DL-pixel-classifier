@@ -62,6 +62,12 @@ public class TrainingConfig {
     // Intensity augmentation mode: "none", "brightfield", or "fluorescence"
     private final String intensityAugMode;
 
+    // Gradient accumulation (effective batch = batchSize * gradientAccumulationSteps)
+    private final int gradientAccumulationSteps;
+
+    // Progressive resizing: train at half resolution first, then full
+    private final boolean progressiveResize;
+
     // Continue training: path to a previously trained model's .pt file to load weights from
     private final String pretrainedModelPath;
 
@@ -96,6 +102,8 @@ public class TrainingConfig {
         this.focusClass = builder.focusClass;
         this.focusClassMinIoU = builder.focusClassMinIoU;
         this.intensityAugMode = builder.intensityAugMode;
+        this.gradientAccumulationSteps = builder.gradientAccumulationSteps;
+        this.progressiveResize = builder.progressiveResize;
         this.pretrainedModelPath = builder.pretrainedModelPath;
     }
 
@@ -309,6 +317,32 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the gradient accumulation steps.
+     * <p>
+     * When greater than 1, gradients are accumulated across this many batches
+     * before a single optimizer step, effectively increasing the batch size
+     * without using more GPU memory.
+     *
+     * @return accumulation steps (1 = no accumulation)
+     */
+    public int getGradientAccumulationSteps() {
+        return gradientAccumulationSteps;
+    }
+
+    /**
+     * Checks whether progressive resizing is enabled.
+     * <p>
+     * When enabled, training starts at half tile resolution for the first 40% of epochs,
+     * then switches to full resolution. This can speed up early training and
+     * act as a form of regularization.
+     *
+     * @return true if progressive resizing is enabled
+     */
+    public boolean isProgressiveResize() {
+        return progressiveResize;
+    }
+
+    /**
      * Gets the path to a previously trained model's .pt file for weight initialization.
      * <p>
      * When set, the model weights are loaded from this file before training begins.
@@ -384,6 +418,8 @@ public class TrainingConfig {
                 Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
                 Objects.equals(focusClass, that.focusClass) &&
                 Objects.equals(intensityAugMode, that.intensityAugMode) &&
+                gradientAccumulationSteps == that.gradientAccumulationSteps &&
+                progressiveResize == that.progressiveResize &&
                 Objects.equals(pretrainedModelPath, that.pretrainedModelPath);
     }
 
@@ -394,15 +430,17 @@ public class TrainingConfig {
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
                 earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU, intensityAugMode, pretrainedModelPath);
+                focusClass, focusClassMinIoU, intensityAugMode,
+                gradientAccumulationSteps, progressiveResize, pretrainedModelPath);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, pretrainedModel=%s}",
-                modelType, backbone, epochs, learningRate, tileSize, downsample, contextScale, lineStrokeWidth,
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, wd=%.4f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, gradAccum=%d, progResize=%b, pretrainedModel=%s}",
+                modelType, backbone, epochs, learningRate, weightDecay, tileSize, downsample, contextScale, lineStrokeWidth,
                 schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU, intensityAugMode, pretrainedModelPath);
+                focusClass, focusClassMinIoU, intensityAugMode,
+                gradientAccumulationSteps, progressiveResize, pretrainedModelPath);
     }
 
     public static Builder builder() {
@@ -418,7 +456,7 @@ public class TrainingConfig {
         private int epochs = 50;
         private int batchSize = 8;
         private double learningRate = 0.001;
-        private double weightDecay = 1e-4;
+        private double weightDecay = 0.01;
         private int tileSize = 512;
         private int overlap = 64;
         private double downsample = 1.0;
@@ -438,6 +476,8 @@ public class TrainingConfig {
         private String focusClass = null;
         private double focusClassMinIoU = 0.0;
         private String intensityAugMode = "none";
+        private int gradientAccumulationSteps = 1;
+        private boolean progressiveResize = false;
         private String pretrainedModelPath = null;
 
         public Builder() {
@@ -691,6 +731,31 @@ public class TrainingConfig {
         }
 
         /**
+         * Sets the gradient accumulation steps.
+         * <p>
+         * Effective batch size = batchSize * gradientAccumulationSteps.
+         * Use when GPU memory is limited but larger effective batches are desired.
+         *
+         * @param steps accumulation steps (1-8, 1 = no accumulation)
+         */
+        public Builder gradientAccumulationSteps(int steps) {
+            this.gradientAccumulationSteps = steps;
+            return this;
+        }
+
+        /**
+         * Sets whether to use progressive resizing.
+         * <p>
+         * Trains at half resolution for the first 40% of epochs, then full resolution.
+         *
+         * @param progressiveResize true to enable progressive resizing
+         */
+        public Builder progressiveResize(boolean progressiveResize) {
+            this.progressiveResize = progressiveResize;
+            return this;
+        }
+
+        /**
          * Sets the path to a previously trained model's .pt file for weight initialization.
          * <p>
          * When set, model weights are loaded from this file before training begins.
@@ -727,6 +792,9 @@ public class TrainingConfig {
             }
             if (focusClassMinIoU < 0.0 || focusClassMinIoU > 1.0) {
                 throw new IllegalStateException("Focus class min IoU must be between 0.0 and 1.0");
+            }
+            if (gradientAccumulationSteps < 1 || gradientAccumulationSteps > 16) {
+                throw new IllegalStateException("Gradient accumulation steps must be between 1 and 16");
             }
             return new TrainingConfig(this);
         }

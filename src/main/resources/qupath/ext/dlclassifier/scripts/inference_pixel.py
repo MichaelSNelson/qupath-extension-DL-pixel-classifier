@@ -90,6 +90,10 @@ try:
     reflection_padding
 except NameError:
     reflection_padding = 0
+try:
+    use_tta
+except NameError:
+    use_tta = False
 
 # Zero-copy read from shared memory NDArray.
 # Copy immediately so the shared memory segment can be reused by Java.
@@ -111,7 +115,8 @@ with inference_lock:
     prob_maps = inference_service._infer_batch_spatial(
         model_tuple, [tile_array],
         reflection_padding=reflection_padding,
-        gpu_batch_size=1
+        gpu_batch_size=1,
+        use_tta=use_tta
     )
     prob_map = prob_maps[0]  # (C, H, W) float32
     inference_service._cleanup_after_inference()

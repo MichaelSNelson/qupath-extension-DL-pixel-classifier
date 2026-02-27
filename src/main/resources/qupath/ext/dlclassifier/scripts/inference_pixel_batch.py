@@ -91,6 +91,10 @@ try:
     reflection_padding
 except NameError:
     reflection_padding = 0
+try:
+    use_tta
+except NameError:
+    use_tta = False
 
 num_tiles = len(tile_ids)
 os.makedirs(output_dir, exist_ok=True)
@@ -111,7 +115,8 @@ with inference_lock:
     model_tuple = inference_service._load_model(model_path)
     all_prob_maps = inference_service._infer_batch_spatial(
         model_tuple, preprocessed,
-        reflection_padding=reflection_padding
+        reflection_padding=reflection_padding,
+        use_tta=use_tta
     )
     inference_service._cleanup_after_inference()
 

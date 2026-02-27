@@ -52,6 +52,7 @@ These options are collapsed by default. Expand **PROCESSING OPTIONS** to adjust.
 | **Tile Overlap (%)** | 12.5% | Higher = better blending but slower (max 50%). See below. |
 | **Blend Mode** | LINEAR | How overlapping tiles merge. LINEAR or GAUSSIAN recommended. |
 | **Use GPU** | Yes | 10-50x faster than CPU |
+| **Test-Time Augmentation (TTA)** | No | Apply D4 transforms (flips + 90-degree rotations) and average predictions. ~8x slower but typically 1-3% better quality. Best for final production runs. |
 
 ### Tile overlap and blending
 

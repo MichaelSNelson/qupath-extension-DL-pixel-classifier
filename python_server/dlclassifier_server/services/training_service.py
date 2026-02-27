@@ -22,7 +22,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, StepLR, OneCycleLR
+from torch.optim.lr_scheduler import (
+    CosineAnnealingWarmRestarts, StepLR, OneCycleLR, ReduceLROnPlateau
+)
+from torch.nn.utils import clip_grad_norm_
 from PIL import Image
 
 from .gpu_manager import GPUManager, get_gpu_manager
@@ -803,21 +806,37 @@ class TrainingService:
                    f"({100*trainable_count/total_params:.1f}%)")
 
         learning_rate = training_params.get("learning_rate", 0.001)
-        optimizer = torch.optim.Adam(
-            trainable_params,
-            lr=learning_rate,
-            weight_decay=training_params.get("weight_decay", 1e-4)
-        )
+        weight_decay = training_params.get("weight_decay", 0.01)
 
-        # Setup learning rate scheduler
+        # Discriminative learning rates for pretrained encoders (fast.ai style)
+        use_pretrained = architecture.get("use_pretrained", False)
+        has_frozen = frozen_layers is not None and len(frozen_layers) > 0
+        param_groups = self._create_param_groups(
+            model, learning_rate
+        ) if (use_pretrained or has_frozen) else None
+
+        if param_groups and len(param_groups) > 1:
+            optimizer = torch.optim.AdamW(
+                param_groups,
+                betas=(0.9, 0.99), eps=1e-5,
+                weight_decay=weight_decay
+            )
+            lr_parts = " ".join(
+                f"{g.get('group_name', '?')}={g['lr']:.6f}" for g in param_groups
+            )
+            logger.info(f"Using AdamW with discriminative LRs: {lr_parts}")
+        else:
+            optimizer = torch.optim.AdamW(
+                trainable_params,
+                lr=learning_rate,
+                betas=(0.9, 0.99), eps=1e-5,
+                weight_decay=weight_decay
+            )
+            logger.info(f"Using AdamW optimizer (lr={learning_rate}, wd={weight_decay}, "
+                       f"betas=(0.9, 0.99), eps=1e-5)")
+
+        # Scheduler setup is deferred until after criterion is created (LR finder needs it)
         epochs = training_params.get("epochs", 50)
-        scheduler = self._create_scheduler(
-            optimizer=optimizer,
-            scheduler_type=training_params.get("scheduler", "onecycle"),
-            scheduler_config=training_params.get("scheduler_config", {}),
-            epochs=epochs,
-            steps_per_epoch=len(train_loader)
-        )
 
         # Setup early stopping
         early_stopping = None
@@ -872,14 +891,48 @@ class TrainingService:
             )
             logger.info("Using CrossEntropy loss")
 
-        # Setup mixed precision training
+        # Setup learning rate scheduler (deferred until after criterion for LR finder)
+        accumulation_steps = training_params.get("gradient_accumulation_steps", 1)
+        scheduler_config = training_params.get("scheduler_config", {})
+        scheduler_config["accumulation_steps"] = accumulation_steps
+        scheduler_type = training_params.get("scheduler", "onecycle")
+
+        # LR Finder: auto-run before OneCycleLR on new training (not checkpoint resume)
+        if scheduler_type == "onecycle" and checkpoint_path is None:
+            _report_setup("finding_learning_rate")
+            try:
+                suggested_lr, finder_lrs, finder_losses = self.find_learning_rate(
+                    model, train_loader, criterion)
+                if suggested_lr is not None:
+                    logger.info(f"LR Finder suggested lr={suggested_lr:.6f}")
+                    scheduler_config["max_lr"] = suggested_lr
+                else:
+                    logger.info("LR Finder could not suggest LR, using default max_lr")
+            except Exception as e:
+                logger.warning(f"LR Finder failed: {e} -- using default max_lr")
+
+        scheduler = self._create_scheduler(
+            optimizer=optimizer,
+            scheduler_type=scheduler_type,
+            scheduler_config=scheduler_config,
+            epochs=epochs,
+            steps_per_epoch=len(train_loader)
+        )
+
+        # Setup mixed precision training with BF16 auto-detection
         use_mixed_precision = (
             training_params.get("mixed_precision", True)
             and self.device == "cuda"
         )
-        scaler = torch.amp.GradScaler("cuda") if use_mixed_precision else None
+        use_bf16 = use_mixed_precision and torch.cuda.is_bf16_supported()
+        amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
+        # BF16 doesn't need a GradScaler (wider dynamic range avoids underflow)
+        scaler = None if use_bf16 else (
+            torch.amp.GradScaler("cuda") if use_mixed_precision else None
+        )
         if use_mixed_precision:
-            logger.info("Mixed precision training enabled")
+            dtype_name = "BF16" if use_bf16 else "FP16"
+            logger.info(f"Mixed precision training enabled ({dtype_name})")
 
         # Determine best-model tracking mode (same metric as early stopping)
         # When focus class is set, always use "max" mode (higher IoU is better)
@@ -904,20 +957,23 @@ class TrainingService:
             if scheduler is not None:
                 if isinstance(scheduler, OneCycleLR):
                     remaining_epochs = epochs - start_epoch
-                    remaining_steps = remaining_epochs * len(train_loader)
+                    steps_per_epoch = len(train_loader) // accumulation_steps
+                    remaining_steps = remaining_epochs * max(steps_per_epoch, 1)
                     if remaining_steps > 0:
-                        scheduler_config = training_params.get("scheduler_config", {})
-                        max_lr = scheduler_config.get(
+                        resume_config = training_params.get("scheduler_config", {})
+                        max_lr = resume_config.get(
                             "max_lr", optimizer.param_groups[0]["lr"] * 10)
                         scheduler = OneCycleLR(
                             optimizer,
                             max_lr=max_lr,
                             total_steps=remaining_steps,
-                            pct_start=scheduler_config.get("pct_start", 0.3),
-                            anneal_strategy=scheduler_config.get("anneal_strategy", "cos"),
-                            div_factor=scheduler_config.get("div_factor", 25.0),
-                            final_div_factor=scheduler_config.get("final_div_factor", 1e4)
+                            pct_start=resume_config.get("pct_start", 0.3),
+                            anneal_strategy=resume_config.get("anneal_strategy", "cos"),
+                            div_factor=resume_config.get("div_factor", 25.0),
+                            final_div_factor=resume_config.get("final_div_factor", 1e4)
                         )
+                elif isinstance(scheduler, ReduceLROnPlateau):
+                    pass  # ReduceLROnPlateau has no state to restore
                 elif "scheduler_state_dict" in checkpoint:
                     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
@@ -945,6 +1001,58 @@ class TrainingService:
             logger.info(f"Resumed from checkpoint at epoch {start_epoch}, "
                        f"best_score={best_score:.4f}")
 
+        # Progressive resizing: train at half-resolution first, then full
+        progressive_resize = training_params.get("progressive_resize", False)
+        phase1_end_epoch = 0  # No phase transition by default
+        if progressive_resize and checkpoint_path is None:
+            phase1_end_epoch = max(1, int(epochs * 0.4))
+            input_size = architecture.get("input_size", [512, 512])
+            small_size = max(input_size[0] // 2, 64)
+            logger.info(f"Progressive resizing: phase 1 (epochs 1-{phase1_end_epoch}) "
+                       f"at {small_size}x{small_size}, phase 2 at "
+                       f"{input_size[0]}x{input_size[1]}")
+
+            # Create half-resolution datasets using torchvision transforms
+            from torchvision.transforms import InterpolationMode
+            import torchvision.transforms.functional as TF
+
+            class ResizedDataset(Dataset):
+                """Wrapper that resizes images and masks to a target size."""
+                def __init__(self, base_dataset, target_size):
+                    self.base = base_dataset
+                    self.target_size = target_size
+
+                def __len__(self):
+                    return len(self.base)
+
+                def __getitem__(self, idx):
+                    image, mask = self.base[idx]
+                    # image: (C, H, W), mask: (H, W)
+                    image = TF.resize(image, [self.target_size, self.target_size],
+                                      interpolation=InterpolationMode.BILINEAR,
+                                      antialias=True)
+                    mask = TF.resize(mask.unsqueeze(0),
+                                     [self.target_size, self.target_size],
+                                     interpolation=InterpolationMode.NEAREST
+                                     ).squeeze(0)
+                    return image, mask
+
+            small_train_dataset = ResizedDataset(train_dataset, small_size)
+            small_val_dataset = ResizedDataset(val_dataset, small_size)
+            small_train_loader = DataLoader(
+                small_train_dataset, batch_size=batch_size,
+                shuffle=True, num_workers=0)
+            small_val_loader = DataLoader(
+                small_val_dataset, batch_size=batch_size,
+                shuffle=False, num_workers=0)
+
+            # Start with small loaders
+            active_train_loader = small_train_loader
+            active_val_loader = small_val_loader
+        else:
+            active_train_loader = train_loader
+            active_val_loader = val_loader
+
         # Training loop
         _report_setup("starting_training")
         num_classes = len(classes)
@@ -954,6 +1062,28 @@ class TrainingService:
         best_mean_iou = 0.0
 
         for epoch in range(start_epoch, epochs):
+            # Progressive resizing: switch to full resolution at phase boundary
+            if progressive_resize and epoch == phase1_end_epoch and checkpoint_path is None:
+                logger.info(f"Progressive resize: switching to full resolution at epoch {epoch+1}")
+                active_train_loader = train_loader
+                active_val_loader = val_loader
+                # Recreate OneCycleLR for remaining epochs
+                if isinstance(scheduler, OneCycleLR):
+                    remaining_epochs = epochs - phase1_end_epoch
+                    remaining_steps = remaining_epochs * (
+                        len(train_loader) // accumulation_steps)
+                    remaining_steps = max(remaining_steps, 1)
+                    max_lr = scheduler_config.get(
+                        "max_lr", optimizer.param_groups[0]["lr"] * 10)
+                    scheduler = OneCycleLR(
+                        optimizer,
+                        max_lr=max_lr,
+                        total_steps=remaining_steps,
+                        pct_start=scheduler_config.get("pct_start", 0.3),
+                        anneal_strategy=scheduler_config.get("anneal_strategy", "cos"),
+                        div_factor=scheduler_config.get("div_factor", 25.0),
+                        final_div_factor=scheduler_config.get("final_div_factor", 1e4)
+                    )
             # Check for cancellation
             if cancel_flag and cancel_flag.is_set():
                 logger.info("Training cancelled")
@@ -972,35 +1102,51 @@ class TrainingService:
             model.train()
             train_loss = 0.0
 
-            for batch_idx, (images, masks) in enumerate(train_loader):
+            # Gradient accumulation support
+            effective_batches = 0
+            optimizer.zero_grad()
+
+            for batch_idx, (images, masks) in enumerate(active_train_loader):
                 images = images.to(self.device)
                 masks = masks.to(self.device)
 
-                optimizer.zero_grad()
-
                 if use_mixed_precision:
-                    with torch.amp.autocast("cuda"):
+                    with torch.amp.autocast("cuda", dtype=amp_dtype):
                         outputs = model(images)
                         loss = criterion(outputs, masks)
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    scaled_loss = loss / accumulation_steps
+                    if scaler is not None:
+                        # FP16 path: use GradScaler
+                        scaler.scale(scaled_loss).backward()
+                    else:
+                        # BF16 path: no scaler needed
+                        scaled_loss.backward()
                 else:
                     outputs = model(images)
                     loss = criterion(outputs, masks)
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer.step()
+                    scaled_loss = loss / accumulation_steps
+                    scaled_loss.backward()
 
                 train_loss += loss.item()
 
-                # Step scheduler if using OneCycleLR (per-batch)
-                if isinstance(scheduler, OneCycleLR):
-                    scheduler.step()
+                # Step optimizer every accumulation_steps batches (or on last batch)
+                if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(active_train_loader):
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        optimizer.step()
+                    optimizer.zero_grad()
+                    effective_batches += 1
 
-            train_loss /= max(len(train_loader), 1)
+                    # Step scheduler if using OneCycleLR (per-optimizer-step)
+                    if isinstance(scheduler, OneCycleLR):
+                        scheduler.step()
+
+            train_loss /= max(len(active_train_loader), 1)
 
             # Validation
             model.eval()
@@ -1016,12 +1162,12 @@ class TrainingService:
             class_pixel_count = torch.zeros(num_classes, device=self.device)
 
             with torch.no_grad():
-                for images, masks in val_loader:
+                for images, masks in active_val_loader:
                     images = images.to(self.device)
                     masks = masks.to(self.device)
 
                     if use_mixed_precision:
-                        with torch.amp.autocast("cuda"):
+                        with torch.amp.autocast("cuda", dtype=amp_dtype):
                             outputs = model(images)
                             loss = criterion(outputs, masks)
                     else:
@@ -1058,7 +1204,7 @@ class TrainingService:
                             class_loss_sum[c] += per_pixel_loss[c_mask].sum()
                             class_pixel_count[c] += c_count
 
-            val_loss /= max(len(val_loader), 1)
+            val_loss /= max(len(active_val_loader), 1)
             accuracy = correct / max(total, 1)
 
             # Compute per-class IoU and loss
@@ -1104,7 +1250,14 @@ class TrainingService:
 
             # Step scheduler (for epoch-based schedulers)
             if scheduler is not None and not isinstance(scheduler, OneCycleLR):
-                if isinstance(scheduler, CosineAnnealingWarmRestarts):
+                if isinstance(scheduler, ReduceLROnPlateau):
+                    # ReduceLROnPlateau needs the metric value
+                    if focus_class and focus_class in per_class_iou:
+                        plateau_metric = per_class_iou[focus_class]
+                    else:
+                        plateau_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                    scheduler.step(plateau_metric)
+                elif isinstance(scheduler, CosineAnnealingWarmRestarts):
                     scheduler.step(epoch + 1)
                 else:
                     scheduler.step()
@@ -1278,8 +1431,21 @@ class TrainingService:
 
         elif scheduler_type == "onecycle":
             # One-cycle policy (good for finding optimal LR)
-            max_lr = scheduler_config.get("max_lr", optimizer.param_groups[0]["lr"] * 10)
-            total_steps = epochs * steps_per_epoch
+            # Support discriminative LRs: pass list of max_lr per param group
+            if len(optimizer.param_groups) > 1:
+                max_lr = [
+                    scheduler_config.get("max_lr", g["lr"] * 10)
+                    if isinstance(scheduler_config.get("max_lr"), (int, float))
+                    else g["lr"] * 10
+                    for g in optimizer.param_groups
+                ]
+            else:
+                max_lr = scheduler_config.get("max_lr", optimizer.param_groups[0]["lr"] * 10)
+
+            accumulation_steps = scheduler_config.get("accumulation_steps", 1)
+            total_steps = epochs * (steps_per_epoch // accumulation_steps)
+            # Ensure at least 1 step
+            total_steps = max(total_steps, 1)
 
             scheduler = OneCycleLR(
                 optimizer,
@@ -1290,12 +1456,187 @@ class TrainingService:
                 div_factor=scheduler_config.get("div_factor", 25.0),
                 final_div_factor=scheduler_config.get("final_div_factor", 1e4)
             )
-            logger.info(f"Using OneCycleLR scheduler (max_lr={max_lr})")
+            logger.info(f"Using OneCycleLR scheduler (max_lr={max_lr}, total_steps={total_steps})")
+            return scheduler
+
+        elif scheduler_type == "plateau":
+            # ReduceLROnPlateau: reduce LR when metric stops improving
+            mode = scheduler_config.get("mode", "max")  # "max" for mIoU
+            factor = scheduler_config.get("factor", 0.5)
+            patience = scheduler_config.get("patience", 10)
+            min_lr = scheduler_config.get("min_lr", 1e-7)
+
+            scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode=mode,
+                factor=factor,
+                patience=patience,
+                min_lr=min_lr,
+                verbose=True
+            )
+            logger.info(f"Using ReduceLROnPlateau scheduler (mode={mode}, "
+                       f"factor={factor}, patience={patience}, min_lr={min_lr})")
             return scheduler
 
         else:
             logger.warning(f"Unknown scheduler type: {scheduler_type}, using none")
             return None
+
+    def _create_param_groups(self, model, learning_rate):
+        """Create parameter groups with discriminative LRs for transfer learning.
+
+        Fast.ai-style: encoder gets 1/10th the LR, decoder and head get full LR.
+        This prevents catastrophic forgetting of pretrained features while allowing
+        the decoder to adapt quickly.
+
+        Args:
+            model: The segmentation model
+            learning_rate: Base learning rate for decoder/head
+
+        Returns:
+            List of param group dicts if multiple groups, else flat param list
+        """
+        encoder_params = []
+        decoder_params = []
+        head_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if "encoder" in name:
+                encoder_params.append(param)
+            elif "decoder" in name:
+                decoder_params.append(param)
+            else:  # segmentation_head or other
+                head_params.append(param)
+
+        groups = []
+        if encoder_params:
+            groups.append({
+                "params": encoder_params,
+                "lr": learning_rate / 10,
+                "group_name": "encoder"
+            })
+        if decoder_params:
+            groups.append({
+                "params": decoder_params,
+                "lr": learning_rate,
+                "group_name": "decoder"
+            })
+        if head_params:
+            groups.append({
+                "params": head_params,
+                "lr": learning_rate,
+                "group_name": "head"
+            })
+
+        if len(groups) > 1:
+            return groups
+        # Fall back to flat list if only one group
+        return encoder_params + decoder_params + head_params
+
+    def find_learning_rate(self, model, train_loader, criterion,
+                           start_lr=1e-7, end_lr=10, num_iter=100):
+        """Fast.ai-style LR range test.
+
+        Exponentially increases LR from start_lr to end_lr over num_iter steps,
+        recording loss at each step. Suggests the LR at the steepest descent point.
+
+        Args:
+            model: The model to test
+            train_loader: Training data loader
+            criterion: Loss function
+            start_lr: Starting learning rate
+            end_lr: Ending learning rate
+            num_iter: Number of iterations to test
+
+        Returns:
+            Tuple of (suggested_lr, lrs, losses) or (None, [], []) on failure
+        """
+        # Save original model state to restore after test
+        original_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+        optimizer = torch.optim.AdamW(
+            [p for p in model.parameters() if p.requires_grad],
+            lr=start_lr, weight_decay=0.01)
+
+        gamma = (end_lr / start_lr) ** (1 / num_iter)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+
+        lrs, losses = [], []
+        best_loss = float('inf')
+        smoothed_loss = 0
+
+        model.train()
+        data_iter = iter(train_loader)
+
+        for i in range(num_iter):
+            try:
+                images, masks = next(data_iter)
+            except StopIteration:
+                data_iter = iter(train_loader)
+                images, masks = next(data_iter)
+
+            images = images.to(self.device)
+            masks = masks.to(self.device)
+
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, masks)
+
+            # Exponential smoothing with bias correction
+            smoothed_loss = 0.98 * smoothed_loss + 0.02 * loss.item()
+            corrected = smoothed_loss / (1 - 0.98 ** (i + 1))
+
+            if corrected < best_loss:
+                best_loss = corrected
+            if corrected > 4 * best_loss and i > 5:
+                break  # Diverging
+
+            lrs.append(optimizer.param_groups[0]['lr'])
+            losses.append(corrected)
+
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+        # Restore original model state
+        model.load_state_dict(original_state)
+        model = model.to(self.device)
+
+        if len(lrs) < 10:
+            logger.warning("LR finder: too few iterations to suggest LR")
+            return None, lrs, losses
+
+        suggested_lr = self._find_valley(lrs, losses)
+        return suggested_lr, lrs, losses
+
+    @staticmethod
+    def _find_valley(lrs, losses):
+        """Find the LR at the steepest descent in the loss curve (valley method).
+
+        Args:
+            lrs: List of learning rates
+            losses: List of smoothed losses
+
+        Returns:
+            Suggested learning rate at steepest descent, or None if not found
+        """
+        if len(lrs) < 4:
+            return None
+        # Compute gradient (finite differences on log-lr scale)
+        log_lrs = [np.log10(lr) for lr in lrs]
+        gradients = []
+        for i in range(1, len(losses) - 1):
+            grad = (losses[i + 1] - losses[i - 1]) / (log_lrs[i + 1] - log_lrs[i - 1])
+            gradients.append(grad)
+        if not gradients:
+            return None
+        # Steepest descent = most negative gradient
+        min_idx = int(np.argmin(gradients))
+        # The LR is at idx+1 (offset from gradient computation)
+        suggested = lrs[min_idx + 1]
+        return suggested
 
     def _save_checkpoint(
         self,
@@ -1335,7 +1676,9 @@ class TrainingService:
         if best_model_state is not None:
             checkpoint["best_model_state"] = best_model_state
 
-        if scheduler is not None and not isinstance(scheduler, OneCycleLR):
+        if (scheduler is not None
+                and not isinstance(scheduler, OneCycleLR)
+                and not isinstance(scheduler, ReduceLROnPlateau)):
             checkpoint["scheduler_state_dict"] = scheduler.state_dict()
 
         if early_stopping is not None:

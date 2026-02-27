@@ -99,12 +99,16 @@ Architecture: UNet
 Backbone: resnet34
 Epochs: 50 (early stopping will handle the rest)
 Batch Size: 8
-Learning Rate: 0.001
+Learning Rate: 0.001  (auto-tuned by LR finder when using One Cycle)
 Tile Size: 512
 Pretrained: Yes
 LR Scheduler: One Cycle
 Loss: CE + Dice
+Gradient Accumulation: 1  (increase to 2-4 if VRAM is limited)
+Progressive Resizing: Off  (try enabling for large tile sizes)
 ```
+
+> **Note:** The optimizer is AdamW with fast.ai-tuned defaults (weight_decay=0.01). Discriminative learning rates are automatically applied when using pretrained weights -- the encoder trains at 1/10th the base LR.
 
 ### If results are poor
 
@@ -128,8 +132,9 @@ Loss: CE + Dice
 #### Training is unstable (loss oscillates)
 
 - Reduce learning rate (try 1e-4 or 1e-5)
-- Switch to One Cycle scheduler
-- Reduce batch size
+- Switch to One Cycle scheduler (the auto LR finder helps find the right max LR)
+- Try "Reduce on Plateau" scheduler -- it automatically lowers the LR when progress stalls
+- Reduce batch size, or use gradient accumulation (set accumulation=2-4 with a smaller batch)
 - Check for annotation errors (mislabeled regions)
 
 #### Specific classes perform poorly
@@ -148,6 +153,9 @@ Loss: CE + Dice
 | Multi-scale features needed | Try a larger backbone (resnet50) or import a custom ONNX model |
 | Staining variation between slides | Enable color jitter augmentation |
 | Tissue distortion artifacts | Enable elastic deformation augmentation |
+| Limited VRAM but want large effective batch | Set batch=4 with gradient accumulation=4 (effective batch 16) |
+| Large tile size (512-1024px) | Enable progressive resizing to speed up early epochs |
+| Noisy training curves | Use "Reduce on Plateau" scheduler instead of One Cycle |
 
 ## Monitoring Training
 
@@ -198,6 +206,12 @@ The extension supports four normalization strategies. The choice affects how pix
 2. **Try transfer learning presets** (small/medium/large)
 3. **Experiment with tile size** (256 vs 512)
 4. **Try different downsample levels** for tissue-level features
+
+### Medium-high effort
+
+1. **Enable Test-Time Augmentation (TTA)** during inference for 1-3% quality improvement (~8x slower)
+2. **Use gradient accumulation** (set to 2-4) to simulate larger batches without more VRAM
+3. **Enable progressive resizing** to speed up training on large tile sizes and reduce overfitting
 
 ### High effort
 

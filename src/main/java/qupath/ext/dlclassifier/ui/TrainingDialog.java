@@ -164,6 +164,8 @@ public class TrainingDialog {
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
         private CheckBox mixedPrecisionCheck;
+        private Spinner<Integer> gradientAccumulationSpinner;
+        private CheckBox progressiveResizeCheck;
 
         // Focus class
         private ComboBox<String> focusClassCombo;
@@ -1149,14 +1151,16 @@ public class TrainingDialog {
 
             // LR Scheduler
             schedulerCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "One Cycle", "Cosine Annealing", "Step Decay", "None"));
+                    "One Cycle", "Cosine Annealing", "Reduce on Plateau", "Step Decay", "None"));
             schedulerCombo.setValue(mapSchedulerToDisplay(DLClassifierPreferences.getDefaultScheduler()));
             TooltipHelper.installWithLink(schedulerCombo,
                     "Learning rate schedule during training:\n\n" +
                     "One Cycle (recommended): Smooth ramp-up then decay.\n" +
-                    "  Typically finds a good LR range automatically.\n\n" +
+                    "  Auto-runs LR finder to choose max learning rate.\n\n" +
                     "Cosine Annealing: Periodic warm restarts.\n" +
                     "  Can escape local minima but may cause LR spikes.\n\n" +
+                    "Reduce on Plateau: Halves LR when metric stops improving.\n" +
+                    "  Adapts to training dynamics. Good for long runs.\n\n" +
                     "Step Decay: Reduce LR by factor every N epochs.\n" +
                     "  Predictable but requires manual tuning of step schedule.\n\n" +
                     "None: Constant learning rate throughout training.",
@@ -1316,6 +1320,37 @@ public class TrainingDialog {
                     "https://pytorch.org/docs/stable/amp.html");
 
             grid.add(mixedPrecisionCheck, 0, row, 2, 1);
+            row++;
+
+            // Gradient accumulation
+            gradientAccumulationSpinner = new Spinner<>(1, 8, 1, 1);
+            gradientAccumulationSpinner.setEditable(true);
+            gradientAccumulationSpinner.setPrefWidth(100);
+            TooltipHelper.install(gradientAccumulationSpinner,
+                    "Accumulate gradients over N batches before updating weights.\n\n" +
+                    "Effective batch size = Batch Size x Accumulation Steps.\n" +
+                    "Use this when GPU memory is too limited for large batches.\n\n" +
+                    "1: Normal training (no accumulation).\n" +
+                    "2-4: Simulates 2-4x larger batch without extra memory.\n" +
+                    "8: Maximum accumulation; very stable but slower per epoch.");
+
+            grid.add(new Label("Gradient Accumulation:"), 0, row);
+            grid.add(gradientAccumulationSpinner, 1, row);
+            row++;
+
+            // Progressive resizing
+            progressiveResizeCheck = new CheckBox("Progressive resizing");
+            progressiveResizeCheck.setSelected(false);
+            TooltipHelper.install(progressiveResizeCheck,
+                    "Train at half tile resolution for the first 40% of epochs,\n" +
+                    "then switch to full resolution.\n\n" +
+                    "Benefits:\n" +
+                    "- Faster early training (4x fewer pixels)\n" +
+                    "- Acts as regularization (prevents overfitting)\n" +
+                    "- Helps model learn coarse features first\n\n" +
+                    "Leave unchecked for standard training.");
+
+            grid.add(progressiveResizeCheck, 0, row, 2, 1);
 
             TitledPane pane = new TitledPane("TRAINING STRATEGY", grid);
             pane.setExpanded(false); // Collapsed by default - advanced settings
@@ -2157,6 +2192,8 @@ public class TrainingDialog {
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
+                    .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
+                    .progressiveResize(progressiveResizeCheck.isSelected())
                     .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
                     .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
                     .pretrainedModelPath(
@@ -2249,6 +2286,7 @@ public class TrainingDialog {
             return switch (value) {
                 case "onecycle" -> "One Cycle";
                 case "cosine" -> "Cosine Annealing";
+                case "plateau" -> "Reduce on Plateau";
                 case "step" -> "Step Decay";
                 case "none" -> "None";
                 default -> "One Cycle";
@@ -2260,6 +2298,7 @@ public class TrainingDialog {
             return switch (display) {
                 case "One Cycle" -> "onecycle";
                 case "Cosine Annealing" -> "cosine";
+                case "Reduce on Plateau" -> "plateau";
                 case "Step Decay" -> "step";
                 case "None" -> "none";
                 default -> "onecycle";
@@ -2336,6 +2375,8 @@ public class TrainingDialog {
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
+                    .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
+                    .progressiveResize(progressiveResizeCheck.isSelected())
                     .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
                     .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
                     .build();
