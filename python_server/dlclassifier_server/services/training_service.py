@@ -1471,8 +1471,7 @@ class TrainingService:
                 mode=mode,
                 factor=factor,
                 patience=patience,
-                min_lr=min_lr,
-                verbose=True
+                min_lr=min_lr
             )
             logger.info(f"Using ReduceLROnPlateau scheduler (mode={mode}, "
                        f"factor={factor}, patience={patience}, min_lr={min_lr})")
