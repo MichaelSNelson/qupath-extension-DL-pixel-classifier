@@ -804,9 +804,11 @@ public class InferenceDialog {
             smoothingSpinner.setDisable(!enableObjectOptions);
 
             // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY
-            boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
-                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
-            blendModeCombo.setDisable(!enableBlend);
+            if (blendModeCombo != null) {
+                boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
+                        || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
+                blendModeCombo.setDisable(!enableBlend);
+            }
 
             // Auto-select "Apply to whole image" for on-demand OVERLAY only
             if (outputType == InferenceConfig.OutputType.OVERLAY
