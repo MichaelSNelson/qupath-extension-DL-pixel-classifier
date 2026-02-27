@@ -113,7 +113,7 @@ public class ProgressMonitorController {
 
         logArea = new TextArea();
         logArea.setEditable(false);
-        logArea.setPrefRowCount(6);
+        logArea.setPrefRowCount(12);
         logArea.setWrapText(true);
         logArea.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
 
@@ -209,9 +209,10 @@ public class ProgressMonitorController {
             root.getChildren().add(iouPane);
         }
 
-        // Log section
+        // Log section (grows vertically when window is resized)
         logPane = new TitledPane("Log", logArea);
         logPane.setExpanded(false);
+        VBox.setVgrow(logPane, Priority.SOMETIMES);
         root.getChildren().add(logPane);
 
         // Buttons
