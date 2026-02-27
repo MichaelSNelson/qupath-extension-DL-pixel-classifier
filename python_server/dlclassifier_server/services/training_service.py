@@ -983,12 +983,15 @@ class TrainingService:
                         outputs = model(images)
                         loss = criterion(outputs, masks)
                     scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     outputs = model(images)
                     loss = criterion(outputs, masks)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
 
                 train_loss += loss.item()
@@ -1045,6 +1048,9 @@ class TrainingService:
                     per_pixel_loss = F.cross_entropy(
                         outputs, masks, reduction='none',
                         ignore_index=unlabeled_index)
+                    # Clamp to prevent Infinity from -log(0) when model is
+                    # very confident but wrong, which would poison the mean
+                    per_pixel_loss = torch.clamp(per_pixel_loss, max=100.0)
                     for c in range(num_classes):
                         c_mask = (masks == c) & labeled_mask
                         c_count = c_mask.sum()
