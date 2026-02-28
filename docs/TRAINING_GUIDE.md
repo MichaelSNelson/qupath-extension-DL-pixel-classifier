@@ -42,7 +42,7 @@ The dialog has collapsible sections. Sections marked with a collapse arrow can b
 
 When retraining or iterating on a model, you can pre-populate all dialog settings from a previously trained classifier:
 
-1. Click **"Load Settings from Model..."** at the top of the training dialog
+1. Click **"Retrain or refine a previously created model..."** at the top of the training dialog
 2. Select a model from the table (sorted by date, newest first)
 3. Click **OK**
 

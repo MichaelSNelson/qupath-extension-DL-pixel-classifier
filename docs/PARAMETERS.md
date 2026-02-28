@@ -4,11 +4,11 @@ Complete reference for every parameter in the training and inference dialogs. Th
 
 ## Training Parameters
 
-### Load Settings from Model
+### Retrain or Refine a Previously Created Model
 
 | Parameter | Description |
 |-----------|-------------|
-| **Load Settings from Model...** | Button at the top of the dialog. Opens a model picker with all trained classifiers (name, architecture, classes, date). Populates all dialog fields from the selected model's metadata and saved training settings. Older models without saved training settings will only populate architecture-level fields. |
+| **Retrain or refine a previously created model...** | Button at the top of the dialog. Opens a model picker with all trained classifiers (name, architecture, classes, date). Populates all dialog fields from the selected model's metadata and saved training settings. Older models without saved training settings will only populate architecture-level fields. |
 | **Loaded model label** | Shows the name of the model whose settings were loaded (or empty if none). |
 
 ### Classifier Info

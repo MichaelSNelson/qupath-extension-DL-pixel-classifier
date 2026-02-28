@@ -324,11 +324,11 @@ public class TrainingDialog {
         }
 
         private VBox createLoadSettingsSection() {
-            Button loadSettingsButton = new Button("Load Settings from Model...");
+            Button loadSettingsButton = new Button("Retrain or refine a previously created model...");
             loadSettingsButton.setStyle("-fx-font-weight: bold;");
             TooltipHelper.install(loadSettingsButton,
-                    "Populate dialog fields from a previously trained model.\n" +
-                    "Useful when retraining or iterating on a model.\n" +
+                    "Load settings from a previously trained model to retrain or refine it.\n" +
+                    "Populates all dialog fields from the selected model's configuration.\n" +
                     "All settings can still be adjusted before training.");
             loadSettingsButton.setOnAction(e -> {
                 ModelManager modelManager = new ModelManager();
