@@ -137,6 +137,24 @@ try:
                         num_channels = checkpoint_channels
                         break
 
+            # Resolve custom encoder names (e.g. histology-pretrained) to
+            # base SMP encoder names. The checkpoint state_dict already
+            # contains the trained weights, so we only need the right
+            # architecture -- no need to download pretrained weights.
+            smp_encoder_name = encoder_name
+            try:
+                from dlclassifier_server.services.pretrained_models import (
+                    PretrainedModelsService)
+                if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
+                    smp_encoder_name = (
+                        PretrainedModelsService.HISTOLOGY_ENCODERS
+                        [encoder_name][0])
+                    logger.info(
+                        "Resolved custom encoder '%s' -> '%s' for SMP",
+                        encoder_name, smp_encoder_name)
+            except ImportError:
+                pass  # Server package not available; fall through
+
             logger.info("Model: %s/%s, in_channels=%d (metadata=%d), "
                         "classes=%d",
                         model_type, encoder_name, num_channels,
@@ -156,7 +174,7 @@ try:
 
             model_cls = model_map.get(model_type, smp.Unet)
             model = model_cls(
-                encoder_name=encoder_name,
+                encoder_name=smp_encoder_name,
                 encoder_weights=None,
                 in_channels=num_channels,
                 classes=num_classes
