@@ -217,16 +217,19 @@ task.update(
 )
 
 
-def setup_callback(phase):
+def setup_callback(phase, data=None):
     """Forward setup phase updates to Appose task events."""
     total_epochs = training_params.get("epochs", 50)
+    msg = {
+        "status": "setup",
+        "setup_phase": phase,
+        "epoch": 0,
+        "total_epochs": total_epochs,
+    }
+    if data:
+        msg["config"] = data
     task.update(
-        message=json.dumps({
-            "status": "setup",
-            "setup_phase": phase,
-            "epoch": 0,
-            "total_epochs": total_epochs,
-        }),
+        message=json.dumps(msg),
         current=0,
         maximum=total_epochs
     )

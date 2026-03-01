@@ -103,7 +103,8 @@ public class ClassifierClient {
             String device,
             String deviceInfo,
             String status,
-            String setupPhase
+            String setupPhase,
+            Map<String, String> configSummary
     ) {
         public double getProgress() {
             return (double) epoch / totalEpochs;

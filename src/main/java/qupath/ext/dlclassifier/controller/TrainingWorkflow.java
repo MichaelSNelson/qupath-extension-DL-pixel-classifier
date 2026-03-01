@@ -684,6 +684,15 @@ public class TrainingWorkflow {
                                     progress.log(deviceMsg);
                                     progress.setStatus("Initializing model for "
                                             + trainingProgress.totalEpochs() + " epoch run...");
+                                } else if ("training_config".equals(trainingProgress.setupPhase())) {
+                                    // Training configuration summary
+                                    progress.log("--- Training Configuration ---");
+                                    var config = trainingProgress.configSummary();
+                                    if (config != null) {
+                                        for (var entry : config.entrySet()) {
+                                            progress.log("  " + entry.getKey() + ": " + entry.getValue());
+                                        }
+                                    }
                                 } else {
                                     // "setup" = granular phase updates during setup
                                     progress.setStatus(formatSetupPhase(trainingProgress.setupPhase()));
@@ -1373,6 +1382,10 @@ public class TrainingWorkflow {
                 return "Computing normalization statistics...";
             case "configuring_optimizer":
                 return "Configuring optimizer and scheduler...";
+            case "finding_learning_rate":
+                return "Running learning rate finder...";
+            case "loading_pretrained_weights":
+                return "Loading pretrained weights...";
             case "loading_checkpoint":
                 return "Loading checkpoint...";
             case "starting_training":

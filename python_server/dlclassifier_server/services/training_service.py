@@ -619,10 +619,10 @@ class TrainingService:
     ) -> Dict[str, Any]:
         """Internal training implementation. Called by train() with cleanup guarantee."""
 
-        def _report_setup(phase):
+        def _report_setup(phase, data=None):
             if setup_callback:
                 try:
-                    setup_callback(phase)
+                    setup_callback(phase, data)
                 except Exception:
                     pass  # Never let status reporting break training
 
@@ -1052,6 +1052,108 @@ class TrainingService:
         else:
             active_train_loader = train_loader
             active_val_loader = val_loader
+
+        # Emit training configuration summary for diagnostic logging
+        try:
+            backbone = architecture.get("backbone", "resnet34")
+            input_size = architecture.get("input_size", [512, 512])
+            tile_size_str = (f"{input_size[0]}x{input_size[1]}"
+                            if isinstance(input_size, (list, tuple))
+                            else str(input_size))
+
+            # Optimizer description
+            if param_groups and len(param_groups) > 1:
+                optimizer_desc = (f"AdamW (wd={weight_decay}, betas=0.9/0.99)"
+                                  " [discriminative LRs]")
+                disc_lr_parts = ", ".join(
+                    f"{g.get('group_name', '?')}={g['lr']:.6f}"
+                    for g in param_groups
+                )
+            else:
+                optimizer_desc = (f"AdamW (lr={learning_rate}, wd={weight_decay},"
+                                  f" betas=0.9/0.99)")
+                disc_lr_parts = None
+
+            # Scheduler description
+            if scheduler is None:
+                sched_desc = "None"
+            elif scheduler_type == "onecycle":
+                sched_desc = "OneCycleLR"
+            elif scheduler_type == "cosine":
+                sc = scheduler_config if isinstance(scheduler_config, dict) else {}
+                sched_desc = (f"CosineAnnealingWarmRestarts"
+                              f" (T_0={sc.get('T_0', '?')})")
+            elif scheduler_type == "step":
+                sc = scheduler_config if isinstance(scheduler_config, dict) else {}
+                sched_desc = (f"StepLR (step_size={sc.get('step_size', '?')},"
+                              f" gamma={sc.get('gamma', 0.1)})")
+            elif scheduler_type == "plateau":
+                sc = scheduler_config if isinstance(scheduler_config, dict) else {}
+                sched_desc = (f"ReduceOnPlateau (factor={sc.get('factor', 0.5)},"
+                              f" patience={sc.get('patience', 10)})")
+            else:
+                sched_desc = scheduler_type
+
+            # Mixed precision
+            if use_mixed_precision:
+                mp_desc = "BF16" if use_bf16 else "FP16"
+            else:
+                mp_desc = "Off"
+
+            # Normalization
+            norm_method = input_config.get("normalization", "percentile_99")
+            per_channel = input_config.get("per_channel", True)
+            norm_desc = f"{norm_method} (per_channel={per_channel})"
+
+            # Augmentation list
+            aug_enabled = training_params.get("augmentation", True)
+            if aug_enabled and augmentation_config:
+                aug_items = [k for k, v in augmentation_config.items()
+                             if v and k != "enabled"]
+                aug_desc = ", ".join(aug_items) if aug_items else "default"
+            elif aug_enabled:
+                aug_desc = "default"
+            else:
+                aug_desc = "Off"
+
+            # Early stopping
+            if early_stopping is not None:
+                es_desc = (f"{early_stopping_metric}"
+                           f" (patience={early_stopping.patience})")
+            else:
+                es_desc = "Off"
+
+            config_summary = {
+                "Architecture": f"{model_type} ({backbone})",
+                "Optimizer": optimizer_desc,
+                "Scheduler": sched_desc,
+                "Loss": loss_function,
+                "Batch Size": (f"{batch_size} (accumulation={accumulation_steps},"
+                               f" effective={batch_size * accumulation_steps})"),
+                "Tile Size": tile_size_str,
+                "Mixed Precision": mp_desc,
+                "Classes": f"{len(classes)} ({', '.join(classes)})",
+                "Training Patches": (f"{len(train_dataset)} train /"
+                                     f" {len(val_dataset)} val"),
+                "Normalization": norm_desc,
+                "Channels": str(effective_channels),
+                "Early Stopping": es_desc,
+                "Augmentation": aug_desc,
+                "Progressive Resize": "On" if progressive_resize else "Off",
+            }
+
+            # Conditional entries
+            if disc_lr_parts:
+                config_summary["Discriminative LRs"] = disc_lr_parts
+            if (scheduler_type == "onecycle" and checkpoint_path is None
+                    and scheduler_config.get("max_lr") is not None):
+                lr_val = scheduler_config["max_lr"]
+                if isinstance(lr_val, (int, float)):
+                    config_summary["LR Finder"] = f"suggested lr={lr_val:.6f}"
+
+            _report_setup("training_config", config_summary)
+        except Exception:
+            pass  # Never let config summary break training
 
         # Training loop
         _report_setup("starting_training")
