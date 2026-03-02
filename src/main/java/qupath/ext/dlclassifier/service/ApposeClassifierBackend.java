@@ -51,6 +51,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     // Permits=1: serialize all overlay inference to avoid thread death.
     private static final Semaphore inferenceSemaphore = new Semaphore(1, true);
 
+    // Health check retry settings -- concurrent overlay inference can misroute
+    // "thread death" errors to the health check task.
+    private static final int MAX_HEALTH_CHECK_RETRIES = 3;
+    private static final long HEALTH_CHECK_RETRY_DELAY_MS = 250;
+
     // Stores checkpoint info for paused training jobs so resume/finalize can
     // retrieve the checkpoint path and original training inputs.
     private static final ConcurrentHashMap<String, CheckpointInfo> checkpointStore = new ConcurrentHashMap<>();
@@ -72,9 +77,28 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             ApposeService appose = ApposeService.getInstance();
             if (!appose.isAvailable()) return false;
 
-            Task task = appose.runTask("health_check", Map.of());
-            Object healthy = task.outputs.get("healthy");
-            return Boolean.TRUE.equals(healthy);
+            // Retry on "thread death" -- concurrent overlay inference can cause
+            // stale error messages to be misrouted to the health check task.
+            for (int attempt = 0; attempt < MAX_HEALTH_CHECK_RETRIES; attempt++) {
+                try {
+                    Task task = appose.runTask("health_check", Map.of());
+                    Object healthy = task.outputs.get("healthy");
+                    return Boolean.TRUE.equals(healthy);
+                } catch (Exception e) {
+                    String msg = e.getMessage() != null ? e.getMessage() : "";
+                    if (msg.toLowerCase().contains("thread death")
+                            && attempt < MAX_HEALTH_CHECK_RETRIES - 1) {
+                        logger.debug("Health check got transient 'thread death' " +
+                                "(attempt {}/{}), retrying after {}ms...",
+                                attempt + 1, MAX_HEALTH_CHECK_RETRIES,
+                                HEALTH_CHECK_RETRY_DELAY_MS);
+                        Thread.sleep(HEALTH_CHECK_RETRY_DELAY_MS);
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+            return false;
         } catch (Exception e) {
             logger.debug("Appose health check failed: {}", e.getMessage());
             return false;
