@@ -145,26 +145,17 @@ public class ProgressMonitorController {
         lossChart.setLegendSide(javafx.geometry.Side.BOTTOM);
 
         trainLossSeries = new XYChart.Series<>();
-        trainLossSeries.setName("Train Loss");
+        trainLossSeries.setName("Train Loss (blue)");
 
         valLossSeries = new XYChart.Series<>();
-        valLossSeries.setName("Val Loss");
+        valLossSeries.setName("Val Loss (red)");
 
         lossChart.getData().addAll(List.of(trainLossSeries, valLossSeries));
 
         // Apply distinct colors so train vs validation are easily distinguishable.
-        // Uses data URI stylesheet since series nodes don't exist until layout.
-        String lossChartCss = String.join("\n",
-                ".default-color0.chart-series-line { -fx-stroke: #2196F3; -fx-stroke-width: 2px; }",
-                ".default-color1.chart-series-line { -fx-stroke: #F44336; -fx-stroke-width: 2px; }",
-                ".default-color0.chart-line-symbol { -fx-background-color: #2196F3, white; }",
-                ".default-color1.chart-line-symbol { -fx-background-color: #F44336, white; }",
-                ".default-color0.chart-legend-item-symbol { -fx-background-color: #2196F3; }",
-                ".default-color1.chart-legend-item-symbol { -fx-background-color: #F44336; }"
-        );
-        lossChart.getStylesheets().add(
-                "data:text/css;charset=utf-8," + java.net.URLEncoder.encode(lossChartCss,
-                        java.nio.charset.StandardCharsets.UTF_8));
+        String cssUrl = ProgressMonitorController.class.getResource(
+                "/qupath/ext/dlclassifier/ui/loss-chart.css").toExternalForm();
+        lossChart.getStylesheets().add(cssUrl);
 
         // Create per-class IoU chart
         NumberAxis iouXAxis = new NumberAxis();

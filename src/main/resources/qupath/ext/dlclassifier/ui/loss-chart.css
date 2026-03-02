@@ -1,0 +1,7 @@
+/* Training loss chart colors: blue for train, red for validation */
+.default-color0.chart-series-line { -fx-stroke: #2196F3; -fx-stroke-width: 2px; }
+.default-color1.chart-series-line { -fx-stroke: #F44336; -fx-stroke-width: 2px; }
+.default-color0.chart-line-symbol { -fx-background-color: #2196F3, white; }
+.default-color1.chart-line-symbol { -fx-background-color: #F44336, white; }
+.default-color0.chart-legend-item-symbol { -fx-background-color: #2196F3; }
+.default-color1.chart-legend-item-symbol { -fx-background-color: #F44336; }
