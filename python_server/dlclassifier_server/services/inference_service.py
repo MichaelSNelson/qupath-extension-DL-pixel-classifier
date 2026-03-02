@@ -502,7 +502,7 @@ class InferenceService:
                             outputs = model(batch_tensor)
                     else:
                         outputs = model(batch_tensor)
-                    batch_logits = outputs.cpu().numpy()
+                    batch_logits = outputs.cpu().float().numpy()
 
             # Softmax per-tile and collect
             for i in range(batch_logits.shape[0]):
