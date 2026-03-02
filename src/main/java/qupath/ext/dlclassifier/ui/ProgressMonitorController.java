@@ -145,10 +145,10 @@ public class ProgressMonitorController {
         lossChart.setLegendSide(javafx.geometry.Side.BOTTOM);
 
         trainLossSeries = new XYChart.Series<>();
-        trainLossSeries.setName("Train Loss (blue)");
+        trainLossSeries.setName("Train Loss");
 
         valLossSeries = new XYChart.Series<>();
-        valLossSeries.setName("Val Loss (red)");
+        valLossSeries.setName("Val Loss");
 
         lossChart.getData().addAll(List.of(trainLossSeries, valLossSeries));
 
@@ -346,6 +346,9 @@ public class ProgressMonitorController {
                 valLossSeries.getData().add(valPoint);
                 installDataPointTooltip(valPoint, "Val Loss", epoch, valLoss);
             }
+
+            // Ensure legend symbols show the correct colors
+            applyLossChartLegendColors();
 
             // Update per-class IoU chart
             if (perClassIoU != null) {
@@ -629,6 +632,28 @@ public class ProgressMonitorController {
                 }
 
                 log("Cancellation requested by user");
+            }
+        });
+    }
+
+    /**
+     * Applies blue/red colors to loss chart legend symbols programmatically.
+     * CSS alone does not reliably override the Modena defaults for legend symbols.
+     */
+    private void applyLossChartLegendColors() {
+        Platform.runLater(() -> {
+            javafx.scene.Node legend = lossChart.lookup(".chart-legend");
+            if (legend == null) return;
+
+            // Series 0 = Train Loss = blue
+            javafx.scene.Node symbol0 = lossChart.lookup(".chart-legend-item-symbol.series0");
+            if (symbol0 != null) {
+                symbol0.setStyle("-fx-background-color: #2196F3;");
+            }
+            // Series 1 = Val Loss = red
+            javafx.scene.Node symbol1 = lossChart.lookup(".chart-legend-item-symbol.series1");
+            if (symbol1 != null) {
+                symbol1.setStyle("-fx-background-color: #F44336;");
             }
         });
     }

@@ -202,6 +202,7 @@ public final class DLClassifierPreferences {
                 .build());
 
         items.add(new PropertyItemBuilder<>(trainingExportDir, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.DIRECTORY)
                 .name("Training Data Export Directory")
                 .category(CATEGORY)
                 .description("Directory for exporting training data patches. " +
