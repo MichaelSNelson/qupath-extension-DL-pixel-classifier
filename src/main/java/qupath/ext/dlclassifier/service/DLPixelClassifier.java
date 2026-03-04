@@ -2,11 +2,11 @@ package qupath.ext.dlclassifier.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.controller.InferenceWorkflow;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.utilities.TileEncoder;
 import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
 import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
@@ -23,25 +23,15 @@ import qupath.lib.regions.RegionRequest;
 import javafx.application.Platform;
 
 import java.awt.image.BufferedImage;
-import java.awt.image.DataBuffer;
 import java.awt.image.IndexColorModel;
-import java.awt.image.Raster;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -85,38 +75,12 @@ public class DLPixelClassifier implements PixelClassifier {
     /** Set to true when the overlay is being removed, to suppress error counting on interrupted threads. */
     private volatile boolean shuttingDown = false;
 
-    // ==================== Probability Cache for Tile Blending ====================
-
-    /** Cache of probability maps for tile blending. Key = (requestX, requestY) packed into long. */
-    private final ConcurrentHashMap<Long, float[][][]> probCache = new ConcurrentHashMap<>();
-
-    /** Maximum cached probability maps (each ~7MB for 768x768x3 float32). */
-    private static final int MAX_PROB_CACHE_SIZE = 100;
-
-    /** Tracks insertion order for LRU eviction. */
-    private final ConcurrentLinkedDeque<Long> probCacheOrder = new ConcurrentLinkedDeque<>();
-
     /** The inputPadding value used by QuPath for tile overlap, cached for blending calculations. */
     private final int inputPadding;
 
-    /** Debounced scheduler for viewer refresh after new tiles are cached. */
-    private final ScheduledExecutorService refreshScheduler =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "dl-overlay-refresh");
-                t.setDaemon(true);
-                return t;
-            });
-    private volatile ScheduledFuture<?> pendingRefresh;
-
-    /** Guards against repeated overlay refreshes -- only one refresh per session. */
-    private volatile boolean hasRefreshed = false;
-
-    // ==================== Image-Level Normalization ====================
-
-    /** Number of tiles sampled across the image for normalization stats. */
-    private static final int STATS_GRID_SIZE = 4;
-    /** Maximum pixel samples per channel for stats computation. */
-    private static final int STATS_TARGET_SAMPLES = 100_000;
+    /** Probability map cache and tile boundary blending. */
+    private final TileBlendCache blendCache = new TileBlendCache(100,
+            () -> OverlayService.getInstance().refreshOverlayForBlending());
 
     /** Cached channel config with precomputed normalization stats (lazy init). */
     private volatile ChannelConfiguration channelConfigWithStats;
@@ -184,14 +148,13 @@ public class DLPixelClassifier implements PixelClassifier {
         // skip inference entirely and just blend + argmax.
         // This is critical for the deferred-refresh path where the overlay is
         // recreated after the initial render to get proper bidirectional blending.
-        long cacheKeyVal = cacheKey(request.getX(), request.getY());
-        float[][][] cachedProbMap = probCache.get(cacheKeyVal);
+        float[][][] cachedProbMap = blendCache.getIfCached(request.getX(), request.getY());
         if (cachedProbMap != null) {
             int cachedH = cachedProbMap.length;
             int cachedW = cachedProbMap[0].length;
-            logger.info("BLEND cache hit at ({}, {}), dims={}x{}, cache size={}",
-                    request.getX(), request.getY(), cachedW, cachedH, probCache.size());
-            float[][][] blended = blendWithNeighbors(cachedProbMap,
+            logger.debug("BLEND cache hit at ({}, {}), dims={}x{}, cache size={}",
+                    request.getX(), request.getY(), cachedW, cachedH, blendCache.size());
+            float[][][] blended = blendCache.blendWithNeighbors(cachedProbMap,
                     request.getX(), request.getY(), cachedW, cachedH);
             consecutiveErrors.set(0);
             return createClassIndexImage(blended, cachedW, cachedH);
@@ -204,7 +167,8 @@ public class DLPixelClassifier implements PixelClassifier {
         if (channelConfigWithStats == null) {
             synchronized (statsLock) {
                 if (channelConfigWithStats == null) {
-                    channelConfigWithStats = computeChannelConfigWithStats(server);
+                    channelConfigWithStats = NormalizationStatsComputer.compute(
+                            server, metadata, channelConfig, contextScale, downsample);
                 }
             }
         }
@@ -219,13 +183,13 @@ public class DLPixelClassifier implements PixelClassifier {
         String dtype;
         byte[] detailBytes;
         int detailChannels;
-        if (InferenceWorkflow.isSimpleRgb(tileImage)) {
+        if (TileEncoder.isSimpleRgb(tileImage)) {
             dtype = "uint8";
-            detailBytes = InferenceWorkflow.encodeTileRaw(tileImage);
+            detailBytes = TileEncoder.encodeTileRaw(tileImage);
             detailChannels = 3;
         } else {
             dtype = "float32";
-            detailBytes = InferenceWorkflow.encodeTileRawFloat(tileImage,
+            detailBytes = TileEncoder.encodeTileRawFloat(tileImage,
                     channelConfig.getSelectedChannels());
             detailChannels = channelConfig.getSelectedChannels().isEmpty()
                     ? tileImage.getRaster().getNumBands()
@@ -241,9 +205,9 @@ public class DLPixelClassifier implements PixelClassifier {
                     tileImage.getWidth(), tileImage.getHeight());
             byte[] contextBytes;
             if ("uint8".equals(dtype)) {
-                contextBytes = InferenceWorkflow.encodeTileRaw(contextImage);
+                contextBytes = TileEncoder.encodeTileRaw(contextImage);
             } else {
-                contextBytes = InferenceWorkflow.encodeTileRawFloat(contextImage,
+                contextBytes = TileEncoder.encodeTileRawFloat(contextImage,
                         channelConfig.getSelectedChannels());
             }
             // Interleave detail + context channels per pixel (not sequential concat)
@@ -258,7 +222,7 @@ public class DLPixelClassifier implements PixelClassifier {
                 rawBytes = detailBytes;
                 numChannels = detailChannels;
             } else {
-                rawBytes = InferenceWorkflow.interleaveContextChannels(
+                rawBytes = TileEncoder.interleaveContextChannels(
                         detailBytes, contextBytes, numPixels, detailChannels, bytesPerChannel);
                 numChannels = detailChannels * 2;
             }
@@ -323,19 +287,19 @@ public class DLPixelClassifier implements PixelClassifier {
                 logger.debug("Failed to delete tile output: {}", outputPath);
             }
 
-            // Cache the probability map for neighbor blending
-            long key = cacheKey(request.getX(), request.getY());
-            cacheProbMap(key, probMap);
-            logger.info("BLEND cached prob map at ({}, {}), dims={}x{}, cache size={}",
-                    request.getX(), request.getY(), tileWidth, tileHeight, probCache.size());
+            // Cache the probability map and blend with available neighbors
+            blendCache.cache(request.getX(), request.getY(), probMap);
+            logger.debug("BLEND cached at ({}, {}), dims={}x{}, step=({},{}), cache={}",
+                    request.getX(), request.getY(), tileWidth, tileHeight,
+                    blendCache.getEmpiricalStepX(), blendCache.getEmpiricalStepY(),
+                    blendCache.size());
 
-            // Blend with available neighbors, then argmax on blended probabilities
-            float[][][] blended = blendWithNeighbors(probMap, request.getX(), request.getY(),
-                    tileWidth, tileHeight);
+            float[][][] blended = blendCache.blendWithNeighbors(probMap,
+                    request.getX(), request.getY(), tileWidth, tileHeight);
 
             // Schedule deferred refresh so earlier tiles get re-rendered with
             // this tile now available as a neighbor
-            scheduleRefresh();
+            blendCache.scheduleRefresh();
 
             // Success -- reset error counter
             consecutiveErrors.set(0);
@@ -397,15 +361,8 @@ public class DLPixelClassifier implements PixelClassifier {
     public void cleanup() {
         shuttingDown = true;
 
-        // Clear probability cache and reset refresh state
-        probCache.clear();
-        probCacheOrder.clear();
-        hasRefreshed = false;
-
-        // Shutdown the deferred refresh scheduler
-        ScheduledFuture<?> pending = pendingRefresh;
-        if (pending != null) pending.cancel(false);
-        refreshScheduler.shutdownNow();
+        // Shutdown the blend cache (clears data + stops refresh scheduler)
+        blendCache.shutdown();
 
         try {
             if (sharedTempDir != null && Files.exists(sharedTempDir)) {
@@ -511,235 +468,6 @@ public class DLPixelClassifier implements PixelClassifier {
         return contextImage;
     }
 
-    // ==================== Image-Level Normalization Stats ====================
-
-    /**
-     * Computes or retrieves precomputed normalization statistics and returns a
-     * ChannelConfiguration with the stats attached.
-     * <p>
-     * Priority order:
-     * <ol>
-     *   <li>Training dataset stats from model metadata (Phase 2, most accurate)</li>
-     *   <li>Image-level stats via tile sampling (Phase 1, ~1-3s one-time cost)</li>
-     *   <li>Per-tile normalization (fallback, can cause tile boundary artifacts)</li>
-     * </ol>
-     * <p>
-     * FIXED_RANGE normalization always uses the user-specified values directly.
-     *
-     * @param server the image server to sample from
-     * @return channelConfig with precomputed stats, or original if not applicable
-     */
-    private ChannelConfiguration computeChannelConfigWithStats(ImageServer<BufferedImage> server) {
-        // FIXED_RANGE uses user-specified values, no sampling needed
-        if (channelConfig.getNormalizationStrategy() ==
-                ChannelConfiguration.NormalizationStrategy.FIXED_RANGE) {
-            logger.info("FIXED_RANGE normalization: skipping image-level stats");
-            return channelConfig;
-        }
-
-        // Priority 1: Use training dataset stats from model metadata
-        if (metadata.hasNormalizationStats()) {
-            List<Map<String, Double>> stats = new ArrayList<>(metadata.getNormalizationStats());
-            int expectedChannels = metadata.getEffectiveInputChannels();
-            // For multi-scale context: if training stats only cover detail channels
-            // (older models), duplicate them for context channels as an approximation.
-            // Newer models trained after the effective_channels fix already have
-            // stats for all channels (detail + context).
-            if (contextScale > 1 && stats.size() < expectedChannels) {
-                logger.info("Expanding {} training stats to {} for context channels",
-                        stats.size(), expectedChannels);
-                List<Map<String, Double>> baseStats = new ArrayList<>(stats);
-                while (stats.size() < expectedChannels) {
-                    // Duplicate from base stats cyclically
-                    stats.add(baseStats.get(stats.size() % baseStats.size()));
-                }
-            }
-            logger.info("Using training dataset normalization stats from model metadata " +
-                    "({} channels)", stats.size());
-            return channelConfig.withPrecomputedStats(stats);
-        }
-
-        // Priority 2: Compute image-level stats via sampling
-        try {
-            List<Map<String, Double>> stats = computeImageNormalizationStats(server);
-            if (stats != null && !stats.isEmpty()) {
-                // For multi-scale context: duplicate detail stats for context channels.
-                // Context tiles come from the same image at a different scale, so the
-                // pixel value distribution is similar (same staining, same dynamic range).
-                if (contextScale > 1) {
-                    int expectedChannels = metadata.getEffectiveInputChannels();
-                    List<Map<String, Double>> expanded = new ArrayList<>(stats);
-                    List<Map<String, Double>> baseStats = new ArrayList<>(stats);
-                    while (expanded.size() < expectedChannels) {
-                        expanded.add(baseStats.get(expanded.size() % baseStats.size()));
-                    }
-                    stats = expanded;
-                }
-                logger.info("Computed image-level normalization stats from {} sample tiles " +
-                        "({} channels)", STATS_GRID_SIZE * STATS_GRID_SIZE, stats.size());
-                return channelConfig.withPrecomputedStats(stats);
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to compute image-level normalization stats, " +
-                    "falling back to per-tile normalization: {}", e.getMessage());
-        }
-
-        // Priority 3: Fall back to original config (per-tile normalization)
-        return channelConfig;
-    }
-
-    /**
-     * Samples the image to compute per-channel normalization statistics.
-     * <p>
-     * Reads tiles from a grid of sample locations across the image,
-     * collects pixel values using reservoir sampling, and computes
-     * aggregate statistics for each channel.
-     *
-     * @param server the image server to sample from
-     * @return list of per-channel stat maps, or null on failure
-     */
-    private List<Map<String, Double>> computeImageNormalizationStats(
-            ImageServer<BufferedImage> server) throws IOException {
-        int imgWidth = server.getWidth();
-        int imgHeight = server.getHeight();
-
-        // Tile dimensions at full resolution (pre-downsample)
-        int tileW = (int) (metadata.getInputWidth() * downsample);
-        int tileH = (int) (metadata.getInputHeight() * downsample);
-        tileW = Math.min(tileW, imgWidth);
-        tileH = Math.min(tileH, imgHeight);
-
-        // Determine number of channels we'll be extracting
-        List<Integer> selectedChannels = channelConfig.getSelectedChannels();
-        int numChannels = selectedChannels.isEmpty()
-                ? server.nChannels()
-                : selectedChannels.size();
-
-        // Collect pixel samples per channel
-        List<List<Float>> channelSamples = new ArrayList<>();
-        for (int c = 0; c < numChannels; c++) {
-            channelSamples.add(new ArrayList<>());
-        }
-
-        // Compute grid step sizes (full resolution coordinates)
-        int gridSize = Math.min(STATS_GRID_SIZE, Math.max(1,
-                Math.min(imgWidth / tileW, imgHeight / tileH)));
-        int stepX = (imgWidth - tileW) / Math.max(1, gridSize - 1);
-        int stepY = (imgHeight - tileH) / Math.max(1, gridSize - 1);
-
-        // Estimate subsample rate to keep total around TARGET_SAMPLES per channel
-        int pixelsPerTile = metadata.getInputWidth() * metadata.getInputHeight();
-        int totalEstimatedPixels = pixelsPerTile * gridSize * gridSize;
-        int subsampleRate = Math.max(1, totalEstimatedPixels / STATS_TARGET_SAMPLES);
-
-        int sampledTiles = 0;
-        for (int gy = 0; gy < gridSize; gy++) {
-            for (int gx = 0; gx < gridSize; gx++) {
-                int x = Math.min(gx * stepX, imgWidth - tileW);
-                int y = Math.min(gy * stepY, imgHeight - tileH);
-
-                RegionRequest req = RegionRequest.createInstance(
-                        server.getPath(), downsample, x, y, tileW, tileH);
-                BufferedImage tile = server.readRegion(req);
-                if (tile == null) continue;
-
-                Raster raster = tile.getRaster();
-                int bands = raster.getNumBands();
-                int dataType = raster.getDataBuffer().getDataType();
-                boolean isUint8 = (dataType == DataBuffer.TYPE_BYTE);
-
-                // Determine which bands to sample
-                int w = tile.getWidth();
-                int h = tile.getHeight();
-                int pixelIndex = 0;
-
-                for (int py = 0; py < h; py++) {
-                    for (int px = 0; px < w; px++) {
-                        pixelIndex++;
-                        if (pixelIndex % subsampleRate != 0) continue;
-
-                        for (int c = 0; c < numChannels; c++) {
-                            int band = selectedChannels.isEmpty() ? c : selectedChannels.get(c);
-                            if (band >= bands) continue;
-
-                            // Keep raw pixel values (uint8 in [0, 255], float as-is).
-                            // Must match the scale of values sent to Python for
-                            // normalization: training metadata stats are in raw range.
-                            float val;
-                            if (isUint8) {
-                                val = (float) (raster.getSample(px, py, band) & 0xFF);
-                            } else {
-                                val = raster.getSampleFloat(px, py, band);
-                            }
-                            channelSamples.get(c).add(val);
-                        }
-                    }
-                }
-                sampledTiles++;
-            }
-        }
-
-        if (sampledTiles == 0) {
-            logger.warn("No tiles could be sampled for normalization stats");
-            return null;
-        }
-
-        // Compute per-channel statistics from collected samples
-        List<Map<String, Double>> channelStats = new ArrayList<>();
-        for (int c = 0; c < numChannels; c++) {
-            List<Float> samples = channelSamples.get(c);
-            if (samples.isEmpty()) {
-                // Default stats for empty channel
-                Map<String, Double> stats = new HashMap<>();
-                stats.put("p1", 0.0);
-                stats.put("p99", 1.0);
-                stats.put("min", 0.0);
-                stats.put("max", 1.0);
-                stats.put("mean", 0.5);
-                stats.put("std", 0.25);
-                channelStats.add(stats);
-                continue;
-            }
-
-            // Sort for percentile computation
-            float[] arr = new float[samples.size()];
-            for (int i = 0; i < arr.length; i++) arr[i] = samples.get(i);
-            Arrays.sort(arr);
-
-            int n = arr.length;
-            double p1 = arr[Math.max(0, (int) (n * 0.01))];
-            double p99 = arr[Math.min(n - 1, (int) (n * 0.99))];
-            double min = arr[0];
-            double max = arr[n - 1];
-
-            // Compute mean and std
-            double sum = 0;
-            double sumSq = 0;
-            for (float v : arr) {
-                sum += v;
-                sumSq += (double) v * v;
-            }
-            double mean = sum / n;
-            double std = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
-
-            Map<String, Double> stats = new HashMap<>();
-            stats.put("p1", p1);
-            stats.put("p99", p99);
-            stats.put("min", min);
-            stats.put("max", max);
-            stats.put("mean", mean);
-            stats.put("std", std);
-            channelStats.add(stats);
-
-            logger.debug("Channel {} stats: p1={}, p99={}, min={}, max={}, mean={}, std={}",
-                    c, String.format("%.4f", p1), String.format("%.4f", p99),
-                    String.format("%.4f", min), String.format("%.4f", max),
-                    String.format("%.4f", mean), String.format("%.4f", std));
-        }
-
-        return channelStats;
-    }
-
     /**
      * Creates a TYPE_BYTE_INDEXED image where each pixel value is the argmax
      * class index from the probability map.
@@ -778,208 +506,6 @@ public class DLPixelClassifier implements PixelClassifier {
         width = Math.max(1, width);
         height = Math.max(1, height);
         return new BufferedImage(width, height, BufferedImage.TYPE_BYTE_INDEXED, colorModel);
-    }
-
-    // ==================== Probability Cache Methods ====================
-
-    /**
-     * Packs (x, y) request coordinates into a single long key for the prob cache.
-     */
-    private static long cacheKey(int requestX, int requestY) {
-        return ((long) requestX << 32) | (requestY & 0xFFFFFFFFL);
-    }
-
-    /**
-     * Caches a probability map and evicts the oldest entry if over capacity.
-     */
-    private void cacheProbMap(long key, float[][][] probMap) {
-        probCache.put(key, probMap);
-        probCacheOrder.addLast(key);
-
-        // LRU eviction
-        while (probCache.size() > MAX_PROB_CACHE_SIZE) {
-            Long oldest = probCacheOrder.pollFirst();
-            if (oldest != null) {
-                probCache.remove(oldest);
-            }
-        }
-    }
-
-    /**
-     * Creates a deep copy of a probability map so blending doesn't modify cached data.
-     */
-    private static float[][][] deepCopyProbMap(float[][][] src) {
-        int h = src.length;
-        float[][][] copy = new float[h][][];
-        for (int y = 0; y < h; y++) {
-            int w = src[y].length;
-            copy[y] = new float[w][];
-            for (int x = 0; x < w; x++) {
-                copy[y][x] = src[y][x].clone();
-            }
-        }
-        return copy;
-    }
-
-    /**
-     * Blends this tile's probability map with cached neighbor probability maps
-     * using linear weight ramps across overlap zones.
-     * <p>
-     * Horizontal blending (left/right) is applied first, then vertical (top/bottom).
-     * This sequential approach handles corners (where two blends overlap) without
-     * needing a 4-way weighted average.
-     *
-     * @param probMap   this tile's raw probability map [height][width][numClasses]
-     * @param requestX  tile request X coordinate (full-resolution image coords)
-     * @param requestY  tile request Y coordinate (full-resolution image coords)
-     * @param width     tile width in pixels (padded = tileSize + 2*padding)
-     * @param height    tile height in pixels (padded)
-     * @return blended probability map (new array, original not modified)
-     */
-    private float[][][] blendWithNeighbors(float[][][] probMap, int requestX, int requestY,
-                                            int width, int height) {
-        int tileSize = inferenceConfig.getTileSize();
-        int padding = inputPadding;
-        int step = (int) (tileSize * downsample);
-        int numClasses = probMap[0][0].length;
-        int overlapWidth = 2 * padding;  // total overlap zone width in pixels
-
-        // Look up cached neighbors
-        long leftKey  = cacheKey(requestX - step, requestY);
-        long rightKey = cacheKey(requestX + step, requestY);
-        long topKey   = cacheKey(requestX, requestY - step);
-        long botKey   = cacheKey(requestX, requestY + step);
-        float[][][] left   = probCache.get(leftKey);
-        float[][][] right  = probCache.get(rightKey);
-        float[][][] top    = probCache.get(topKey);
-        float[][][] bottom = probCache.get(botKey);
-
-        logger.info("BLEND neighbors at ({}, {}): step={}, L={} R={} T={} B={}, " +
-                "tileSize={}, padding={}, overlapWidth={}, probMap={}x{}",
-                requestX, requestY, step,
-                left != null, right != null, top != null, bottom != null,
-                tileSize, padding, overlapWidth, width, height);
-
-        if (left == null && right == null && top == null && bottom == null) {
-            return probMap;  // No neighbors available, no blending needed
-        }
-
-        // Create a copy for blending (don't modify cached original)
-        float[][][] blended = deepCopyProbMap(probMap);
-
-        // --- Horizontal blending (uses probMap as self source) ---
-
-        // Blend with right neighbor
-        if (right != null) {
-            int rightH = Math.min(height, right.length);
-            for (int y = 0; y < rightH; y++) {
-                for (int d = 0; d < overlapWidth && (tileSize + d) < width; d++) {
-                    int x = tileSize + d;      // column in this tile
-                    int nx = d;                 // corresponding column in neighbor
-                    if (nx >= right[y].length) break;
-                    float wSelf = 1.0f - (float) d / overlapWidth;
-                    int nc = Math.min(numClasses, right[y][nx].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[y][x][c] = wSelf * probMap[y][x][c]
-                                + (1.0f - wSelf) * right[y][nx][c];
-                    }
-                }
-            }
-        }
-
-        // Blend with left neighbor (mirror of right)
-        if (left != null) {
-            int leftH = Math.min(height, left.length);
-            for (int y = 0; y < leftH; y++) {
-                for (int d = 0; d < overlapWidth && d < width; d++) {
-                    int x = d;                      // column in this tile
-                    int nx = tileSize + d;           // corresponding column in neighbor
-                    if (nx >= left[y].length) break;
-                    float wSelf = (float) d / overlapWidth;  // 0 at left edge -> 1 at overlap end
-                    int nc = Math.min(numClasses, left[y][nx].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[y][x][c] = wSelf * probMap[y][x][c]
-                                + (1.0f - wSelf) * left[y][nx][c];
-                    }
-                }
-            }
-        }
-
-        // --- Vertical blending (uses blended as self source for corner handling) ---
-
-        // Blend with bottom neighbor
-        if (bottom != null) {
-            int bottomW = (bottom.length > 0) ? bottom[0].length : 0;
-            int blendW = Math.min(width, bottomW);
-            for (int x = 0; x < blendW; x++) {
-                for (int d = 0; d < overlapWidth && (tileSize + d) < height; d++) {
-                    int y = tileSize + d;      // row in this tile
-                    int ny = d;                 // corresponding row in neighbor
-                    if (ny >= bottom.length) break;
-                    if (x >= bottom[ny].length) continue;
-                    float wSelf = 1.0f - (float) d / overlapWidth;
-                    int nc = Math.min(numClasses, bottom[ny][x].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[y][x][c] = wSelf * blended[y][x][c]
-                                + (1.0f - wSelf) * bottom[ny][x][c];
-                    }
-                }
-            }
-        }
-
-        // Blend with top neighbor (mirror of bottom)
-        if (top != null) {
-            int topW = (top.length > 0) ? top[0].length : 0;
-            int blendW = Math.min(width, topW);
-            for (int x = 0; x < blendW; x++) {
-                for (int d = 0; d < overlapWidth && d < height; d++) {
-                    int y = d;                      // row in this tile
-                    int ny = tileSize + d;           // corresponding row in neighbor
-                    if (ny >= top.length) break;
-                    if (x >= top[ny].length) continue;
-                    float wSelf = (float) d / overlapWidth;  // 0 at top edge -> 1 at overlap end
-                    int nc = Math.min(numClasses, top[ny][x].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[y][x][c] = wSelf * blended[y][x][c]
-                                + (1.0f - wSelf) * top[ny][x][c];
-                    }
-                }
-            }
-        }
-
-        return blended;
-    }
-
-    /**
-     * Schedules a debounced, one-shot overlay refresh after the initial tile batch.
-     * <p>
-     * On the first render, tiles are computed without all neighbors cached, so blending
-     * is incomplete. After the batch completes (debounced 1s after the last tile), the
-     * overlay is recreated to force fresh tile requests. The cache-hit fast path in
-     * {@link #applyClassification} serves these re-requests instantly from the prob cache,
-     * now with all neighbors available for proper bidirectional blending.
-     * <p>
-     * Only fires once per overlay session to avoid infinite refresh loops.
-     */
-    private void scheduleRefresh() {
-        if (hasRefreshed) {
-            logger.debug("BLEND scheduleRefresh skipped (already refreshed)");
-            return;
-        }
-
-        ScheduledFuture<?> prev = pendingRefresh;
-        if (prev != null) prev.cancel(false);
-        logger.debug("BLEND scheduling refresh in 1s (cache size={})", probCache.size());
-        pendingRefresh = refreshScheduler.schedule(() -> {
-            hasRefreshed = true;
-            try {
-                logger.debug("Refreshing overlay for tile blending ({} cached prob maps)",
-                        probCache.size());
-                OverlayService.getInstance().refreshOverlayForBlending();
-            } catch (Exception e) {
-                logger.debug("Deferred overlay refresh failed: {}", e.getMessage());
-            }
-        }, 1000, TimeUnit.MILLISECONDS);
     }
 
     /**

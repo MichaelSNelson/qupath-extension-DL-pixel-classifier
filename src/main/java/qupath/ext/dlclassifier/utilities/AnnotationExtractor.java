@@ -225,7 +225,7 @@ public class AnnotationExtractor {
                         annotation,
                         annotation.getROI(),
                         classIndex.get(className),
-                        isSparseROI(annotation.getROI())
+                        PatchSampler.isSparseROI(annotation.getROI())
                 ));
                 // Extract color from PathClass (first annotation of each class wins)
                 if (!classColorMap.containsKey(className)) {
@@ -244,7 +244,11 @@ public class AnnotationExtractor {
         }
 
         // Determine patch locations based on annotation locations
-        List<PatchLocation> patchLocations = generatePatchLocations(allAnnotations);
+        List<PatchSampler.AnnotationGeometry> geometries = allAnnotations.stream()
+                .map(a -> new PatchSampler.AnnotationGeometry(a.roi(), a.isSparse()))
+                .collect(Collectors.toList());
+        List<PatchSampler.PatchLocation> patchLocations = PatchSampler.generatePatchLocations(
+                geometries, patchSize, downsample, server.getWidth(), server.getHeight());
         logger.info("Generated {} candidate patch locations", patchLocations.size());
 
         // Log context-vs-image size for diagnostics
@@ -268,8 +272,8 @@ public class AnnotationExtractor {
 
         // Phase 1: Collect all masks and determine class presence per patch
         List<PendingPatch> pendingPatches = new ArrayList<>();
-        for (PatchLocation loc : patchLocations) {
-            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
+        for (PatchSampler.PatchLocation loc : patchLocations) {
+            MaskResult maskResult = createCombinedMask(loc.x(), loc.y(), allAnnotations, classIndex.size());
             if (maskResult.labeledPixelCount == 0) continue;
 
             Set<Integer> presentClasses = new HashSet<>();
@@ -280,8 +284,12 @@ public class AnnotationExtractor {
         }
 
         // Phase 2: Compute stratified train/validation split
-        boolean[] isValidationArr = computeStratifiedSplit(pendingPatches, validationSplit, classNames.size());
-        logSplitStatistics(pendingPatches, isValidationArr, classNames);
+        List<Set<Integer>> classPresenceSets = pendingPatches.stream()
+                .map(PendingPatch::presentClasses)
+                .collect(Collectors.toList());
+        boolean[] isValidationArr = StratifiedSplitter.computeStratifiedSplit(
+                classPresenceSets, validationSplit, classNames.size());
+        StratifiedSplitter.logSplitStatistics(classPresenceSets, isValidationArr, classNames);
 
         // Phase 3: Read images and write files based on stratified assignment
         int patchIndex = 0;
@@ -440,7 +448,7 @@ public class AnnotationExtractor {
                 allAnnotations.add(new AnnotationInfo(
                         annotation, annotation.getROI(),
                         classIndex.get(className),
-                        isSparseROI(annotation.getROI())
+                        PatchSampler.isSparseROI(annotation.getROI())
                 ));
             }
         }
@@ -450,7 +458,11 @@ public class AnnotationExtractor {
             return new ExportResult(0, 0, 0, new LinkedHashMap<>(), 0);
         }
 
-        List<PatchLocation> patchLocations = generatePatchLocations(allAnnotations);
+        List<PatchSampler.AnnotationGeometry> geometries = allAnnotations.stream()
+                .map(a -> new PatchSampler.AnnotationGeometry(a.roi(), a.isSparse()))
+                .collect(Collectors.toList());
+        List<PatchSampler.PatchLocation> patchLocations = PatchSampler.generatePatchLocations(
+                geometries, patchSize, downsample, server.getWidth(), server.getHeight());
         int regionSize = (int) (patchSize * downsample);
 
         // Log context-vs-image size for diagnostics
@@ -466,8 +478,8 @@ public class AnnotationExtractor {
 
         // Phase 1: Collect all masks and determine class presence per patch
         List<PendingPatch> pendingPatches = new ArrayList<>();
-        for (PatchLocation loc : patchLocations) {
-            MaskResult maskResult = createCombinedMask(loc.x, loc.y, allAnnotations, classIndex.size());
+        for (PatchSampler.PatchLocation loc : patchLocations) {
+            MaskResult maskResult = createCombinedMask(loc.x(), loc.y(), allAnnotations, classIndex.size());
             if (maskResult.labeledPixelCount == 0) continue;
 
             Set<Integer> presentClasses = new HashSet<>();
@@ -478,8 +490,12 @@ public class AnnotationExtractor {
         }
 
         // Phase 2: Compute stratified train/validation split
-        boolean[] isValidationArr = computeStratifiedSplit(pendingPatches, validationSplit, classNames.size());
-        logSplitStatistics(pendingPatches, isValidationArr, classNames);
+        List<Set<Integer>> classPresenceSets = pendingPatches.stream()
+                .map(PendingPatch::presentClasses)
+                .collect(Collectors.toList());
+        boolean[] isValidationArr = StratifiedSplitter.computeStratifiedSplit(
+                classPresenceSets, validationSplit, classNames.size());
+        StratifiedSplitter.logSplitStatistics(classPresenceSets, isValidationArr, classNames);
 
         // Resolve source image info for manifest
         String effectiveSourceImage = sourceImage;
@@ -955,134 +971,6 @@ public class AnnotationExtractor {
         return contextImage;
     }
 
-    /**
-     * Determines if an ROI represents sparse annotation (line, polyline, etc.).
-     */
-    private boolean isSparseROI(ROI roi) {
-        // Lines, polylines, and very thin shapes are sparse
-        if (roi.isLine()) return true;
-
-        // Check if the shape has very small area relative to its bounding box
-        double bounds = roi.getBoundsWidth() * roi.getBoundsHeight();
-        if (bounds > 0) {
-            double areaRatio = roi.getArea() / bounds;
-            // If area is less than 5% of bounding box, treat as sparse
-            return areaRatio < 0.05;
-        }
-        return false;
-    }
-
-    /**
-     * Generate patch locations based on annotation positions.
-     * <p>
-     * For sparse annotations (lines), we generate patches centered on points
-     * along the line. For area annotations, we tile the bounding box.
-     */
-    private List<PatchLocation> generatePatchLocations(List<AnnotationInfo> annotations) {
-        Set<String> locationKeys = new HashSet<>();
-        List<PatchLocation> locations = new ArrayList<>();
-
-        // Coverage per patch in full-res coordinates
-        int coverage = (int) (patchSize * downsample);
-        int step = coverage / 2; // 50% overlap between patches
-
-        for (AnnotationInfo ann : annotations) {
-            ROI roi = ann.roi;
-            int x0 = (int) roi.getBoundsX();
-            int y0 = (int) roi.getBoundsY();
-            int w = (int) roi.getBoundsWidth();
-            int h = (int) roi.getBoundsHeight();
-
-            if (ann.isSparse) {
-                // For sparse annotations, sample points along the ROI
-                List<double[]> points = samplePointsAlongROI(roi);
-                for (double[] pt : points) {
-                    // Center patch on the sampled point
-                    int px = (int) pt[0] - coverage / 2;
-                    int py = (int) pt[1] - coverage / 2;
-
-                    // Clip to image bounds
-                    px = Math.max(0, Math.min(px, server.getWidth() - coverage));
-                    py = Math.max(0, Math.min(py, server.getHeight() - coverage));
-
-                    // Snap to grid to avoid too many overlapping patches
-                    int snapStep = Math.max(1, step / 2);
-                    px = (px / snapStep) * snapStep;
-                    py = (py / snapStep) * snapStep;
-
-                    String key = px + "," + py;
-                    if (!locationKeys.contains(key)) {
-                        locationKeys.add(key);
-                        locations.add(new PatchLocation(px, py));
-                    }
-                }
-            } else {
-                // For area annotations, tile the bounding box
-                for (int py = y0 - coverage / 4; py < y0 + h; py += step) {
-                    for (int px = x0 - coverage / 4; px < x0 + w; px += step) {
-                        int clippedX = Math.max(0, Math.min(px, server.getWidth() - coverage));
-                        int clippedY = Math.max(0, Math.min(py, server.getHeight() - coverage));
-
-                        String key = clippedX + "," + clippedY;
-                        if (!locationKeys.contains(key)) {
-                            locationKeys.add(key);
-                            locations.add(new PatchLocation(clippedX, clippedY));
-                        }
-                    }
-                }
-            }
-        }
-
-        return locations;
-    }
-
-    /**
-     * Sample points along a ROI for patch generation.
-     * Works for lines, polylines, and thin shapes.
-     */
-    private List<double[]> samplePointsAlongROI(ROI roi) {
-        List<double[]> points = new ArrayList<>();
-
-        // Get all polygon points from the ROI
-        List<qupath.lib.geom.Point2> roiPoints = roi.getAllPoints();
-
-        if (roiPoints.isEmpty()) {
-            // Fallback: use center of bounding box
-            points.add(new double[]{
-                    roi.getBoundsX() + roi.getBoundsWidth() / 2,
-                    roi.getBoundsY() + roi.getBoundsHeight() / 2
-            });
-            return points;
-        }
-
-        // Sample at intervals along the ROI path (in full-res coords)
-        double sampleInterval = patchSize * downsample / 4.0; // Sample every quarter-patch
-
-        for (int i = 0; i < roiPoints.size() - 1; i++) {
-            double x1 = roiPoints.get(i).getX();
-            double y1 = roiPoints.get(i).getY();
-            double x2 = roiPoints.get(i + 1).getX();
-            double y2 = roiPoints.get(i + 1).getY();
-
-            double segLength = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
-            int numSamples = Math.max(1, (int) (segLength / sampleInterval));
-
-            for (int s = 0; s <= numSamples; s++) {
-                double t = (double) s / numSamples;
-                double x = x1 + t * (x2 - x1);
-                double y = y1 + t * (y2 - y1);
-                points.add(new double[]{x, y});
-            }
-        }
-
-        // Also add the last point
-        if (!roiPoints.isEmpty()) {
-            qupath.lib.geom.Point2 last = roiPoints.get(roiPoints.size() - 1);
-            points.add(new double[]{last.getX(), last.getY()});
-        }
-
-        return points;
-    }
 
     /**
      * Creates a combined mask from all annotations overlapping a patch region.
@@ -1359,11 +1247,6 @@ public class AnnotationExtractor {
     private record AnnotationInfo(PathObject annotation, ROI roi, int classIndex, boolean isSparse) {}
 
     /**
-     * A candidate patch location.
-     */
-    private record PatchLocation(int x, int y) {}
-
-    /**
      * Per-tile spatial metadata for post-training evaluation.
      * Written to tile_manifest.json so the evaluation pass can map
      * per-tile results back to image locations.
@@ -1387,147 +1270,10 @@ public class AnnotationExtractor {
      * Holds the mask and class presence info but not the image (read later during write phase).
      */
     private record PendingPatch(
-            PatchLocation location,
+            PatchSampler.PatchLocation location,
             MaskResult maskResult,
             Set<Integer> presentClasses
     ) {}
-
-    /**
-     * Computes a stratified train/validation split that guarantees every class present
-     * in the dataset is represented in the validation set.
-     * <p>
-     * Algorithm:
-     * <ol>
-     *   <li>Build an inverted index: classIndex -> list of patch indices containing that class</li>
-     *   <li>Sort classes by ascending frequency (rarest first)</li>
-     *   <li>Guarantee phase: for each class not yet in validation, pick the patch covering
-     *       the most still-unrepresented classes (greedy set-cover) and assign to validation</li>
-     *   <li>Fill phase: if more validation slots remain, fill randomly from unassigned patches</li>
-     * </ol>
-     * If the guarantee phase assigns more patches than the target count, all are kept
-     * (class coverage takes priority over exact split ratio).
-     *
-     * @param patches         collected patches with class presence info
-     * @param validationSplit fraction of patches for validation (0.0-1.0)
-     * @param numClasses      total number of classes
-     * @return boolean array where true = validation patch
-     */
-    private static boolean[] computeStratifiedSplit(List<PendingPatch> patches,
-                                                     double validationSplit,
-                                                     int numClasses) {
-        int total = patches.size();
-        boolean[] isValidation = new boolean[total];
-
-        if (validationSplit <= 0.0 || total == 0) {
-            return isValidation; // all false
-        }
-
-        int targetValCount = Math.max(1, (int) Math.round(total * validationSplit));
-
-        // Build inverted index: classIndex -> list of patch indices containing that class
-        Map<Integer, List<Integer>> classToPatchIndices = new HashMap<>();
-        for (int i = 0; i < total; i++) {
-            for (int classIdx : patches.get(i).presentClasses()) {
-                classToPatchIndices.computeIfAbsent(classIdx, k -> new ArrayList<>()).add(i);
-            }
-        }
-
-        // Sort classes by ascending frequency (rarest first)
-        List<Integer> classesByFrequency = new ArrayList<>(classToPatchIndices.keySet());
-        classesByFrequency.sort(Comparator.comparingInt(c -> classToPatchIndices.get(c).size()));
-
-        // Guarantee phase: ensure every class has at least one validation patch
-        Set<Integer> coveredClasses = new HashSet<>();
-        int valAssigned = 0;
-
-        for (int classIdx : classesByFrequency) {
-            if (coveredClasses.contains(classIdx)) continue;
-
-            // Find the unassigned patch that covers the most still-uncovered classes
-            int bestPatch = -1;
-            int bestCoverage = 0;
-
-            for (int patchIdx : classToPatchIndices.get(classIdx)) {
-                if (isValidation[patchIdx]) continue; // already assigned
-
-                int coverage = 0;
-                for (int c : patches.get(patchIdx).presentClasses()) {
-                    if (!coveredClasses.contains(c)) coverage++;
-                }
-                if (coverage > bestCoverage) {
-                    bestCoverage = coverage;
-                    bestPatch = patchIdx;
-                }
-            }
-
-            if (bestPatch >= 0) {
-                isValidation[bestPatch] = true;
-                valAssigned++;
-                coveredClasses.addAll(patches.get(bestPatch).presentClasses());
-            }
-        }
-
-        // Fill phase: if more validation slots remain, fill randomly from unassigned
-        if (valAssigned < targetValCount) {
-            List<Integer> unassigned = new ArrayList<>();
-            for (int i = 0; i < total; i++) {
-                if (!isValidation[i]) unassigned.add(i);
-            }
-            Collections.shuffle(unassigned, new Random(42));
-
-            int remaining = targetValCount - valAssigned;
-            for (int i = 0; i < remaining && i < unassigned.size(); i++) {
-                isValidation[unassigned.get(i)] = true;
-            }
-        }
-
-        return isValidation;
-    }
-
-    /**
-     * Logs per-class patch distribution across train and validation sets.
-     * Warns if any class has zero patches in either set.
-     *
-     * @param patches      collected patches with class presence info
-     * @param isValidation boolean array from computeStratifiedSplit
-     * @param classNames   ordered list of class names
-     */
-    private static void logSplitStatistics(List<PendingPatch> patches,
-                                            boolean[] isValidation,
-                                            List<String> classNames) {
-        int numClasses = classNames.size();
-        int[] trainCounts = new int[numClasses];
-        int[] valCounts = new int[numClasses];
-
-        for (int i = 0; i < patches.size(); i++) {
-            for (int classIdx : patches.get(i).presentClasses()) {
-                if (classIdx < numClasses) {
-                    if (isValidation[i]) valCounts[classIdx]++;
-                    else trainCounts[classIdx]++;
-                }
-            }
-        }
-
-        int totalTrain = 0, totalVal = 0;
-        for (int i = 0; i < patches.size(); i++) {
-            if (isValidation[i]) totalVal++;
-            else totalTrain++;
-        }
-
-        logger.info("Stratified split: {} train, {} validation patches", totalTrain, totalVal);
-        for (int i = 0; i < numClasses; i++) {
-            logger.info("  Class '{}': {} train patches, {} val patches",
-                    classNames.get(i), trainCounts[i], valCounts[i]);
-            if (valCounts[i] == 0) {
-                logger.warn("  WARNING: Class '{}' has ZERO validation patches - "
-                        + "validation metrics for this class will be unreliable", classNames.get(i));
-            }
-            if (trainCounts[i] == 0) {
-                logger.warn("  WARNING: Class '{}' has ZERO training patches - "
-                        + "model cannot learn this class", classNames.get(i));
-            }
-        }
-    }
 
     /**
      * Result of the export operation, including class distribution statistics
