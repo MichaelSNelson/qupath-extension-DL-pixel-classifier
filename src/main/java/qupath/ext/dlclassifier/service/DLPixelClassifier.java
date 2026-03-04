@@ -189,6 +189,8 @@ public class DLPixelClassifier implements PixelClassifier {
         if (cachedProbMap != null) {
             int cachedH = cachedProbMap.length;
             int cachedW = cachedProbMap[0].length;
+            logger.info("BLEND cache hit at ({}, {}), dims={}x{}, cache size={}",
+                    request.getX(), request.getY(), cachedW, cachedH, probCache.size());
             float[][][] blended = blendWithNeighbors(cachedProbMap,
                     request.getX(), request.getY(), cachedW, cachedH);
             consecutiveErrors.set(0);
@@ -324,6 +326,8 @@ public class DLPixelClassifier implements PixelClassifier {
             // Cache the probability map for neighbor blending
             long key = cacheKey(request.getX(), request.getY());
             cacheProbMap(key, probMap);
+            logger.info("BLEND cached prob map at ({}, {}), dims={}x{}, cache size={}",
+                    request.getX(), request.getY(), tileWidth, tileHeight, probCache.size());
 
             // Blend with available neighbors, then argmax on blended probabilities
             float[][][] blended = blendWithNeighbors(probMap, request.getX(), request.getY(),
@@ -841,10 +845,20 @@ public class DLPixelClassifier implements PixelClassifier {
         int overlapWidth = 2 * padding;  // total overlap zone width in pixels
 
         // Look up cached neighbors
-        float[][][] left   = probCache.get(cacheKey(requestX - step, requestY));
-        float[][][] right  = probCache.get(cacheKey(requestX + step, requestY));
-        float[][][] top    = probCache.get(cacheKey(requestX, requestY - step));
-        float[][][] bottom = probCache.get(cacheKey(requestX, requestY + step));
+        long leftKey  = cacheKey(requestX - step, requestY);
+        long rightKey = cacheKey(requestX + step, requestY);
+        long topKey   = cacheKey(requestX, requestY - step);
+        long botKey   = cacheKey(requestX, requestY + step);
+        float[][][] left   = probCache.get(leftKey);
+        float[][][] right  = probCache.get(rightKey);
+        float[][][] top    = probCache.get(topKey);
+        float[][][] bottom = probCache.get(botKey);
+
+        logger.info("BLEND neighbors at ({}, {}): step={}, L={} R={} T={} B={}, " +
+                "tileSize={}, padding={}, overlapWidth={}, probMap={}x{}",
+                requestX, requestY, step,
+                left != null, right != null, top != null, bottom != null,
+                tileSize, padding, overlapWidth, width, height);
 
         if (left == null && right == null && top == null && bottom == null) {
             return probMap;  // No neighbors available, no blending needed
@@ -948,10 +962,14 @@ public class DLPixelClassifier implements PixelClassifier {
      * Only fires once per overlay session to avoid infinite refresh loops.
      */
     private void scheduleRefresh() {
-        if (hasRefreshed) return;  // One refresh per session
+        if (hasRefreshed) {
+            logger.debug("BLEND scheduleRefresh skipped (already refreshed)");
+            return;
+        }
 
         ScheduledFuture<?> prev = pendingRefresh;
         if (prev != null) prev.cancel(false);
+        logger.debug("BLEND scheduling refresh in 1s (cache size={})", probCache.size());
         pendingRefresh = refreshScheduler.schedule(() -> {
             hasRefreshed = true;
             try {

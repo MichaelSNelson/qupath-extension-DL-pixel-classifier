@@ -234,6 +234,7 @@ public class OverlayService {
 
             // Stop old overlay's worker threads (no longer needed)
             PixelClassificationOverlay oldOverlay = currentOverlay;
+            logger.info("BLEND refreshOverlayForBlending: recreating overlay");
             oldOverlay.stop();
 
             // Create fresh overlay -- new internal server with empty tile cache
