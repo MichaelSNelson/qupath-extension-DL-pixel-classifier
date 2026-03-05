@@ -495,7 +495,12 @@ public class AnnotationExtractor {
                 .collect(Collectors.toList());
         boolean[] isValidationArr = StratifiedSplitter.computeStratifiedSplit(
                 classPresenceSets, validationSplit, classNames.size());
-        StratifiedSplitter.logSplitStatistics(classPresenceSets, isValidationArr, classNames);
+        // Only log per-image split stats when an actual split is requested;
+        // when called from exportFromProject with validationSplit=0.0, the
+        // global split handles logging.
+        if (validationSplit > 0.0) {
+            StratifiedSplitter.logSplitStatistics(classPresenceSets, isValidationArr, classNames);
+        }
 
         // Resolve source image info for manifest
         String effectiveSourceImage = sourceImage;
@@ -812,7 +817,9 @@ public class AnnotationExtractor {
                 globalClassPresence, validationSplit, classNames.size());
         StratifiedSplitter.logSplitStatistics(globalClassPresence, isValidation, classNames);
 
-        // Move validation patches from train/ to validation/
+        // Move validation patches from train/ to validation/.
+        // savePatch may write as .raw instead of .tiff for non-byte or >4-band images,
+        // so resolve the actual filename on disk before moving.
         Path valContext = contextScale > 1 ? outputDir.resolve("validation/context") : null;
         for (int i = 0; i < allManifestEntries.size(); i++) {
             if (!isValidation[i]) {
@@ -822,22 +829,27 @@ public class AnnotationExtractor {
             totalValCount++;
             TileManifestEntry me = allManifestEntries.get(i);
             String imgFile = me.filename();
+
+            // Resolve actual image file (may be .raw instead of .tiff)
+            String actualImgFile = resolveActualFilename(outputDir.resolve("train/images"), imgFile);
             String maskFile = imgFile.replace(".tiff", ".png");
 
-            Files.move(outputDir.resolve("train/images/" + imgFile),
-                    valImages.resolve(imgFile));
+            Files.move(outputDir.resolve("train/images/" + actualImgFile),
+                    valImages.resolve(actualImgFile));
             Files.move(outputDir.resolve("train/masks/" + maskFile),
                     valMasks.resolve(maskFile));
             if (valContext != null) {
-                Path ctxSrc = outputDir.resolve("train/context/" + imgFile);
+                String actualCtxFile = resolveActualFilename(
+                        outputDir.resolve("train/context"), imgFile);
+                Path ctxSrc = outputDir.resolve("train/context/" + actualCtxFile);
                 if (Files.exists(ctxSrc)) {
-                    Files.move(ctxSrc, valContext.resolve(imgFile));
+                    Files.move(ctxSrc, valContext.resolve(actualCtxFile));
                 }
             }
 
-            // Update manifest entry split designation
+            // Update manifest entry split designation (keep actual filename)
             allManifestEntries.set(i, new TileManifestEntry(
-                    me.filename(), me.x(), me.y(), "val",
+                    actualImgFile, me.x(), me.y(), "val",
                     me.sourceImage(), me.sourceImageId()));
         }
 
@@ -1116,6 +1128,27 @@ public class AnnotationExtractor {
     }
 
     /**
+     * Resolves the actual filename on disk for a patch that may have been written
+     * as .raw instead of .tiff by {@link #savePatch}.
+     *
+     * @param directory the directory containing the file
+     * @param expectedFilename the expected filename (e.g., "patch_0000.tiff")
+     * @return the actual filename on disk (.tiff or .raw)
+     */
+    private static String resolveActualFilename(Path directory, String expectedFilename) {
+        if (Files.exists(directory.resolve(expectedFilename))) {
+            return expectedFilename;
+        }
+        // savePatch writes .raw for non-byte or >4-band images
+        String rawFilename = expectedFilename.replaceFirst("\\.(tiff?)$", ".raw");
+        if (!rawFilename.equals(expectedFilename) && Files.exists(directory.resolve(rawFilename))) {
+            return rawFilename;
+        }
+        // Fall back to expected name (will produce a clear error if missing)
+        return expectedFilename;
+    }
+
+    /**
      * Saves a patch image. Uses TIFF for simple 8-bit images (<=4 bands)
      * and a raw float32 format for multi-channel or high-bit-depth images.
      */
@@ -1126,6 +1159,9 @@ public class AnnotationExtractor {
             ImageIO.write(image, "TIFF", path.toFile());
         } else {
             // N-channel or high-bit-depth: write as raw float32 with header
+            logger.debug("Saving as .raw: bands={}, dataType={} (TYPE_BYTE={}), image={}x{}, path={}",
+                    numBands, dataType, java.awt.image.DataBuffer.TYPE_BYTE,
+                    image.getWidth(), image.getHeight(), path.getFileName());
             Path rawPath = path.resolveSibling(
                     path.getFileName().toString()
                             .replaceFirst("\\.(tiff?|png)$", ".raw"));
