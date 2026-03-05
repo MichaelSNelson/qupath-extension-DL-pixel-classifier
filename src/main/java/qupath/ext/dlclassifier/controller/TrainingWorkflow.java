@@ -1533,6 +1533,7 @@ public class TrainingWorkflow {
             settings.put("focus_class", config.getFocusClass());
             settings.put("focus_class_min_iou", config.getFocusClassMinIoU());
         }
+        settings.put("whole_image", config.isWholeImage());
         return settings;
     }
 

@@ -734,6 +734,9 @@ public class AnnotationExtractor {
         List<String> sourceImages = new ArrayList<>();
         List<TileManifestEntry> allManifestEntries = new ArrayList<>();
 
+        // Phase 1: Export all patches to training set (no per-image split).
+        // The validation split is computed globally after all images are processed
+        // so that stratification works correctly with few patches per image.
         for (ProjectImageEntry<BufferedImage> entry : entries) {
             logger.info("Processing image: {}", entry.getImageName());
             try {
@@ -744,13 +747,11 @@ public class AnnotationExtractor {
                 String imageId = entry.getID();
 
                 ExportResult result = extractor.exportTrainingDataWithOffset(
-                        outputDir, classNames, validationSplit, totalPatchIndex,
+                        outputDir, classNames, 0.0, totalPatchIndex,
                         imageName, imageId);
 
                 // Accumulate statistics
                 totalPatchIndex += result.totalPatches();
-                totalTrainCount += result.trainPatches();
-                totalValCount += result.validationPatches();
                 totalLabeledPixels += result.totalLabeledPixels();
                 allManifestEntries.addAll(result.manifestEntries());
 
@@ -779,15 +780,68 @@ public class AnnotationExtractor {
                     + "(2) making annotations larger, or "
                     + "(3) adding annotations to more images.");
         }
-        if (totalTrainCount == 0) {
-            throw new IOException("All " + totalPatchIndex + " exported patches were assigned "
-                    + "to validation, leaving 0 for training. "
-                    + "This happens when there are very few patches and the validation "
-                    + "split requires at least one patch per class. "
-                    + "Try: (1) reducing the downsample to generate more patches, "
-                    + "(2) annotating more regions, or "
-                    + "(3) reducing the validation split percentage.");
+
+        // Phase 2: Global stratified split across all patches from all images.
+        // Build class presence sets from manifest entries for stratification.
+        Map<String, Integer> classIndex = new LinkedHashMap<>();
+        for (int i = 0; i < classNames.size(); i++) {
+            classIndex.put(classNames.get(i), i);
         }
+        List<Set<Integer>> globalClassPresence = new ArrayList<>();
+        for (TileManifestEntry me : allManifestEntries) {
+            // Each manifest entry was exported to train; derive class presence
+            // from the mask file by reading which classes have nonzero pixels.
+            // Since masks are already written, read them to determine class presence.
+            Path maskPath = outputDir.resolve("train/masks/" + me.filename().replace(".tiff", ".png"));
+            Set<Integer> present = new HashSet<>();
+            if (Files.exists(maskPath)) {
+                BufferedImage mask = javax.imageio.ImageIO.read(maskPath.toFile());
+                int w = mask.getWidth(), h = mask.getHeight();
+                for (int y = 0; y < h; y += Math.max(1, h / 20)) {
+                    for (int x = 0; x < w; x += Math.max(1, w / 20)) {
+                        int px = mask.getRaster().getSample(x, y, 0);
+                        if (px < classNames.size()) present.add(px);
+                    }
+                }
+            }
+            if (present.isEmpty()) present.add(0); // fallback
+            globalClassPresence.add(present);
+        }
+
+        boolean[] isValidation = StratifiedSplitter.computeStratifiedSplit(
+                globalClassPresence, validationSplit, classNames.size());
+        StratifiedSplitter.logSplitStatistics(globalClassPresence, isValidation, classNames);
+
+        // Move validation patches from train/ to validation/
+        Path valContext = contextScale > 1 ? outputDir.resolve("validation/context") : null;
+        for (int i = 0; i < allManifestEntries.size(); i++) {
+            if (!isValidation[i]) {
+                totalTrainCount++;
+                continue;
+            }
+            totalValCount++;
+            TileManifestEntry me = allManifestEntries.get(i);
+            String imgFile = me.filename();
+            String maskFile = imgFile.replace(".tiff", ".png");
+
+            Files.move(outputDir.resolve("train/images/" + imgFile),
+                    valImages.resolve(imgFile));
+            Files.move(outputDir.resolve("train/masks/" + maskFile),
+                    valMasks.resolve(maskFile));
+            if (valContext != null) {
+                Path ctxSrc = outputDir.resolve("train/context/" + imgFile);
+                if (Files.exists(ctxSrc)) {
+                    Files.move(ctxSrc, valContext.resolve(imgFile));
+                }
+            }
+
+            // Update manifest entry split designation
+            allManifestEntries.set(i, new TileManifestEntry(
+                    me.filename(), me.x(), me.y(), "val",
+                    me.sourceImage(), me.sourceImageId()));
+        }
+
+        logger.info("Global stratified split: {} train, {} validation", totalTrainCount, totalValCount);
 
         // Build combined pixel counts map
         Map<String, Long> pixelCounts = new LinkedHashMap<>();

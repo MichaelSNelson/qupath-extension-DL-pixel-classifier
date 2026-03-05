@@ -538,6 +538,11 @@ public class TrainingDialog {
                     String mode = String.valueOf(ts.get("intensity_aug_mode"));
                     intensityAugCombo.setValue(mapIntensityModeToDisplay(mode));
                 }
+
+                // Whole-image mode
+                if (ts.containsKey("whole_image")) {
+                    wholeImageCheck.setSelected(Boolean.TRUE.equals(ts.get("whole_image")));
+                }
             }
 
             // --- Classifier name and description ---
@@ -866,10 +871,14 @@ public class TrainingDialog {
             // Bind visibility to pretrained checkbox
             layerFreezePanel.disableProperty().bind(usePretrainedCheck.selectedProperty().not());
 
-            // Update layers when architecture/backbone changes
+            // Update layers when architecture/backbone changes;
+            // uncheck "Initialize weights" when pretrained is re-enabled (mutual exclusion)
             usePretrainedCheck.selectedProperty().addListener((obs, old, newVal) -> {
                 if (newVal) {
                     updateLayerFreezePanel();
+                    if (continueTrainingCheck.isSelected()) {
+                        continueTrainingCheck.setSelected(false);
+                    }
                 }
             });
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
