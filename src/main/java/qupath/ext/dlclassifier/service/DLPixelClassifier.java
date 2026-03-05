@@ -85,6 +85,9 @@ public class DLPixelClassifier implements PixelClassifier {
     private volatile ChannelConfiguration channelConfigWithStats;
     private final Object statsLock = new Object();
 
+    /** Tracks the current image to detect image switches and invalidate caches. */
+    private volatile String currentServerPath;
+
     /**
      * Creates a new DL pixel classifier.
      *
@@ -144,6 +147,23 @@ public class DLPixelClassifier implements PixelClassifier {
             throw new IOException("Classification disabled after " + MAX_CONSECUTIVE_ERRORS +
                     " consecutive server errors: " + lastErrorMessage);
         }
+
+        // Detect image switch: when the viewer changes to a different image,
+        // invalidate the blend cache and normalization stats so stale tiles
+        // from the previous image are not reused.
+        String serverPath = imageData.getServer().getPath();
+        if (currentServerPath != null && !currentServerPath.equals(serverPath)) {
+            logger.info("Image changed ({}), clearing blend cache and normalization stats",
+                    imageData.getServer().getMetadata().getName());
+            blendCache.clear();
+            synchronized (statsLock) {
+                channelConfigWithStats = null;
+            }
+            consecutiveErrors.set(0);
+            errorNotified.set(false);
+            contextResizeWarned.set(false);
+        }
+        currentServerPath = serverPath;
 
         // Cache-hit fast path: if this tile's prob map is already cached,
         // skip inference entirely and just blend + argmax.
