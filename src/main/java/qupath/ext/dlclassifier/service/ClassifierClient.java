@@ -228,6 +228,7 @@ public class ClassifierClient {
             String sourceImage,
             String sourceImageId,
             String disagreementImagePath,
+            String lossHeatmapPath,
             String tileImagePath
     ) {}
 

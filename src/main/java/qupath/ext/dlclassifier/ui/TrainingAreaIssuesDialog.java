@@ -55,6 +55,7 @@ public class TrainingAreaIssuesDialog {
     private final FilteredList<TileRow> filteredRows;
     private final Label summaryLabel;
     private final double downsample;
+    private final int patchSize;
     private final Map<String, Integer> classColors;
 
     // Feature 1: tile highlight tracking
@@ -65,6 +66,9 @@ public class TrainingAreaIssuesDialog {
     private final ImageView tileImageView;
     private final ImageView disagreeImageView;
     private final VBox legendBox;
+    private final ComboBox<String> overlaySelector;
+    private static final String OVERLAY_DISAGREEMENT = "Disagreement";
+    private static final String OVERLAY_LOSS_HEATMAP = "Loss Heatmap";
 
     /**
      * Creates the training area issues dialog.
@@ -72,13 +76,16 @@ public class TrainingAreaIssuesDialog {
      * @param classifierName name of the classifier for the title
      * @param results        per-tile evaluation results sorted by loss descending
      * @param downsample     downsample factor used during training
+     * @param patchSize      training patch size in pixels (at the downsampled resolution)
      * @param classColors    map of class name to packed RGB color, or null
      */
     public TrainingAreaIssuesDialog(String classifierName,
                                     List<ClassifierClient.TileEvaluationResult> results,
                                     double downsample,
+                                    int patchSize,
                                     Map<String, Integer> classColors) {
         this.downsample = downsample;
+        this.patchSize = patchSize;
         this.classColors = classColors != null ? classColors : Map.of();
         this.stage = new Stage();
         stage.initStyle(StageStyle.DECORATED);
@@ -214,12 +221,33 @@ public class TrainingAreaIssuesDialog {
 
         legendBox = new VBox(3);
         legendBox.setPadding(new Insets(5, 0, 0, 0));
-        buildLegend();
+        buildDisagreementLegend();
 
         Label previewTitle = new Label("Disagreement Preview");
         previewTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
 
-        VBox previewPane = new VBox(8, previewTitle, previewStack, opacityLabel, opacitySlider, legendBox);
+        overlaySelector = new ComboBox<>();
+        overlaySelector.getItems().addAll(OVERLAY_DISAGREEMENT, OVERLAY_LOSS_HEATMAP);
+        overlaySelector.setValue(OVERLAY_DISAGREEMENT);
+        overlaySelector.setOnAction(e -> {
+            String selected = overlaySelector.getValue();
+            previewTitle.setText(selected + " Preview");
+            if (OVERLAY_LOSS_HEATMAP.equals(selected)) {
+                buildLossHeatmapLegend();
+            } else {
+                buildDisagreementLegend();
+            }
+            // Reload overlay for current selection
+            TileRow currentRow = table.getSelectionModel().getSelectedItem();
+            if (currentRow != null) {
+                updateOverlayImage(currentRow);
+            }
+        });
+
+        HBox titleBar = new HBox(8, previewTitle, overlaySelector);
+        titleBar.setAlignment(Pos.CENTER_LEFT);
+
+        VBox previewPane = new VBox(8, titleBar, previewStack, opacityLabel, opacitySlider, legendBox);
         previewPane.setPadding(new Insets(0, 0, 0, 10));
         previewPane.setAlignment(Pos.TOP_CENTER);
         previewPane.setMinWidth(280);
@@ -317,10 +345,7 @@ public class TrainingAreaIssuesDialog {
         var imageData = viewer.getImageData();
         if (imageData == null) return;
 
-        int patchSize = (int) (imageData.getServer().getMetadata().getPreferredTileWidth());
-        if (patchSize <= 0) patchSize = 512;
-
-        double regionSize = patchSize * downsample;
+        double regionSize = this.patchSize * downsample;
         double centerX = row.getX() + regionSize / 2.0;
         double centerY = row.getY() + regionSize / 2.0;
 
@@ -374,11 +399,10 @@ public class TrainingAreaIssuesDialog {
     // ==================== Feature 3: Preview ====================
 
     /**
-     * Updates the preview pane with tile and disagreement images.
+     * Updates the preview pane with tile image and the currently selected overlay.
      */
     private void updatePreview(TileRow row) {
         String tilePath = row.getTileImagePath();
-        String disagreePath = row.getDisagreementImagePath();
 
         if (tilePath != null && !tilePath.isEmpty()) {
             try {
@@ -397,17 +421,31 @@ public class TrainingAreaIssuesDialog {
             tileImageView.setImage(null);
         }
 
-        if (disagreePath != null && !disagreePath.isEmpty()) {
+        updateOverlayImage(row);
+    }
+
+    /**
+     * Loads the overlay image (disagreement or loss heatmap) based on the current selector.
+     */
+    private void updateOverlayImage(TileRow row) {
+        String overlayPath;
+        if (OVERLAY_LOSS_HEATMAP.equals(overlaySelector.getValue())) {
+            overlayPath = row.getLossHeatmapPath();
+        } else {
+            overlayPath = row.getDisagreementImagePath();
+        }
+
+        if (overlayPath != null && !overlayPath.isEmpty()) {
             try {
-                File disagreeFile = new File(disagreePath);
-                if (disagreeFile.exists()) {
-                    Image disagreeImage = new Image(disagreeFile.toURI().toString());
-                    disagreeImageView.setImage(disagreeImage);
+                File overlayFile = new File(overlayPath);
+                if (overlayFile.exists()) {
+                    Image overlayImage = new Image(overlayFile.toURI().toString());
+                    disagreeImageView.setImage(overlayImage);
                 } else {
                     disagreeImageView.setImage(null);
                 }
             } catch (Exception e) {
-                logger.debug("Failed to load disagreement image: {}", e.getMessage());
+                logger.debug("Failed to load overlay image: {}", e.getMessage());
                 disagreeImageView.setImage(null);
             }
         } else {
@@ -421,9 +459,9 @@ public class TrainingAreaIssuesDialog {
     }
 
     /**
-     * Builds the color legend from class colors.
+     * Builds the class color legend for disagreement mode.
      */
-    private void buildLegend() {
+    private void buildDisagreementLegend() {
         legendBox.getChildren().clear();
         if (classColors.isEmpty()) return;
 
@@ -449,6 +487,39 @@ public class TrainingAreaIssuesDialog {
             legendItem.setAlignment(Pos.CENTER_LEFT);
             legendBox.getChildren().add(legendItem);
         }
+    }
+
+    /**
+     * Builds a gradient color bar legend for loss heatmap mode.
+     */
+    private void buildLossHeatmapLegend() {
+        legendBox.getChildren().clear();
+
+        Label legendTitle = new Label("Loss Intensity:");
+        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        legendBox.getChildren().add(legendTitle);
+
+        // Gradient bar: blue -> yellow -> red
+        Region gradientBar = new Region();
+        gradientBar.setPrefHeight(14);
+        gradientBar.setPrefWidth(200);
+        gradientBar.setMaxWidth(200);
+        gradientBar.setStyle(
+                "-fx-background-color: linear-gradient(to right, #0000FF, #FFFF00, #FF0000);"
+                + " -fx-border-color: #666; -fx-border-width: 0.5;");
+
+        Label lowLabel = new Label("Low");
+        lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        Label highLabel = new Label("High");
+        highLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox labels = new HBox(lowLabel, spacer, highLabel);
+        labels.setMaxWidth(200);
+        labels.setPrefWidth(200);
+
+        legendBox.getChildren().addAll(gradientBar, labels);
     }
 
     // ==================== Helper Classes ====================
@@ -496,6 +567,7 @@ public class TrainingAreaIssuesDialog {
         private final IntegerProperty y;
         private final StringProperty filename;
         private final StringProperty disagreementImagePath;
+        private final StringProperty lossHeatmapPath;
         private final StringProperty tileImagePath;
 
         public TileRow(ClassifierClient.TileEvaluationResult result) {
@@ -509,6 +581,7 @@ public class TrainingAreaIssuesDialog {
             this.y = new SimpleIntegerProperty(result.y());
             this.filename = new SimpleStringProperty(result.filename());
             this.disagreementImagePath = new SimpleStringProperty(result.disagreementImagePath());
+            this.lossHeatmapPath = new SimpleStringProperty(result.lossHeatmapPath());
             this.tileImagePath = new SimpleStringProperty(result.tileImagePath());
 
             // Build classes present string from per-class IoU
@@ -561,6 +634,7 @@ public class TrainingAreaIssuesDialog {
         public String getFilename() { return filename.get(); }
 
         public String getDisagreementImagePath() { return disagreementImagePath.get(); }
+        public String getLossHeatmapPath() { return lossHeatmapPath.get(); }
         public String getTileImagePath() { return tileImagePath.get(); }
     }
 }

@@ -92,6 +92,54 @@ def save_disagreement_map(pred, mask, ignore_index, classes, class_colors_map,
     img.save(str(output_path))
 
 
+def save_loss_heatmap(loss, mask, ignore_index, output_path):
+    """Save a per-pixel loss heatmap as an RGBA PNG.
+
+    Uses a blue -> yellow -> red colormap:
+      0.0 (low loss)  -> blue  (0, 0, 255)
+      0.5 (medium)    -> yellow (255, 255, 0)
+      1.0 (high loss) -> red   (255, 0, 0)
+    Unlabeled pixels are fully transparent.
+    """
+    h, w = loss.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+
+    labeled = mask != ignore_index
+    if not labeled.any():
+        img = Image.fromarray(rgba, 'RGBA')
+        img.save(str(output_path))
+        return
+
+    # Normalize loss to 0-1 (clamp max at 5.0 to avoid outlier compression)
+    loss_vals = loss[labeled].astype(np.float32)
+    max_loss = min(float(loss_vals.max()), 5.0) if loss_vals.size > 0 else 1.0
+    if max_loss <= 0:
+        max_loss = 1.0
+    norm = np.clip(loss.astype(np.float32) / max_loss, 0.0, 1.0)
+
+    # Build blue->yellow->red LUT (256 entries)
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for i in range(256):
+        t = i / 255.0
+        if t < 0.5:
+            # blue -> yellow
+            s = t * 2.0
+            lut[i] = [int(255 * s), int(255 * s), int(255 * (1 - s))]
+        else:
+            # yellow -> red
+            s = (t - 0.5) * 2.0
+            lut[i] = [255, int(255 * (1 - s)), 0]
+
+    indices = (norm * 255).astype(np.uint8)
+    rgba[..., 0] = lut[indices, 0]
+    rgba[..., 1] = lut[indices, 1]
+    rgba[..., 2] = lut[indices, 2]
+    rgba[labeled, 3] = 255  # opaque for labeled pixels only
+
+    img = Image.fromarray(rgba, 'RGBA')
+    img.save(str(output_path))
+
+
 def save_tile_image(img_path, output_path):
     """Save a displayable RGB PNG of the training tile."""
     suffix = img_path.suffix.lower()
@@ -350,12 +398,15 @@ try:
                               if not (v != v)]  # filter NaN
                 mean_iou = sum(valid_ious) / len(valid_ious) if valid_ious else 0.0
 
-                # Save disagreement map and tile image
+                # Save disagreement map, loss heatmap, and tile image
                 disagree_path = None
+                loss_heatmap_path = None
                 tile_img_path = None
                 try:
                     pred_np = pred_i.cpu().numpy()
                     mask_np = mask_i.cpu().numpy()
+                    loss_np = loss_i.cpu().numpy()
+
                     disagree_file = disagree_dir / f"{stem}_disagree.png"
                     save_disagreement_map(
                         pred_np, mask_np, ignore_index, classes,
@@ -363,13 +414,18 @@ try:
                     )
                     disagree_path = str(disagree_file)
 
+                    # Save per-pixel loss heatmap
+                    loss_file = disagree_dir / f"{stem}_loss.png"
+                    save_loss_heatmap(loss_np, mask_np, ignore_index, loss_file)
+                    loss_heatmap_path = str(loss_file)
+
                     # Save tile image (from original training data)
                     tile_file = disagree_dir / f"{stem}_tile.png"
                     img_path = dataset.image_files[file_idx]
                     save_tile_image(img_path, tile_file)
                     tile_img_path = str(tile_file)
                 except Exception as save_err:
-                    logger.warning("Failed to save disagreement map for %s: %s",
+                    logger.warning("Failed to save evaluation images for %s: %s",
                                    stem, save_err)
 
                 results.append({
@@ -385,6 +441,7 @@ try:
                     "source_image": meta.get("source_image", ""),
                     "source_image_id": meta.get("source_image_id", ""),
                     "disagreement_image": disagree_path,
+                    "loss_heatmap": loss_heatmap_path,
                     "tile_image": tile_img_path,
                 })
 

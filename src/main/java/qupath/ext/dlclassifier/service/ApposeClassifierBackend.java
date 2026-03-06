@@ -725,6 +725,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
             String disagreementImagePath = obj.has("disagreement_image") && !obj.get("disagreement_image").isJsonNull()
                     ? obj.get("disagreement_image").getAsString() : null;
+            String lossHeatmapPath = obj.has("loss_heatmap") && !obj.get("loss_heatmap").isJsonNull()
+                    ? obj.get("loss_heatmap").getAsString() : null;
             String tileImagePath = obj.has("tile_image") && !obj.get("tile_image").isJsonNull()
                     ? obj.get("tile_image").getAsString() : null;
 
@@ -740,6 +742,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     obj.has("source_image") ? obj.get("source_image").getAsString() : "",
                     obj.has("source_image_id") ? obj.get("source_image_id").getAsString() : "",
                     disagreementImagePath,
+                    lossHeatmapPath,
                     tileImagePath
             ));
         }
