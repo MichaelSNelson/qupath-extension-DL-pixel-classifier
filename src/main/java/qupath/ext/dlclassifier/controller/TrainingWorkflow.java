@@ -472,6 +472,7 @@ public class TrainingWorkflow {
                     Platform.runLater(() -> {
                         TrainingAreaIssuesDialog dialog = new TrainingAreaIssuesDialog(
                                 classifierName, results, trainingConfig.getDownsample(),
+                                trainingConfig.getTileSize(),
                                 classColors);
                         dialog.show();
                     });
@@ -813,64 +814,6 @@ public class TrainingWorkflow {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (progress != null) {
                 progress.log("Connected to classification backend");
-            }
-
-            // --- MAE pretraining phase (MuViT only) ---
-            if (handlerParameters != null
-                    && Boolean.TRUE.equals(handlerParameters.get("mae_pretrain_enabled"))
-                    && backend instanceof ApposeClassifierBackend apposeBackend) {
-
-                if (progress != null) {
-                    progress.setStatus("MAE pretraining encoder (self-supervised)...");
-                    progress.log("Starting MAE pretraining on unlabeled images");
-                }
-
-                // Build pretraining config from handler parameters + architecture params
-                Map<String, Object> pretrainConfig = new HashMap<>(handlerParameters);
-                pretrainConfig.put("tile_size", trainingConfig.getTileSize());
-                pretrainConfig.put("epochs", handlerParameters.getOrDefault("mae_epochs", 100));
-                pretrainConfig.put("mask_ratio", handlerParameters.getOrDefault("mae_mask_ratio", 0.75));
-                pretrainConfig.put("warmup_epochs", handlerParameters.getOrDefault("mae_warmup_epochs", 5));
-
-                String maeDataPath = String.valueOf(
-                        handlerParameters.getOrDefault("mae_data_path", tempDir.toString()));
-                Path maeOutputDir = tempDir.resolve("mae_pretrained");
-
-                ClassifierClient.TrainingResult maeResult = apposeBackend.startPretraining(
-                        pretrainConfig,
-                        Path.of(maeDataPath),
-                        maeOutputDir,
-                        maeProgress -> {
-                            if (progress != null) {
-                                progress.setStatus(String.format(
-                                        "MAE pretraining: epoch %d/%d (loss: %.4f)",
-                                        maeProgress.epoch(), maeProgress.totalEpochs(),
-                                        maeProgress.loss()));
-                                progress.setOverallProgress(
-                                        (double) maeProgress.epoch() / maeProgress.totalEpochs() * 0.3);
-                            }
-                        },
-                        () -> progress != null && progress.isCancelled()
-                );
-
-                if (progress != null && progress.isCancelled()) {
-                    return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
-                            "MAE pretraining cancelled by user");
-                }
-
-                // Set pretrained encoder path for fine-tuning
-                String encoderPath = maeResult.modelPath();
-                if (encoderPath != null && !encoderPath.isEmpty()) {
-                    trainingConfig = TrainingConfig.builder()
-                            .from(trainingConfig)
-                            .pretrainedModelPath(encoderPath)
-                            .build();
-                    if (progress != null) {
-                        progress.log("MAE pretraining complete (loss: "
-                                + String.format("%.4f", maeResult.finalLoss())
-                                + "). Using pretrained encoder for fine-tuning.");
-                    }
-                }
             }
 
             if (progress != null) {

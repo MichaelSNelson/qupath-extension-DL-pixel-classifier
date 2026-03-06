@@ -195,6 +195,11 @@ public class TrainingDialog {
         private boolean classesLoaded = false;
         private Button loadClassesButton;
 
+        // Architecture-dependent sections (hidden for MuViT)
+        private TitledPane transferSection;
+        private Label backboneLabel;
+        private Label contextScaleLabel;
+
         // Load settings from model
         private Label loadedModelLabel;
         private List<String> sourceModelClassNames;
@@ -263,7 +268,7 @@ public class TrainingDialog {
             // All other sections are gated behind "Load Classes"
             TitledPane basicInfoSection = createBasicInfoSection();
             TitledPane modelSection = createModelSection();
-            TitledPane transferSection = createTransferLearningSection();
+            transferSection = createTransferLearningSection();
             TitledPane trainingSection = createTrainingSection();
             TitledPane strategySection = createTrainingStrategySection();
             TitledPane augmentationSection = createAugmentationSection();
@@ -306,6 +311,9 @@ public class TrainingDialog {
 
             // Trigger initial layer load now that all UI components exist
             updateLayerFreezePanel();
+
+            // Apply architecture-specific section visibility
+            updateSectionsForArchitecture(architectureCombo.getValue());
 
             // Initial validation
             updateValidation();
@@ -823,12 +831,16 @@ public class TrainingDialog {
             backboneCombo.valueProperty().addListener((obs, old, newVal) ->
                     validatePretrainedModelCompatibility());
 
-            grid.add(new Label("Encoder:"), 0, row);
+            backboneLabel = new Label("Encoder:");
+            grid.add(backboneLabel, 0, row);
             grid.add(backboneCombo, 1, row);
 
             // Dynamic handler-specific UI (e.g., MuViT transformer parameters)
             handlerUIContainer = new javafx.scene.layout.VBox();
-            architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateHandlerUI(newVal));
+            architectureCombo.valueProperty().addListener((obs, old, newVal) -> {
+                updateHandlerUI(newVal);
+                updateSectionsForArchitecture(newVal);
+            });
             updateHandlerUI(architectureCombo.getValue());
 
             javafx.scene.layout.VBox modelContent = new javafx.scene.layout.VBox(5, grid, handlerUIContainer);
@@ -1120,7 +1132,8 @@ public class TrainingDialog {
                     "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n" +
                     "Modest memory increase (~5-10%). Compatible with all architectures.");
 
-            grid.add(new Label("Context Scale:"), 0, row);
+            contextScaleLabel = new Label("Context Scale:");
+            grid.add(contextScaleLabel, 0, row);
             grid.add(contextScaleCombo, 1, row);
             row++;
 
@@ -1932,6 +1945,52 @@ public class TrainingDialog {
                 currentHandlerUI = ui;
                 handlerUIContainer.getChildren().add(ui.getNode());
             });
+        }
+
+        /**
+         * Hides or shows dialog sections that don't apply to certain architectures.
+         * MuViT handles multi-scale internally and doesn't use ImageNet backbones,
+         * so the Transfer Learning and Context Scale sections are hidden.
+         */
+        private void updateSectionsForArchitecture(String architecture) {
+            boolean isMuViT = "muvit".equals(architecture);
+
+            // Transfer Learning section: MuViT doesn't use ImageNet pretrained backbones
+            if (transferSection != null) {
+                transferSection.setVisible(!isMuViT);
+                transferSection.setManaged(!isMuViT);
+                if (isMuViT) {
+                    // Disable pretrained weights since MuViT has its own pretraining
+                    usePretrainedCheck.setSelected(false);
+                }
+            }
+
+            // Backbone/Encoder row: MuViT shows model size in its handler UI instead
+            if (backboneLabel != null) {
+                boolean showBackbone = !isMuViT;
+                backboneLabel.setVisible(showBackbone);
+                backboneLabel.setManaged(showBackbone);
+                backboneCombo.setVisible(showBackbone);
+                backboneCombo.setManaged(showBackbone);
+            }
+
+            // Context Scale: MuViT handles multi-resolution internally via level_scales
+            if (contextScaleCombo != null) {
+                boolean showContextScale = !isMuViT;
+                contextScaleCombo.setVisible(showContextScale);
+                contextScaleCombo.setManaged(showContextScale);
+                if (contextScaleLabel != null) {
+                    contextScaleLabel.setVisible(showContextScale);
+                    contextScaleLabel.setManaged(showContextScale);
+                }
+                if (contextInfoLabel != null) {
+                    contextInfoLabel.setVisible(showContextScale);
+                    contextInfoLabel.setManaged(showContextScale);
+                }
+                if (isMuViT) {
+                    contextScaleCombo.setValue("None (single scale)");
+                }
+            }
         }
 
         private void updateBackboneOptions(String architecture) {
