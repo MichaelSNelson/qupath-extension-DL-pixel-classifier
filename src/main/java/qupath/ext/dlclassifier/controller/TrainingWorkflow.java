@@ -45,6 +45,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -317,7 +318,8 @@ public class TrainingWorkflow {
                                 result.channelConfig(),
                                 result.selectedClasses(),
                                 result.selectedImages(),
-                                result.classColors()
+                                result.classColors(),
+                                result.handlerParameters()
                         );
                     }
                 })
@@ -353,7 +355,8 @@ public class TrainingWorkflow {
                                             ChannelConfiguration channelConfig,
                                             List<String> classNames,
                                             List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                            Map<String, Integer> classColors) {
+                                            Map<String, Integer> classColors,
+                                            Map<String, Object> handlerParameters) {
         // Check for unsaved changes before training
         if (!checkUnsavedChanges(selectedImages)) {
             return;
@@ -522,7 +525,7 @@ public class TrainingWorkflow {
                         trainingConfig, channelConfig, classNames,
                         null, selectedImages, progress, currentJobId,
                         classColors, finalClassifierId, finalModelOutputDir,
-                        trainingDataPathHolder, modelPathHolder);
+                        trainingDataPathHolder, modelPathHolder, handlerParameters);
 
                 if (result.success()) {
                     progress.complete(true, String.format(
@@ -650,7 +653,7 @@ public class TrainingWorkflow {
                                     Path modelOutputDir) {
         return trainCore(classifierName, description, handler, trainingConfig,
                 channelConfig, classNames, imageData, selectedImages, progress,
-                jobIdHolder, classColors, classifierId, modelOutputDir, null, null);
+                jobIdHolder, classColors, classifierId, modelOutputDir, null, null, null);
     }
 
     /**
@@ -672,6 +675,7 @@ public class TrainingWorkflow {
      * @param trainingDataPathHolder if non-null, element 0 is set to the training data temp dir;
      *                               caller is responsible for cleanup. If null, tempDir is cleaned up.
      * @param modelPathHolder       if non-null, element 0 is set to the saved model path on success
+     * @param handlerParameters     handler-specific parameters (e.g. MAE pretraining config), or null
      * @return the training result
      */
     static TrainingResult trainCore(String classifierName,
@@ -688,7 +692,8 @@ public class TrainingWorkflow {
                                     String classifierId,
                                     Path modelOutputDir,
                                     Path[] trainingDataPathHolder,
-                                    String[] modelPathHolder) {
+                                    String[] modelPathHolder,
+                                    Map<String, Object> handlerParameters) {
         Path tempDir = null;
         try {
             if (progress != null) {
@@ -808,7 +813,67 @@ public class TrainingWorkflow {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (progress != null) {
                 progress.log("Connected to classification backend");
+            }
 
+            // --- MAE pretraining phase (MuViT only) ---
+            if (handlerParameters != null
+                    && Boolean.TRUE.equals(handlerParameters.get("mae_pretrain_enabled"))
+                    && backend instanceof ApposeClassifierBackend apposeBackend) {
+
+                if (progress != null) {
+                    progress.setStatus("MAE pretraining encoder (self-supervised)...");
+                    progress.log("Starting MAE pretraining on unlabeled images");
+                }
+
+                // Build pretraining config from handler parameters + architecture params
+                Map<String, Object> pretrainConfig = new HashMap<>(handlerParameters);
+                pretrainConfig.put("tile_size", trainingConfig.getTileSize());
+                pretrainConfig.put("epochs", handlerParameters.getOrDefault("mae_epochs", 100));
+                pretrainConfig.put("mask_ratio", handlerParameters.getOrDefault("mae_mask_ratio", 0.75));
+                pretrainConfig.put("warmup_epochs", handlerParameters.getOrDefault("mae_warmup_epochs", 5));
+
+                String maeDataPath = String.valueOf(
+                        handlerParameters.getOrDefault("mae_data_path", tempDir.toString()));
+                Path maeOutputDir = tempDir.resolve("mae_pretrained");
+
+                ClassifierClient.TrainingResult maeResult = apposeBackend.startPretraining(
+                        pretrainConfig,
+                        Path.of(maeDataPath),
+                        maeOutputDir,
+                        maeProgress -> {
+                            if (progress != null) {
+                                progress.setStatus(String.format(
+                                        "MAE pretraining: epoch %d/%d (loss: %.4f)",
+                                        maeProgress.epoch(), maeProgress.totalEpochs(),
+                                        maeProgress.loss()));
+                                progress.setOverallProgress(
+                                        (double) maeProgress.epoch() / maeProgress.totalEpochs() * 0.3);
+                            }
+                        },
+                        () -> progress != null && progress.isCancelled()
+                );
+
+                if (progress != null && progress.isCancelled()) {
+                    return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
+                            "MAE pretraining cancelled by user");
+                }
+
+                // Set pretrained encoder path for fine-tuning
+                String encoderPath = maeResult.modelPath();
+                if (encoderPath != null && !encoderPath.isEmpty()) {
+                    trainingConfig = TrainingConfig.builder()
+                            .from(trainingConfig)
+                            .pretrainedModelPath(encoderPath)
+                            .build();
+                    if (progress != null) {
+                        progress.log("MAE pretraining complete (loss: "
+                                + String.format("%.4f", maeResult.finalLoss())
+                                + "). Using pretrained encoder for fine-tuning.");
+                    }
+                }
+            }
+
+            if (progress != null) {
                 // Log frozen layer configuration
                 List<String> frozen = trainingConfig.getFrozenLayers();
                 if (frozen != null && !frozen.isEmpty()) {
@@ -1018,7 +1083,7 @@ public class TrainingWorkflow {
                                 TrainingConfig trainingConfig,
                                 ChannelConfiguration channelConfig,
                                 List<String> classNames) {
-        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null, null);
+        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null, null, null);
     }
 
     /**

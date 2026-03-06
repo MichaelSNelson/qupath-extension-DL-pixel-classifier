@@ -278,6 +278,103 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
     }
 
+    /**
+     * Run MAE pretraining for MuViT encoder on unlabeled image tiles.
+     * <p>
+     * This trains the encoder in a self-supervised manner using masked image
+     * reconstruction. The resulting weights can be loaded as pretrained weights
+     * for downstream MuViT pixel classification.
+     *
+     * @param config           pretraining configuration (model size, epochs, mask ratio, etc.)
+     * @param dataPath         directory of image tiles for pretraining
+     * @param outputDir        directory to save pretrained encoder weights
+     * @param progressCallback receives progress updates during pretraining
+     * @param cancelledCheck   returns true if pretraining should be cancelled
+     * @return result containing encoder_path and training metrics
+     * @throws IOException if pretraining fails
+     */
+    public ClassifierClient.TrainingResult startPretraining(
+            Map<String, Object> config,
+            Path dataPath,
+            Path outputDir,
+            Consumer<ClassifierClient.TrainingProgress> progressCallback,
+            Supplier<Boolean> cancelledCheck) throws IOException {
+
+        ApposeService appose = ApposeService.getInstance();
+
+        Map<String, Object> inputs = new HashMap<>();
+        inputs.put("config", config);
+        inputs.put("data_path", dataPath.toString());
+        inputs.put("output_dir", outputDir.toString());
+
+        logger.info("Starting MAE pretraining: config={}, data={}, output={}",
+                config.get("model_config"), dataPath, outputDir);
+
+        Task task = appose.createTask("pretrain_mae", inputs);
+
+        // Wire up progress reporting
+        task.listen(event -> {
+            if (event.responseType == ResponseType.UPDATE && event.message != null) {
+                try {
+                    JsonObject json = JsonParser.parseString(event.message).getAsJsonObject();
+                    ClassifierClient.TrainingProgress progress =
+                            new ClassifierClient.TrainingProgress(
+                                    json.has("epoch") ? json.get("epoch").getAsInt() : 0,
+                                    json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
+                                    json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
+                                    json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
+                                    json.has("accuracy") ? json.get("accuracy").getAsDouble() : 0.0,
+                                    json.has("mean_iou") ? json.get("mean_iou").getAsDouble() : 0.0,
+                                    Map.of(), Map.of(),
+                                    json.has("device") ? json.get("device").getAsString() : "",
+                                    json.has("device_info") ? json.get("device_info").getAsString() : "",
+                                    json.has("status") ? json.get("status").getAsString() : "",
+                                    json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
+                                    Map.of()
+                            );
+                    if (progressCallback != null) {
+                        progressCallback.accept(progress);
+                    }
+                } catch (Exception e) {
+                    logger.debug("Failed to parse pretraining progress: {}", e.getMessage());
+                }
+            }
+        });
+
+        // Start task and poll for cancellation
+        task.start();
+        while (!task.status.isFinished()) {
+            if (cancelledCheck != null && cancelledCheck.get()) {
+                task.cancel();
+                logger.info("MAE pretraining cancelled by user");
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                task.cancel();
+                throw new IOException("MAE pretraining interrupted", e);
+            }
+        }
+
+        if (task.status == org.apposed.appose.Service.TaskStatus.FAILED) {
+            throw new IOException("MAE pretraining failed: " + task.error);
+        }
+
+        String encoderPath = task.outputs.containsKey("encoder_path")
+                ? task.outputs.get("encoder_path").toString() : "";
+        int epochsCompleted = task.outputs.containsKey("epochs_completed")
+                ? ((Number) task.outputs.get("epochs_completed")).intValue() : 0;
+        double finalLoss = task.outputs.containsKey("final_loss")
+                ? ((Number) task.outputs.get("final_loss")).doubleValue() : 0.0;
+
+        logger.info("MAE pretraining complete: {} epochs, loss={}, path={}",
+                epochsCompleted, finalLoss, encoderPath);
+
+        return new ClassifierClient.TrainingResult(
+                "mae-pretrain", encoderPath, finalLoss, 0.0, 0, 0.0);
+    }
+
     @Override
     public void pauseTraining(String jobId) throws IOException {
         Path signalPath = getPauseSignalPath(jobId);

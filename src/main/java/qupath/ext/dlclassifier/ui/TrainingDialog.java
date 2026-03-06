@@ -76,11 +76,18 @@ public class TrainingDialog {
             ChannelConfiguration channelConfig,
             List<String> selectedClasses,
             List<ProjectImageEntry<BufferedImage>> selectedImages,
-            Map<String, Integer> classColors
+            Map<String, Integer> classColors,
+            Map<String, Object> handlerParameters
     ) {
         /** Returns true if training should use multiple project images. */
         public boolean isMultiImage() {
             return selectedImages != null && !selectedImages.isEmpty();
+        }
+
+        /** Returns true if MAE pretraining should run before fine-tuning. */
+        public boolean isMaePretrainEnabled() {
+            return handlerParameters != null
+                    && Boolean.TRUE.equals(handlerParameters.get("mae_pretrain_enabled"));
         }
     }
 
@@ -129,6 +136,10 @@ public class TrainingDialog {
         // Model architecture
         private ComboBox<String> architectureCombo;
         private ComboBox<String> backboneCombo;
+
+        // Handler-specific UI (populated dynamically from ClassifierHandler.createTrainingUI())
+        private javafx.scene.layout.VBox handlerUIContainer;
+        private ClassifierHandler.TrainingUI currentHandlerUI;
 
         // Training parameters
         private Spinner<Integer> epochsSpinner;
@@ -815,7 +826,13 @@ public class TrainingDialog {
             grid.add(new Label("Encoder:"), 0, row);
             grid.add(backboneCombo, 1, row);
 
-            TitledPane pane = new TitledPane("MODEL ARCHITECTURE", grid);
+            // Dynamic handler-specific UI (e.g., MuViT transformer parameters)
+            handlerUIContainer = new javafx.scene.layout.VBox();
+            architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateHandlerUI(newVal));
+            updateHandlerUI(architectureCombo.getValue());
+
+            javafx.scene.layout.VBox modelContent = new javafx.scene.layout.VBox(5, grid, handlerUIContainer);
+            TitledPane pane = new TitledPane("MODEL ARCHITECTURE", modelContent);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Select the neural network architecture and encoder"));
@@ -1899,6 +1916,24 @@ public class TrainingDialog {
                     || type == ImageData.ImageType.BRIGHTFIELD_OTHER;
         }
 
+        /**
+         * Updates the handler-specific UI section when the architecture changes.
+         * Handlers can provide custom UI controls (e.g., MuViT patch size, levels, MAE pretraining).
+         */
+        private void updateHandlerUI(String architecture) {
+            handlerUIContainer.getChildren().clear();
+            currentHandlerUI = null;
+
+            ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
+                    .orElse(null);
+            if (handler == null) return;
+
+            handler.createTrainingUI().ifPresent(ui -> {
+                currentHandlerUI = ui;
+                handlerUIContainer.getChildren().add(ui.getNode());
+            });
+        }
+
         private void updateBackboneOptions(String architecture) {
             ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
                     .orElse(ClassifierRegistry.getDefaultHandler());
@@ -2248,6 +2283,11 @@ public class TrainingDialog {
                     .map(item -> item.entry)
                     .collect(Collectors.toList());
 
+            // Collect handler-specific parameters (e.g., MuViT MAE pretraining config)
+            Map<String, Object> handlerParams = currentHandlerUI != null
+                    ? currentHandlerUI.getParameters()
+                    : Map.of();
+
             return new TrainingDialogResult(
                     classifierNameField.getText().trim(),
                     descriptionField.getText().trim(),
@@ -2255,7 +2295,8 @@ public class TrainingDialog {
                     channelConfig,
                     selectedClasses,
                     selectedImages,
-                    classColors
+                    classColors,
+                    handlerParams
             );
         }
 

@@ -563,6 +563,47 @@ public class TrainingConfig {
             augmentationConfig.put("elastic_deformation", false);
         }
 
+        /**
+         * Copies all fields from an existing TrainingConfig into this builder.
+         * Allows creating a modified copy via
+         * {@code TrainingConfig.builder().from(existing).pretrainedModelPath(newPath).build()}.
+         *
+         * @param config the config to copy from
+         * @return this builder
+         */
+        public Builder from(TrainingConfig config) {
+            this.modelType = config.modelType;
+            this.backbone = config.backbone;
+            this.epochs = config.epochs;
+            this.batchSize = config.batchSize;
+            this.learningRate = config.learningRate;
+            this.weightDecay = config.weightDecay;
+            this.tileSize = config.tileSize;
+            this.overlap = config.overlap;
+            this.downsample = config.downsample;
+            this.validationSplit = config.validationSplit;
+            this.augmentationConfig = new LinkedHashMap<>(config.augmentationConfig);
+            this.usePretrainedWeights = config.usePretrainedWeights;
+            this.freezeEncoderLayers = config.freezeEncoderLayers;
+            this.frozenLayers = new ArrayList<>(config.frozenLayers);
+            this.lineStrokeWidth = config.lineStrokeWidth;
+            this.classWeightMultipliers = new LinkedHashMap<>(config.classWeightMultipliers);
+            this.contextScale = config.contextScale;
+            this.schedulerType = config.schedulerType;
+            this.lossFunction = config.lossFunction;
+            this.earlyStoppingMetric = config.earlyStoppingMetric;
+            this.earlyStoppingPatience = config.earlyStoppingPatience;
+            this.mixedPrecision = config.mixedPrecision;
+            this.focusClass = config.focusClass;
+            this.focusClassMinIoU = config.focusClassMinIoU;
+            this.intensityAugMode = config.intensityAugMode;
+            this.gradientAccumulationSteps = config.gradientAccumulationSteps;
+            this.progressiveResize = config.progressiveResize;
+            this.pretrainedModelPath = config.pretrainedModelPath;
+            this.wholeImage = config.wholeImage;
+            return this;
+        }
+
         public Builder modelType(String modelType) {
             this.modelType = modelType;
             return this;

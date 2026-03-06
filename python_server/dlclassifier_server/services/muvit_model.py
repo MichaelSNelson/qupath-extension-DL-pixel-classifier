@@ -17,12 +17,76 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
-# Model size configurations: (encoder_layers, hidden_dim, decoder_layers, decoder_dim)
+# Model size configurations
 MODEL_CONFIGS = {
     "muvit-small": {"enc_layers": 6, "dim": 256, "dec_layers": 1, "dec_dim": 128, "heads": 4},
     "muvit-base": {"enc_layers": 12, "dim": 512, "dec_layers": 2, "dec_dim": 256, "heads": 8},
     "muvit-large": {"enc_layers": 16, "dim": 768, "dec_layers": 2, "dec_dim": 384, "heads": 12},
 }
+
+
+def extract_multi_resolution(
+    x: torch.Tensor,
+    levels: Tuple[float, ...],
+    patch_size: int = 16,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Extract multi-resolution views and bounding boxes from input tensor.
+
+    Given a (B, C, H, W) tensor, produce:
+    - imgs: (B, L, C, H, W) - same pixel size at each level
+    - bboxes: (B, L, 2, 2) - [min_yx, max_yx] in normalized [0,1] coords
+
+    Level 0 (scale=1): full-resolution tile as-is.
+    Level k (scale>1): center crop of 1/scale of the tile, upsampled back
+    to full pixel size.  Simulates a larger physical region at lower
+    effective resolution.
+
+    Args:
+        x: (B, C, H, W) input images
+        levels: tuple of scale factors, e.g. (1.0, 4.0)
+        patch_size: minimum crop size
+
+    Returns:
+        imgs (B, L, C, H, W), bboxes (B, L, 2, 2)
+    """
+    B, C, H, W = x.shape
+    imgs = []
+    bboxes = []
+
+    for scale in levels:
+        if scale == 1.0:
+            imgs.append(x)
+            bbox = torch.tensor(
+                [[0.0, 0.0], [1.0, 1.0]],
+                device=x.device, dtype=torch.float32
+            ).unsqueeze(0).expand(B, -1, -1)
+            bboxes.append(bbox)
+        else:
+            crop_frac = 1.0 / scale
+            crop_h = max(patch_size, int(H * crop_frac))
+            crop_w = max(patch_size, int(W * crop_frac))
+            start_h = (H - crop_h) // 2
+            start_w = (W - crop_w) // 2
+
+            crop = x[:, :, start_h:start_h + crop_h, start_w:start_w + crop_w]
+            if crop.shape[2] != H or crop.shape[3] != W:
+                crop = F.interpolate(crop, size=(H, W), mode="bilinear",
+                                     align_corners=False)
+            imgs.append(crop)
+
+            frac_start_h = start_h / H
+            frac_start_w = start_w / W
+            frac_end_h = (start_h + crop_h) / H
+            frac_end_w = (start_w + crop_w) / W
+            bbox = torch.tensor(
+                [[frac_start_h, frac_start_w], [frac_end_h, frac_end_w]],
+                device=x.device, dtype=torch.float32
+            ).unsqueeze(0).expand(B, -1, -1)
+            bboxes.append(bbox)
+
+    imgs = torch.stack(imgs, dim=1)
+    bboxes = torch.stack(bboxes, dim=1)
+    return imgs, bboxes
 
 
 class MuViTSegmentation(nn.Module):
@@ -100,70 +164,6 @@ class MuViTSegmentation(nn.Module):
             self.dim, self.enc_layers, heads, rope_mode, classes,
         )
 
-    def _extract_multi_resolution(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Extract multi-resolution crops and bounding boxes from input.
-
-        Given a (B, C, H, W) tensor, produce:
-        - imgs: (B, L, C, H, W) - same pixel size at each level
-        - bboxes: (B, L, 2, 2) - [min_yx, max_yx] in normalized [0,1] coords
-
-        Level 0: full-resolution center crop
-        Level k (k>0): larger physical region downsampled to same pixel size
-        """
-        B, C, H, W = x.shape
-        L = len(self.levels)
-
-        imgs = []
-        bboxes = []
-
-        for level_idx, scale in enumerate(self.levels):
-            if scale == 1.0:
-                # Level 0: use the full tile as-is
-                imgs.append(x)
-                # Bbox covers the full [0,1] range
-                bbox = torch.tensor(
-                    [[0.0, 0.0], [1.0, 1.0]],
-                    device=x.device, dtype=torch.float32
-                ).unsqueeze(0).expand(B, -1, -1)
-                bboxes.append(bbox)
-            else:
-                # Higher scale levels: simulate a larger physical region
-                # by extracting a center crop that's 1/scale of the tile,
-                # then upsampling back to full resolution.
-                # This means the context level "sees" the center at lower effective
-                # resolution, equivalent to a context_scale approach.
-                crop_frac = 1.0 / scale
-                crop_h = max(self.patch_size, int(H * crop_frac))
-                crop_w = max(self.patch_size, int(W * crop_frac))
-                start_h = (H - crop_h) // 2
-                start_w = (W - crop_w) // 2
-
-                crop = x[:, :, start_h:start_h + crop_h, start_w:start_w + crop_w]
-                # Upsample to match level 0 dimensions
-                if crop.shape[2] != H or crop.shape[3] != W:
-                    crop = F.interpolate(crop, size=(H, W), mode="bilinear",
-                                         align_corners=False)
-                imgs.append(crop)
-
-                # Bbox in world coordinates: this crop covers a smaller physical
-                # region but is viewed at lower resolution
-                frac_start_h = start_h / H
-                frac_start_w = start_w / W
-                frac_end_h = (start_h + crop_h) / H
-                frac_end_w = (start_w + crop_w) / W
-                bbox = torch.tensor(
-                    [[frac_start_h, frac_start_w], [frac_end_h, frac_end_w]],
-                    device=x.device, dtype=torch.float32
-                ).unsqueeze(0).expand(B, -1, -1)
-                bboxes.append(bbox)
-
-        # Stack to (B, L, C, H, W) and (B, L, 2, 2)
-        imgs = torch.stack(imgs, dim=1)
-        bboxes = torch.stack(bboxes, dim=1)
-        return imgs, bboxes
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass producing (B, num_classes, H, W) logits.
 
@@ -175,7 +175,7 @@ class MuViTSegmentation(nn.Module):
         self._input_w = W
 
         # Extract multi-resolution views
-        imgs, bboxes = self._extract_multi_resolution(x)
+        imgs, bboxes = extract_multi_resolution(x, self.levels, self.patch_size)
 
         # MuViT encoder: (B, L, C, H, W) + (B, L, 2, 2) -> (B, N_total, dim)
         features = self.encoder(imgs, bboxes)

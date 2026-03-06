@@ -5,12 +5,15 @@ import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 
+import java.io.File;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -246,17 +249,26 @@ public class MuViTHandler implements ClassifierHandler {
      */
     private static class MuViTTrainingUI implements TrainingUI {
 
-        private final GridPane root;
+        private final VBox root;
         private final ComboBox<String> modelConfigCombo;
         private final ComboBox<Integer> patchSizeCombo;
         private final TextField levelScalesField;
         private final ComboBox<String> ropeModeCombo;
 
+        // MAE pretraining controls
+        private final CheckBox pretrainCheck;
+        private final TextField pretrainDataPathField;
+        private final Spinner<Integer> pretrainEpochsSpinner;
+        private final Spinner<Double> maskRatioSpinner;
+        private final Spinner<Integer> warmupEpochsSpinner;
+
         public MuViTTrainingUI() {
-            root = new GridPane();
-            root.setHgap(10);
-            root.setVgap(10);
-            root.setPadding(new Insets(10));
+            root = new VBox(5);
+
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(10));
 
             int row = 0;
 
@@ -279,8 +291,8 @@ public class MuViTHandler implements ClassifierHandler {
                     setText(empty || item == null ? null : getConfigDisplayName(item));
                 }
             });
-            root.add(configLabel, 0, row);
-            root.add(modelConfigCombo, 1, row);
+            grid.add(configLabel, 0, row);
+            grid.add(modelConfigCombo, 1, row);
             row++;
 
             // Patch size
@@ -292,8 +304,8 @@ public class MuViTHandler implements ClassifierHandler {
                     "Size of patches for the transformer. Smaller = more tokens = more VRAM.\n" +
                     "16 is recommended for most cases.");
             patchSizeCombo.setTooltip(patchTooltip);
-            root.add(patchLabel, 0, row);
-            root.add(patchSizeCombo, 1, row);
+            grid.add(patchLabel, 0, row);
+            grid.add(patchSizeCombo, 1, row);
             row++;
 
             // Level scales
@@ -305,8 +317,8 @@ public class MuViTHandler implements ClassifierHandler {
                     "Example: '1,4' = detail at 1x and context at 4x physical area.\n" +
                     "'1,2,8' = three levels at 1x, 2x, and 8x.");
             levelScalesField.setTooltip(levelsTooltip);
-            root.add(levelsLabel, 0, row);
-            root.add(levelScalesField, 1, row);
+            grid.add(levelsLabel, 0, row);
+            grid.add(levelScalesField, 1, row);
             row++;
 
             // RoPE mode
@@ -322,8 +334,87 @@ public class MuViTHandler implements ClassifierHandler {
                     "fixed: Fixed sinusoidal embeddings.\n" +
                     "none: No positional encoding.");
             ropeModeCombo.setTooltip(ropeTooltip);
-            root.add(ropeLabel, 0, row);
-            root.add(ropeModeCombo, 1, row);
+            grid.add(ropeLabel, 0, row);
+            grid.add(ropeModeCombo, 1, row);
+
+            root.getChildren().add(grid);
+
+            // --- MAE Pretraining section ---
+            Separator sep = new Separator();
+            sep.setPadding(new Insets(5, 0, 5, 0));
+            root.getChildren().add(sep);
+
+            pretrainCheck = new CheckBox("MAE pretrain encoder (self-supervised)");
+            pretrainCheck.setTooltip(new Tooltip(
+                    "Pretrain the MuViT encoder on unlabeled images using\n" +
+                    "masked autoencoder reconstruction before fine-tuning.\n" +
+                    "This improves accuracy when labeled data is limited.\n" +
+                    "Requires a directory of image tiles (no labels needed)."));
+            root.getChildren().add(pretrainCheck);
+
+            GridPane pretrainGrid = new GridPane();
+            pretrainGrid.setHgap(10);
+            pretrainGrid.setVgap(8);
+            pretrainGrid.setPadding(new Insets(5, 0, 0, 20));
+
+            // Data path
+            Label dataLabel = new Label("Image directory:");
+            pretrainDataPathField = new TextField();
+            pretrainDataPathField.setPromptText("Directory of unlabeled image tiles...");
+            pretrainDataPathField.setPrefWidth(200);
+            Button browseBtn = new Button("Browse...");
+            browseBtn.setOnAction(e -> {
+                DirectoryChooser dc = new DirectoryChooser();
+                dc.setTitle("Select image directory for MAE pretraining");
+                File dir = dc.showDialog(root.getScene() != null ? root.getScene().getWindow() : null);
+                if (dir != null) {
+                    pretrainDataPathField.setText(dir.getAbsolutePath());
+                }
+            });
+            pretrainGrid.add(dataLabel, 0, 0);
+            pretrainGrid.add(pretrainDataPathField, 1, 0);
+            pretrainGrid.add(browseBtn, 2, 0);
+
+            // Pretraining epochs
+            Label epochsLabel = new Label("Pretrain epochs:");
+            pretrainEpochsSpinner = new Spinner<>(10, 1000, 100, 10);
+            pretrainEpochsSpinner.setEditable(true);
+            pretrainEpochsSpinner.setPrefWidth(100);
+            pretrainEpochsSpinner.setTooltip(new Tooltip(
+                    "Number of MAE pretraining epochs.\n" +
+                    "100 is a reasonable default for moderate datasets.\n" +
+                    "More epochs may improve encoder quality."));
+            pretrainGrid.add(epochsLabel, 0, 1);
+            pretrainGrid.add(pretrainEpochsSpinner, 1, 1);
+
+            // Mask ratio
+            Label maskLabel = new Label("Mask ratio:");
+            maskRatioSpinner = new Spinner<>(0.5, 0.9, 0.75, 0.05);
+            maskRatioSpinner.setEditable(true);
+            maskRatioSpinner.setPrefWidth(100);
+            maskRatioSpinner.setTooltip(new Tooltip(
+                    "Fraction of patches to mask during pretraining.\n" +
+                    "0.75 (75%) is the standard default.\n" +
+                    "Higher ratios force the model to learn stronger representations."));
+            pretrainGrid.add(maskLabel, 0, 2);
+            pretrainGrid.add(maskRatioSpinner, 1, 2);
+
+            // Warmup epochs
+            Label warmupLabel = new Label("Warmup epochs:");
+            warmupEpochsSpinner = new Spinner<>(0, 50, 5, 1);
+            warmupEpochsSpinner.setEditable(true);
+            warmupEpochsSpinner.setPrefWidth(100);
+            warmupEpochsSpinner.setTooltip(new Tooltip(
+                    "Number of epochs for learning rate warmup.\n" +
+                    "Transformers typically benefit from 2-10 warmup epochs."));
+            pretrainGrid.add(warmupLabel, 0, 3);
+            pretrainGrid.add(warmupEpochsSpinner, 1, 3);
+
+            root.getChildren().add(pretrainGrid);
+
+            // Bind visibility to checkbox
+            pretrainGrid.visibleProperty().bind(pretrainCheck.selectedProperty());
+            pretrainGrid.managedProperty().bind(pretrainCheck.selectedProperty());
         }
 
         @Override
@@ -338,6 +429,16 @@ public class MuViTHandler implements ClassifierHandler {
             params.put("patch_size", patchSizeCombo.getValue());
             params.put("level_scales", levelScalesField.getText().trim());
             params.put("rope_mode", ropeModeCombo.getValue());
+
+            // MAE pretraining parameters
+            params.put("mae_pretrain_enabled", pretrainCheck.isSelected());
+            if (pretrainCheck.isSelected()) {
+                params.put("mae_data_path", pretrainDataPathField.getText().trim());
+                params.put("mae_epochs", pretrainEpochsSpinner.getValue());
+                params.put("mae_mask_ratio", maskRatioSpinner.getValue());
+                params.put("mae_warmup_epochs", warmupEpochsSpinner.getValue());
+            }
+
             return params;
         }
 
@@ -364,6 +465,19 @@ public class MuViTHandler implements ClassifierHandler {
             } catch (NumberFormatException e) {
                 return Optional.of("Invalid level scales format. Use comma-separated numbers (e.g., '1,4')");
             }
+
+            // Validate pretraining config if enabled
+            if (pretrainCheck.isSelected()) {
+                String dataPath = pretrainDataPathField.getText().trim();
+                if (dataPath.isEmpty()) {
+                    return Optional.of("Please select an image directory for MAE pretraining");
+                }
+                File dataDir = new File(dataPath);
+                if (!dataDir.isDirectory()) {
+                    return Optional.of("MAE pretraining data path is not a valid directory: " + dataPath);
+                }
+            }
+
             return Optional.empty();
         }
     }
