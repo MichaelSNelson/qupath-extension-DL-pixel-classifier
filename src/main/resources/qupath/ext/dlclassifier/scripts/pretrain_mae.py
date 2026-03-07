@@ -81,19 +81,29 @@ def setup_callback(phase, data=None):
 
 def progress_callback(epoch, total, loss, lr):
     """Forward training progress to Appose."""
-    task.update(
-        message=json.dumps({
-            "epoch": epoch,
-            "total_epochs": total,
-            "train_loss": loss,
-            "val_loss": loss,
-            "accuracy": 0.0,
-            "mean_iou": 0.0,
-            "mae_lr": lr,
-        }),
-        current=epoch,
-        maximum=total
-    )
+    import math
+    # Guard against NaN/Inf which produce invalid JSON (NaN, Infinity)
+    # that Gson cannot parse, silently dropping all progress updates
+    safe_loss = loss if math.isfinite(loss) else 0.0
+    safe_lr = lr if math.isfinite(lr) else 0.0
+    try:
+        task.update(
+            message=json.dumps({
+                "epoch": epoch,
+                "total_epochs": total,
+                "train_loss": safe_loss,
+                "val_loss": safe_loss,
+                "accuracy": 0.0,
+                "mean_iou": 0.0,
+                "mae_lr": safe_lr,
+                "device": mae_service._device_str,
+                "device_info": device_info,
+            }),
+            current=epoch,
+            maximum=total
+        )
+    except Exception as e:
+        logger.debug("Failed to send progress update: %s", e)
 
 
 # Cancellation bridge

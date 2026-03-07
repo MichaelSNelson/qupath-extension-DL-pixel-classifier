@@ -576,33 +576,53 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         progress.show();
 
         // Launch pretraining on daemon thread
+        final int[] lastLoggedEpoch = {-1};
+
         Thread pretrainThread = new Thread(() -> {
             try {
+                logger.info("Starting MAE pretraining: model={}, epochs={}, data={}",
+                        config.config().get("model_config"),
+                        config.config().get("epochs"),
+                        config.dataPath());
+                progress.log("MAE pretraining starting...");
+                progress.log("Data: " + config.dataPath());
+                progress.log("Output: " + config.outputDir());
+
                 ClassifierClient.TrainingResult result = apposeBackend.startPretraining(
                         config.config(),
                         config.dataPath(),
                         config.outputDir(),
                         maeProgress -> {
-                            String statusMsg = String.format(
-                                    "MAE pretraining: epoch %d/%d (loss: %.4f)",
-                                    maeProgress.epoch(), maeProgress.totalEpochs(),
-                                    maeProgress.loss());
-
-                            // Show setup phase if still initializing
-                            if (maeProgress.setupPhase() != null
-                                    && !maeProgress.setupPhase().isEmpty()) {
-                                progress.setStatus(maeProgress.setupPhase());
-                                progress.setDetail(maeProgress.deviceInfo());
+                            // Setup phase updates (before training loop)
+                            if (maeProgress.isSetupPhase()) {
+                                if ("initializing".equals(maeProgress.status())) {
+                                    String deviceMsg = formatDeviceMessage(
+                                            maeProgress.device(), maeProgress.deviceInfo());
+                                    progress.log(deviceMsg);
+                                    progress.setStatus("Initializing for "
+                                            + maeProgress.totalEpochs() + " epoch run...");
+                                } else {
+                                    progress.setStatus(formatSetupPhase(
+                                            maeProgress.setupPhase()));
+                                }
                                 return;
                             }
 
-                            progress.setStatus(statusMsg);
-                            progress.setDetail(maeProgress.deviceInfo());
+                            // First real epoch - log start
+                            if (lastLoggedEpoch[0] < 0) {
+                                progress.setStatus("Pretraining ("
+                                        + maeProgress.totalEpochs() + " epochs)...");
+                            }
 
+                            // Always update progress bar and status
                             if (maeProgress.totalEpochs() > 0) {
                                 progress.setOverallProgress(
                                         (double) maeProgress.epoch() / maeProgress.totalEpochs());
                             }
+                            progress.setDetail(String.format(
+                                    "Epoch %d/%d  |  Loss: %.4f",
+                                    maeProgress.epoch(), maeProgress.totalEpochs(),
+                                    maeProgress.loss()));
 
                             // Update loss chart
                             progress.updateTrainingMetrics(
@@ -610,6 +630,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     maeProgress.loss(),
                                     Double.NaN,
                                     null, null);
+
+                            // Log every 10 epochs or first epoch
+                            int epoch = maeProgress.epoch();
+                            if (epoch == 1 || epoch % 10 == 0
+                                    || epoch == maeProgress.totalEpochs()) {
+                                progress.log(String.format(
+                                        "Epoch %d/%d: loss=%.6f",
+                                        epoch, maeProgress.totalEpochs(),
+                                        maeProgress.loss()));
+                                lastLoggedEpoch[0] = epoch;
+                            }
                         },
                         progress::isCancelled
                 );
@@ -623,6 +654,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         "choose 'Continue from model' to load this encoder.",
                         encoderPath, result.finalLoss());
                 progress.complete(true, message);
+                logger.info("MAE pretraining complete: loss={}, path={}",
+                        result.finalLoss(), encoderPath);
                 Platform.runLater(() ->
                         Dialogs.showInfoNotification(EXTENSION_NAME,
                                 "MAE pretraining complete! Encoder saved to:\n" + encoderPath));
@@ -633,6 +666,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     logger.info("MAE pretraining cancelled by user");
                 } else {
                     logger.error("MAE pretraining failed", e);
+                    progress.log("ERROR: " + e.getMessage());
                     progress.complete(false,
                             "MAE pretraining failed: " + e.getMessage());
                     Platform.runLater(() ->
@@ -712,6 +746,40 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         overlayService.applyClassifierOverlay(imageData, pixelClassifier);
         Dialogs.showInfoNotification(EXTENSION_NAME,
                 "Live DL overlay applied: " + metadata.getName());
+    }
+
+    /**
+     * Formats a user-friendly device message from progress info.
+     */
+    private static String formatDeviceMessage(String device, String deviceInfo) {
+        if (device == null || device.isEmpty()) {
+            return "Python backend ready, building model...";
+        }
+        return switch (device) {
+            case "cuda" -> {
+                String gpuName = (deviceInfo != null && !deviceInfo.isEmpty()
+                        && !"CPU".equals(deviceInfo)) ? deviceInfo : "NVIDIA GPU";
+                yield "Pretraining on " + gpuName + " (CUDA)";
+            }
+            case "mps" -> "Pretraining on Apple Silicon (MPS)";
+            case "cpu" -> "Pretraining on CPU (no GPU detected -- this will be slow)";
+            default -> "Pretraining on device: " + device;
+        };
+    }
+
+    /**
+     * Converts a setup phase identifier to a user-friendly status message.
+     */
+    private static String formatSetupPhase(String phase) {
+        if (phase == null) return "Setting up...";
+        return switch (phase) {
+            case "creating_model" -> "Creating model architecture...";
+            case "loading_data" -> "Loading image tiles...";
+            case "computing_stats" -> "Computing normalization statistics...";
+            case "starting_training" -> "Starting first epoch...";
+            case "saving_model" -> "Saving encoder weights...";
+            default -> "Setting up (" + phase + ")...";
+        };
     }
 
 }

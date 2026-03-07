@@ -336,7 +336,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         progressCallback.accept(progress);
                     }
                 } catch (Exception e) {
-                    logger.debug("Failed to parse pretraining progress: {}", e.getMessage());
+                    logger.warn("Failed to parse pretraining progress: {}", e.getMessage());
                 }
             }
         });
