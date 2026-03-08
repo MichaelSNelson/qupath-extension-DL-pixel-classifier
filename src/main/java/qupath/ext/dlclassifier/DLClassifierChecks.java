@@ -1,10 +1,13 @@
 package qupath.ext.dlclassifier;
 
+import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
+import qupath.fx.dialogs.Dialogs;
 
 /**
  * Validation utilities for the DL Pixel Classifier extension.
@@ -18,6 +21,9 @@ import qupath.ext.dlclassifier.service.ClassifierBackend;
 public final class DLClassifierChecks {
 
     private static final Logger logger = LoggerFactory.getLogger(DLClassifierChecks.class);
+
+    // Ensure the version warning notification is shown at most once per session
+    private static volatile boolean versionWarningShown;
 
     private DLClassifierChecks() {
         // Utility class - no instantiation
@@ -35,6 +41,7 @@ public final class DLClassifierChecks {
 
             if (healthy) {
                 logger.info("Classification backend is healthy");
+                showVersionWarningOnce();
             } else {
                 logger.warn("Classification backend health check failed");
             }
@@ -102,6 +109,22 @@ public final class DLClassifierChecks {
         } catch (Exception e) {
             logger.debug("Failed to get GPU info: {}", e.getMessage());
             return "Unknown";
+        }
+    }
+
+    /**
+     * Shows a one-time user notification if the Python package is outdated.
+     */
+    private static void showVersionWarningOnce() {
+        if (versionWarningShown)
+            return;
+        String warning = ApposeClassifierBackend.getVersionWarning();
+        if (warning != null && !warning.isEmpty()) {
+            versionWarningShown = true;
+            Platform.runLater(() ->
+                    Dialogs.showWarningNotification("DL Pixel Classifier",
+                            "Python package is outdated and may cause issues.\n" +
+                            "Go to Utilities > Rebuild DL Environment to update."));
         }
     }
 }

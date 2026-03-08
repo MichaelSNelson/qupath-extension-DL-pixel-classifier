@@ -57,6 +57,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     private static final int MAX_HEALTH_CHECK_RETRIES = 3;
     private static final long HEALTH_CHECK_RETRY_DELAY_MS = 250;
 
+    // Version compatibility warning from the Python package (set during health check)
+    private static volatile String versionWarning;
+
     // Stores checkpoint info for paused training jobs so resume/finalize can
     // retrieve the checkpoint path and original training inputs.
     private static final ConcurrentHashMap<String, CheckpointInfo> checkpointStore = new ConcurrentHashMap<>();
@@ -84,6 +87,22 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 try {
                     Task task = appose.runTask("health_check", Map.of());
                     Object healthy = task.outputs.get("healthy");
+
+                    // Read version compatibility info from health check
+                    Object warning = task.outputs.get("version_warning");
+                    if (warning instanceof String w && !w.isEmpty()) {
+                        versionWarning = w;
+                        logger.warn("Python package version warning: {}", w);
+                    } else {
+                        versionWarning = null;
+                        Object ver = task.outputs.get("server_version");
+                        Object proto = task.outputs.get("protocol_version");
+                        if (ver != null) {
+                            logger.info("dlclassifier-server v{} (protocol {})",
+                                    ver, proto != null ? proto : "?");
+                        }
+                    }
+
                     return Boolean.TRUE.equals(healthy);
                 } catch (Exception e) {
                     String msg = e.getMessage() != null ? e.getMessage() : "";
@@ -121,6 +140,13 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             logger.debug("Appose GPU info failed: {}", e.getMessage());
             return "Unknown [Appose]";
         }
+    }
+
+    /**
+     * Returns the version warning from the last health check, or null if versions match.
+     */
+    public static String getVersionWarning() {
+        return versionWarning;
     }
 
     @Override

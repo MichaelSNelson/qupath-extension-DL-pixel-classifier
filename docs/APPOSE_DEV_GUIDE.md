@@ -208,6 +208,41 @@ Before submitting a new `.py` script in `src/main/resources/.../scripts/`:
 - [ ] **No bare `import` of heavy libraries at top level** -- import inside functions or after the initialization check to keep startup fast
 - [ ] **Test on Windows** -- encoding, file paths (backslashes), and multiprocessing all behave differently
 
+## Version Compatibility (PROTOCOL_VERSION)
+
+The `dlclassifier-server` Python package is pip-installed via pixi from GitHub and cached independently of the Java JAR. When the JAR is updated but the Python package is not re-fetched, the two sides can be out of sync, causing silent failures (e.g., the `num_workers` deadlock that hung for 6 hours).
+
+### How it works
+
+Both sides declare a `PROTOCOL_VERSION` integer:
+
+- **Python side:** `dlclassifier_server/__init__.py` exports `PROTOCOL_VERSION`
+- **Java side:** `init_services.py` (bundled in the JAR, always current) declares `_EXPECTED_PROTOCOL`
+
+At startup, `init_services.py` compares the two. If the installed package is older, a warning is logged and stored in a global `version_warning` variable. The `health_check.py` script returns this warning to Java, which surfaces a one-time user notification.
+
+### When to bump PROTOCOL_VERSION
+
+**Bump when:**
+- Python service method signatures change (new required params, removed params)
+- Training loop / DataLoader behavior changes affecting correctness
+- Bug fixes for silent failures (like `num_workers=0` enforcement)
+- New required fields in progress JSON that Java depends on
+- Changes to model loading logic that the monkey-patch covers
+
+**Do NOT bump for:**
+- New Python utility functions that Appose scripts don't call
+- Documentation, comments, test-only changes
+- Additive changes (new optional params with defaults, new service methods)
+- Performance improvements that don't change the API contract
+
+### How to bump
+
+1. Increment `PROTOCOL_VERSION` in `python_server/dlclassifier_server/__init__.py`
+2. Update `_EXPECTED_PROTOCOL` in `src/main/resources/.../scripts/init_services.py` to match
+3. Bump `__version__` in `__init__.py` and `version` in `pyproject.toml`
+4. Update the version tag comment in `pixi.toml` to force re-fetch
+
 ## Checklist for New Python Services
 
 Before submitting a new service in `python_server/dlclassifier_server/services/`:

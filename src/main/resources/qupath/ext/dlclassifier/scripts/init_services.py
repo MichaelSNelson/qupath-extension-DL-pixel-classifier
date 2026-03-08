@@ -43,6 +43,30 @@ try:
     logger.info("DL classifier services initialized successfully")
     logger.info("Device: %s", inference_service._device_str)
 
+    # --- Version compatibility check ---
+    # The installed dlclassifier_server package (pip/pixi) may be stale
+    # while the JAR (and these bundled scripts) are current. Check the
+    # protocol version to detect mismatches and warn the user.
+    import dlclassifier_server as _dls
+    _installed_version = getattr(_dls, "__version__", "unknown")
+    _installed_protocol = getattr(_dls, "PROTOCOL_VERSION", 0)
+    _EXPECTED_PROTOCOL = 2
+
+    if _installed_protocol < _EXPECTED_PROTOCOL:
+        logger.warning(
+            "PYTHON PACKAGE OUT OF DATE: dlclassifier-server v%s "
+            "(protocol %d) but extension requires protocol %d. "
+            "Go to Utilities > Rebuild DL Environment to update.",
+            _installed_version, _installed_protocol, _EXPECTED_PROTOCOL)
+        version_warning = (
+            "Python package outdated (v%s, protocol %d). "
+            "Expected protocol %d. Rebuild DL Environment to update."
+            % (_installed_version, _installed_protocol, _EXPECTED_PROTOCOL))
+    else:
+        version_warning = None
+        logger.info("dlclassifier-server v%s (protocol %d) -- OK",
+                    _installed_version, _installed_protocol)
+
     # Threading lock for GPU operations.
     # Appose runs each task in its own thread. Without serialization,
     # concurrent tile inference tasks race on model loading, CUDA memory
