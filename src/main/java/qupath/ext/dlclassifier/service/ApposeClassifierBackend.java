@@ -205,6 +205,18 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             }
         });
 
+        // Override with actual handler UI selections (e.g., user-changed patch_size,
+        // or MAE-locked model_config). These take priority over handler defaults.
+        Map<String, Object> uiParams = trainingConfig.getHandlerParameters();
+        if (uiParams != null && !uiParams.isEmpty()) {
+            for (Map.Entry<String, Object> entry : uiParams.entrySet()) {
+                String key = entry.getKey();
+                if (!"available_backbones".equals(key)) {
+                    architecture.put(key, entry.getValue());
+                }
+            }
+        }
+
         Map<String, Object> inputConfig = buildInputConfig(channelConfig);
 
         Map<String, Object> trainingParams = new HashMap<>();

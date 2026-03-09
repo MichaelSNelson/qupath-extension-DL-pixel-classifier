@@ -694,6 +694,14 @@ public class TrainingDialog {
                     currentHandlerUI.setLocked(true);
                 }
 
+                // Sync the hidden backboneCombo so TrainingConfig.backbone matches
+                if (archParams.containsKey("model_config")) {
+                    String config = (String) archParams.get("model_config");
+                    if (backboneCombo.getItems().contains(config)) {
+                        backboneCombo.setValue(config);
+                    }
+                }
+
                 // Build a summary string for the info label
                 StringBuilder info = new StringBuilder("Architecture locked to match encoder:");
                 if (archParams.containsKey("model_config"))
@@ -1248,6 +1256,8 @@ public class TrainingDialog {
                     .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
                     .pretrainedModelPath(pretrainedPath)
                     .wholeImage(wholeImageCheck.isSelected())
+                    .handlerParameters(currentHandlerUI != null
+                            ? currentHandlerUI.getParameters() : Map.of())
                     .build();
         }
 

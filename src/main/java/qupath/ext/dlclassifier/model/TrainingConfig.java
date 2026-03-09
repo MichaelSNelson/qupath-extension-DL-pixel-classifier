@@ -74,6 +74,11 @@ public class TrainingConfig {
     // Whole-image mode: use entire image as a single training tile (no tiling)
     private final boolean wholeImage;
 
+    // Handler-specific UI parameters (e.g., MuViT model_config, patch_size, level_scales, rope_mode).
+    // These override values from ClassifierHandler.getArchitectureParams() so that user
+    // selections in the handler UI are actually sent to the Python backend.
+    private final Map<String, Object> handlerParameters;
+
     // Transient runtime field: project-local directory for model output.
     // Not part of equals/hashCode/builder -- set at runtime by TrainingWorkflow
     // to redirect model saving directly into the project's classifiers directory.
@@ -116,6 +121,7 @@ public class TrainingConfig {
         this.progressiveResize = builder.progressiveResize;
         this.pretrainedModelPath = builder.pretrainedModelPath;
         this.wholeImage = builder.wholeImage;
+        this.handlerParameters = Collections.unmodifiableMap(new LinkedHashMap<>(builder.handlerParameters));
     }
 
     // Getters
@@ -384,6 +390,20 @@ public class TrainingConfig {
     }
 
     /**
+     * Gets the handler-specific UI parameters.
+     * <p>
+     * These contain the actual user selections from the handler UI
+     * (e.g., MuViT model_config, patch_size, level_scales, rope_mode).
+     * They override the static defaults from
+     * {@link qupath.ext.dlclassifier.classifier.ClassifierHandler#getArchitectureParams}.
+     *
+     * @return handler parameters map (never null, may be empty)
+     */
+    public Map<String, Object> getHandlerParameters() {
+        return handlerParameters;
+    }
+
+    /**
      * Computes the effective tile size for whole-image mode.
      * <p>
      * Takes the maximum of image width and height, divides by the downsample
@@ -554,6 +574,7 @@ public class TrainingConfig {
         private boolean progressiveResize = false;
         private String pretrainedModelPath = null;
         private boolean wholeImage = false;
+        private Map<String, Object> handlerParameters = new LinkedHashMap<>();
 
         public Builder() {
             // Default augmentation configuration (spatial transforms only)
@@ -601,6 +622,7 @@ public class TrainingConfig {
             this.progressiveResize = config.progressiveResize;
             this.pretrainedModelPath = config.pretrainedModelPath;
             this.wholeImage = config.wholeImage;
+            this.handlerParameters = new LinkedHashMap<>(config.handlerParameters);
             return this;
         }
 
@@ -894,6 +916,17 @@ public class TrainingConfig {
          */
         public Builder wholeImage(boolean wholeImage) {
             this.wholeImage = wholeImage;
+            return this;
+        }
+
+        /**
+         * Sets handler-specific UI parameters that override defaults from
+         * {@code ClassifierHandler.getArchitectureParams()}.
+         *
+         * @param handlerParameters map of handler UI parameter names to values
+         */
+        public Builder handlerParameters(Map<String, Object> handlerParameters) {
+            this.handlerParameters = new LinkedHashMap<>(handlerParameters);
             return this;
         }
 

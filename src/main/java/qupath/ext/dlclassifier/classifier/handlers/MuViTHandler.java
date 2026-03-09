@@ -336,11 +336,24 @@ public class MuViTHandler implements ClassifierHandler {
             ropeModeCombo.setValue("per_layer");
             ropeModeCombo.setMaxWidth(150);
             Tooltip ropeTooltip = new Tooltip(
-                    "Rotary positional embedding mode for cross-resolution attention.\n" +
-                    "per_layer (default): Separate learned embeddings per layer.\n" +
-                    "shared: Shared learned embeddings.\n" +
-                    "fixed: Fixed sinusoidal embeddings.\n" +
-                    "none: No positional encoding.");
+                    "How the model encodes spatial position of patches.\n" +
+                    "This controls cross-resolution attention quality.\n\n" +
+                    "per_layer (recommended): Each transformer layer has its own\n" +
+                    "position encoding. Best accuracy -- the model can learn\n" +
+                    "different spatial relationships at different depths.\n" +
+                    "Use this unless you have a specific reason not to.\n\n" +
+                    "shared: All layers share one position encoding.\n" +
+                    "Slightly fewer parameters. Use if training is unstable\n" +
+                    "or you have very limited data (<50 labeled tiles).\n\n" +
+                    "fixed: Non-learnable sinusoidal position encoding.\n" +
+                    "Zero trainable parameters for position. Use only if\n" +
+                    "you need maximum reproducibility or suspect position\n" +
+                    "encoding is overfitting (very unlikely in practice).\n\n" +
+                    "none: No position information at all. The model cannot\n" +
+                    "distinguish where patches came from spatially. Only for\n" +
+                    "ablation experiments -- not recommended for real use.\n\n" +
+                    "Must match the setting used during MAE pretraining\n" +
+                    "(locked automatically when an MAE encoder is loaded).");
             ropeModeCombo.setTooltip(ropeTooltip);
             grid.add(ropeLabel, 0, row);
             grid.add(ropeModeCombo, 1, row);

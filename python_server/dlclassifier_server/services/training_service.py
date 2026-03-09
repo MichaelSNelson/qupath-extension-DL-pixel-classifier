@@ -1286,7 +1286,10 @@ class TrainingService:
                     with torch.amp.autocast("cuda", dtype=amp_dtype):
                         outputs = model(images)
                         loss = criterion(outputs, masks)
-                    scaled_loss = loss / accumulation_steps
+                    # Compute loss in float32 for accurate accumulation/logging
+                    # (BF16 can underflow with transformer initial outputs)
+                    loss_f32 = loss.float()
+                    scaled_loss = loss_f32 / accumulation_steps
                     if scaler is not None:
                         # FP16 path: use GradScaler
                         scaler.scale(scaled_loss).backward()
@@ -1296,10 +1299,11 @@ class TrainingService:
                 else:
                     outputs = model(images)
                     loss = criterion(outputs, masks)
+                    loss_f32 = loss
                     scaled_loss = loss / accumulation_steps
                     scaled_loss.backward()
 
-                train_loss += loss.item()
+                train_loss += loss_f32.item()
 
                 # Step optimizer every accumulation_steps batches (or on last batch)
                 if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(active_train_loader):
