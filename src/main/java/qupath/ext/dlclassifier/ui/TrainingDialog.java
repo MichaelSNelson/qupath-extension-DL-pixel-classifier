@@ -428,11 +428,29 @@ public class TrainingDialog {
                 chooser.setTitle("Select MAE Pretrained Encoder (.pt)");
                 chooser.getExtensionFilters().add(
                         new FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
+                // Default to previously selected path, then project's mae_pretrained dir
                 String currentPath = maeEncoderPathField.getText();
                 if (currentPath != null && !currentPath.isEmpty()) {
                     java.io.File parent = new java.io.File(currentPath).getParentFile();
                     if (parent != null && parent.isDirectory()) {
                         chooser.setInitialDirectory(parent);
+                    }
+                } else {
+                    Project<?> project = QuPathGUI.getInstance().getProject();
+                    if (project != null) {
+                        try {
+                            java.nio.file.Path maeDir = project.getPath().getParent()
+                                    .resolve("mae_pretrained");
+                            if (java.nio.file.Files.isDirectory(maeDir)) {
+                                chooser.setInitialDirectory(maeDir.toFile());
+                            } else {
+                                chooser.setInitialDirectory(
+                                        project.getPath().getParent().toFile());
+                            }
+                        } catch (Exception ex) {
+                            logger.debug("Could not resolve project MAE directory: {}",
+                                    ex.getMessage());
+                        }
                     }
                 }
                 java.io.File file = chooser.showOpenDialog(
