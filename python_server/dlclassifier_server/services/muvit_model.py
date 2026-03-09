@@ -241,9 +241,11 @@ def create_muvit_model(
     if num_heads is not None:
         num_heads = int(num_heads)
 
+    # Ensure int types: Gson round-trips may produce floats (3.0 instead of 3)
+    # which cause TypeError in nn.Linear when multiplied with np.prod().
     return MuViTSegmentation(
-        in_channels=num_channels,
-        classes=num_classes,
+        in_channels=int(num_channels),
+        classes=int(num_classes),
         model_config=model_config,
         patch_size=patch_size,
         level_scales=level_scales,
