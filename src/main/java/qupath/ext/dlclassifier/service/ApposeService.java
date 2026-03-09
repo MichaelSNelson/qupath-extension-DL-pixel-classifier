@@ -710,10 +710,28 @@ public class ApposeService {
             Files.writeString(pixiTomlFile, expectedContent, StandardCharsets.UTF_8);
             // Delete lockfile so pixi re-resolves
             Files.deleteIfExists(envDir.resolve("pixi.lock"));
-            // Delete .pixi/ so Appose doesn't skip the build
+            // Delete .pixi/ so Appose doesn't skip the build.
+            // On Windows, files inside .pixi/ may be locked by OS caching even
+            // after QuPath restarts, preventing deletion. Try rename-then-delete
+            // as a fallback since Windows allows renaming locked directories.
             Path pixiDir = envDir.resolve(".pixi");
             if (Files.isDirectory(pixiDir)) {
-                deleteDirectoryRecursively(pixiDir);
+                try {
+                    deleteDirectoryRecursively(pixiDir);
+                } catch (IOException e) {
+                    // Rename as fallback -- Windows often allows renaming locked dirs
+                    Path renamed = envDir.resolve(".pixi_old_" + System.currentTimeMillis());
+                    try {
+                        Files.move(pixiDir, renamed);
+                        logger.info("Could not delete .pixi/ (locked files), renamed to {}",
+                                renamed.getFileName());
+                    } catch (IOException e2) {
+                        logger.warn("Could not delete or rename .pixi/ -- "
+                                + "environment may not rebuild automatically. "
+                                + "Use DL Classifier > Setup Environment to force rebuild. "
+                                + "Error: {}", e2.getMessage());
+                    }
+                }
             }
             logger.info("Environment sync complete - next build will re-resolve dependencies");
         } catch (IOException e) {
