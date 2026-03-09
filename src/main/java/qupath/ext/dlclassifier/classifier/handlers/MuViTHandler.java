@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Handler for MuViT (Multi-Resolution Vision Transformer) pixel classifiers.
@@ -142,6 +143,18 @@ public class MuViTHandler implements ClassifierHandler {
     @Override
     public String getBackboneDisplayName(String config) {
         return CONFIG_DISPLAY_NAMES.getOrDefault(config, config);
+    }
+
+    @Override
+    public Set<WeightInitStrategy> getSupportedWeightInitStrategies() {
+        return Set.of(WeightInitStrategy.SCRATCH,
+                      WeightInitStrategy.MAE_ENCODER,
+                      WeightInitStrategy.CONTINUE_TRAINING);
+    }
+
+    @Override
+    public WeightInitStrategy getDefaultWeightInitStrategy() {
+        return WeightInitStrategy.SCRATCH;
     }
 
     @Override

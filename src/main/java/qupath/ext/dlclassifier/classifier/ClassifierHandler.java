@@ -9,6 +9,7 @@ import qupath.ext.dlclassifier.model.TrainingConfig;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Core extensibility interface for the DL pixel classifier system.
@@ -154,6 +155,45 @@ public interface ClassifierHandler {
      */
     default String getBackboneDisplayName(String backbone) {
         return backbone;
+    }
+
+    /**
+     * Describes how a model's weights are initialized before training.
+     */
+    enum WeightInitStrategy {
+        /** Random initialization -- no pretrained weights. */
+        SCRATCH("Train from scratch"),
+        /** ImageNet or histology pretrained backbone encoder. */
+        BACKBONE_PRETRAINED("Use pretrained backbone weights"),
+        /** MAE self-supervised pretrained encoder (MuViT). */
+        MAE_ENCODER("Use MAE pretrained encoder"),
+        /** Load all weights from a previously trained model. */
+        CONTINUE_TRAINING("Continue training from saved model");
+
+        private final String displayName;
+        WeightInitStrategy(String displayName) { this.displayName = displayName; }
+        public String getDisplayName() { return displayName; }
+    }
+
+    /**
+     * Returns the weight initialization strategies this handler supports.
+     * The default set covers CNN architectures (scratch, backbone pretrained, continue).
+     *
+     * @return supported strategies
+     */
+    default Set<WeightInitStrategy> getSupportedWeightInitStrategies() {
+        return Set.of(WeightInitStrategy.SCRATCH,
+                      WeightInitStrategy.BACKBONE_PRETRAINED,
+                      WeightInitStrategy.CONTINUE_TRAINING);
+    }
+
+    /**
+     * Returns the default weight initialization strategy for this handler.
+     *
+     * @return default strategy
+     */
+    default WeightInitStrategy getDefaultWeightInitStrategy() {
+        return WeightInitStrategy.BACKBONE_PRETRAINED;
     }
 
     /**

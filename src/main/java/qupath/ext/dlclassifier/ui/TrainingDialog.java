@@ -11,6 +11,7 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.chart.PieChart;
 import javafx.scene.layout.*;
+import javafx.stage.FileChooser;
 import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -184,9 +185,17 @@ public class TrainingDialog {
         private Spinner<Double> focusClassMinIoUSpinner;
         private Label focusClassMinIoULabel;
 
-        // Transfer learning
+        // Weight initialization (unified radio group)
+        private ToggleGroup weightInitGroup;
+        private RadioButton scratchRadio;
+        private RadioButton backbonePretrainedRadio;
+        private RadioButton maeEncoderRadio;
+        private RadioButton continueTrainingRadio;
+        private VBox backbonePretrainedContent;
+        private VBox maeEncoderContent;
+        private VBox continueTrainingContent;
+        private TextField maeEncoderPathField;
         private LayerFreezePanel layerFreezePanel;
-        private CheckBox usePretrainedCheck;
         private ClassifierBackend backend;
 
         // Image source selection
@@ -195,15 +204,13 @@ public class TrainingDialog {
         private boolean classesLoaded = false;
         private Button loadClassesButton;
 
-        // Architecture-dependent sections (hidden for MuViT)
-        private TitledPane transferSection;
+        // Architecture-dependent sections
         private Label backboneLabel;
         private Label contextScaleLabel;
 
         // Load settings from model
         private Label loadedModelLabel;
         private List<String> sourceModelClassNames;
-        private CheckBox continueTrainingCheck;
         private String pretrainedModelPtPath;
         private String pretrainedModelArchitecture;
         private String pretrainedModelBackbone;
@@ -259,33 +266,29 @@ public class TrainingDialog {
             TitledPane channelSection = createChannelSection();
             TitledPane classSection = createClassSection();
 
-            // Load settings section (always enabled, before image source)
-            VBox loadSettingsSection = createLoadSettingsSection();
-
             // Image source section is always enabled
             TitledPane imageSourceSection = createImageSourceSection();
 
             // All other sections are gated behind "Load Classes"
             TitledPane basicInfoSection = createBasicInfoSection();
             TitledPane modelSection = createModelSection();
-            transferSection = createTransferLearningSection();
+            TitledPane weightInitSection = createWeightInitializationSection();
             TitledPane trainingSection = createTrainingSection();
             TitledPane strategySection = createTrainingStrategySection();
             TitledPane augmentationSection = createAugmentationSection();
 
             gatedSections.addAll(List.of(
-                    basicInfoSection, modelSection, transferSection,
+                    basicInfoSection, modelSection, weightInitSection,
                     trainingSection, strategySection,
                     channelSection, classSection, augmentationSection
             ));
 
-            // Build layout: load settings, image source, then gated sections, then error panel
+            // Build layout: image source, then gated sections, then error panel
             content.getChildren().addAll(
-                    loadSettingsSection,
                     imageSourceSection,
                     basicInfoSection,
                     modelSection,
-                    transferSection,
+                    weightInitSection,
                     trainingSection,
                     strategySection,
                     channelSection,
@@ -343,14 +346,126 @@ public class TrainingDialog {
             dialog.getDialogPane().setHeader(headerBox);
         }
 
-        private VBox createLoadSettingsSection() {
-            Button loadSettingsButton = new Button("Retrain or refine a previously created model...");
-            loadSettingsButton.setStyle("-fx-font-weight: bold;");
-            TooltipHelper.install(loadSettingsButton,
-                    "Load settings from a previously trained model to retrain or refine it.\n" +
-                    "Populates all dialog fields from the selected model's configuration.\n" +
-                    "All settings can still be adjusted before training.");
-            loadSettingsButton.setOnAction(e -> {
+        private TitledPane createWeightInitializationSection() {
+            VBox content = new VBox(10);
+            content.setPadding(new Insets(10));
+
+            weightInitGroup = new ToggleGroup();
+
+            // --- Train from scratch ---
+            scratchRadio = new RadioButton(
+                    ClassifierHandler.WeightInitStrategy.SCRATCH.getDisplayName());
+            scratchRadio.setToggleGroup(weightInitGroup);
+            scratchRadio.setUserData(ClassifierHandler.WeightInitStrategy.SCRATCH);
+            TooltipHelper.install(scratchRadio,
+                    "Initialize all model weights randomly.\n" +
+                    "Requires more data and epochs to converge.");
+
+            Label scratchInfo = new Label("All model weights are randomly initialized.");
+            scratchInfo.setWrapText(true);
+            scratchInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            scratchInfo.setPadding(new Insets(0, 0, 0, 20));
+
+            // --- Pretrained backbone (CNN) ---
+            backbonePretrainedRadio = new RadioButton(
+                    ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED.getDisplayName());
+            backbonePretrainedRadio.setToggleGroup(weightInitGroup);
+            backbonePretrainedRadio.setUserData(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+            TooltipHelper.installWithLink(backbonePretrainedRadio,
+                    "Initialize encoder with pretrained weights.\n" +
+                    "Dramatically improves convergence and final accuracy,\n" +
+                    "especially with limited training data.",
+                    "https://cs231n.github.io/transfer-learning/");
+
+            Label backboneInfo = new Label(
+                    "Transfer learning uses pretrained weights from ImageNet. " +
+                    "Freeze early layers to preserve general features, train later layers to adapt to your data.");
+            backboneInfo.setWrapText(true);
+            backboneInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+
+            // Update info text when backbone changes (ImageNet vs histology)
+            backboneCombo.valueProperty().addListener((obs, old, newVal) -> {
+                if (newVal != null && newVal.contains("_")) {
+                    backboneInfo.setText(
+                            "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
+                            "Best for H&E brightfield. Less freezing needed. " +
+                            "For fluorescence or multi-channel images, use an ImageNet backbone instead. " +
+                            "~100MB download on first use (cached).");
+                    backbonePretrainedRadio.setText("Use histology pretrained weights");
+                } else {
+                    backboneInfo.setText(
+                            "ImageNet-pretrained weights provide general edge/texture features " +
+                            "that transfer to most image types including fluorescence and multi-channel. " +
+                            "Freeze early layers to preserve these features.");
+                    backbonePretrainedRadio.setText("Use pretrained backbone weights");
+                }
+            });
+
+            layerFreezePanel = new LayerFreezePanel();
+            layerFreezePanel.setBackend(backend);
+
+            backbonePretrainedContent = new VBox(5, backboneInfo, layerFreezePanel);
+            backbonePretrainedContent.setPadding(new Insets(0, 0, 0, 20));
+
+            // --- MAE pretrained encoder (MuViT) ---
+            maeEncoderRadio = new RadioButton(
+                    ClassifierHandler.WeightInitStrategy.MAE_ENCODER.getDisplayName());
+            maeEncoderRadio.setToggleGroup(weightInitGroup);
+            maeEncoderRadio.setUserData(ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
+            TooltipHelper.install(maeEncoderRadio,
+                    "Load encoder weights from a self-supervised MAE pretrained model.\n" +
+                    "Matching layers are loaded; non-matching layers (decoder) are skipped.");
+
+            maeEncoderPathField = new TextField();
+            maeEncoderPathField.setEditable(false);
+            maeEncoderPathField.setPromptText("Select MAE encoder .pt file...");
+            maeEncoderPathField.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(maeEncoderPathField, Priority.ALWAYS);
+
+            Button maeBrowseButton = new Button("Browse...");
+            maeBrowseButton.setOnAction(e -> {
+                FileChooser chooser = new FileChooser();
+                chooser.setTitle("Select MAE Pretrained Encoder (.pt)");
+                chooser.getExtensionFilters().add(
+                        new FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
+                String currentPath = maeEncoderPathField.getText();
+                if (currentPath != null && !currentPath.isEmpty()) {
+                    java.io.File parent = new java.io.File(currentPath).getParentFile();
+                    if (parent != null && parent.isDirectory()) {
+                        chooser.setInitialDirectory(parent);
+                    }
+                }
+                java.io.File file = chooser.showOpenDialog(
+                        dialog.getDialogPane().getScene().getWindow());
+                if (file != null) {
+                    maeEncoderPathField.setText(file.getAbsolutePath());
+                }
+            });
+            maeBrowseButton.setTooltip(new Tooltip("Browse for a .pt encoder file"));
+
+            Button maeClearButton = new Button("Clear");
+            maeClearButton.setOnAction(e -> maeEncoderPathField.setText(""));
+
+            HBox maeFileRow = new HBox(5, maeEncoderPathField, maeBrowseButton, maeClearButton);
+            maeFileRow.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(maeEncoderPathField, Priority.ALWAYS);
+
+            maeEncoderContent = new VBox(5, maeFileRow);
+            maeEncoderContent.setPadding(new Insets(0, 0, 0, 20));
+
+            // --- Continue training from saved model ---
+            continueTrainingRadio = new RadioButton(
+                    ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING.getDisplayName());
+            continueTrainingRadio.setToggleGroup(weightInitGroup);
+            continueTrainingRadio.setUserData(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+            TooltipHelper.install(continueTrainingRadio,
+                    "Load all weights from a previously trained model as the starting point.\n" +
+                    "The optimizer and learning rate schedule start fresh.\n" +
+                    "Useful for fine-tuning on additional data or adjusted classes.");
+            continueTrainingRadio.setDisable(true); // Enabled after loading a model
+
+            Button selectModelButton = new Button("Select model...");
+            selectModelButton.setOnAction(e -> {
                 ModelManager modelManager = new ModelManager();
                 List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
                 if (classifiers.isEmpty()) {
@@ -362,31 +477,133 @@ public class TrainingDialog {
                         dialog, classifiers);
                 selected.ifPresent(this::loadSettingsFromModel);
             });
+            TooltipHelper.install(selectModelButton,
+                    "Load settings from a previously trained model to retrain or refine it.\n" +
+                    "Populates all dialog fields from the selected model's configuration.");
 
             loadedModelLabel = new Label();
             loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
 
-            continueTrainingCheck = new CheckBox("Initialize weights from this model");
-            continueTrainingCheck.setDisable(true);
-            TooltipHelper.install(continueTrainingCheck,
-                    "Load the trained model's neural network weights as the starting point.\n" +
-                    "The optimizer and learning rate schedule start fresh.\n" +
-                    "Useful for fine-tuning on additional data or adjusted classes.\n" +
-                    "If the new training has different classes, the segmentation head\n" +
-                    "is randomly initialized while encoder/decoder weights transfer.");
-            continueTrainingCheck.selectedProperty().addListener((obs, oldVal, newVal) -> {
-                if (newVal != null && newVal) {
-                    // Our own weights replace ImageNet weights, so uncheck that
-                    usePretrainedCheck.setSelected(false);
+            continueTrainingContent = new VBox(5, new HBox(10, selectModelButton, loadedModelLabel));
+            continueTrainingContent.setPadding(new Insets(0, 0, 0, 20));
+
+            // Toggle group listener: show/hide sub-content
+            weightInitGroup.selectedToggleProperty().addListener((obs, old, newVal) ->
+                    updateWeightInitSubContent());
+
+            // Assemble all options
+            content.getChildren().addAll(
+                    scratchRadio, scratchInfo,
+                    backbonePretrainedRadio, backbonePretrainedContent,
+                    maeEncoderRadio, maeEncoderContent,
+                    continueTrainingRadio, continueTrainingContent
+            );
+
+            // Set initial selection based on handler + preferences
+            ClassifierHandler handler = ClassifierRegistry.getHandler(architectureCombo.getValue())
+                    .orElse(ClassifierRegistry.getDefaultHandler());
+            updateWeightInitOptions(architectureCombo.getValue());
+
+            TitledPane pane = new TitledPane("WEIGHT INITIALIZATION", content);
+            pane.setExpanded(true);
+            pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(TooltipHelper.create(
+                    "Choose how model weights are initialized before training"));
+            return pane;
+        }
+
+        /**
+         * Shows/hides sub-content panels based on the selected weight initialization radio.
+         */
+        private void updateWeightInitSubContent() {
+            ClassifierHandler.WeightInitStrategy selected = getSelectedWeightInitStrategy();
+
+            backbonePretrainedContent.setVisible(
+                    selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+            backbonePretrainedContent.setManaged(
+                    selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+
+            maeEncoderContent.setVisible(
+                    selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
+            maeEncoderContent.setManaged(
+                    selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
+
+            continueTrainingContent.setVisible(
+                    selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+            continueTrainingContent.setManaged(
+                    selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+
+            // Refresh layer freeze panel when backbone pretrained is selected
+            if (selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
+                updateLayerFreezePanel();
+            }
+        }
+
+        /**
+         * Updates the visible radio buttons based on the handler's supported strategies.
+         * Falls back to the handler's default if the current selection is no longer supported.
+         */
+        private void updateWeightInitOptions(String architecture) {
+            ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
+                    .orElse(ClassifierRegistry.getDefaultHandler());
+            java.util.Set<ClassifierHandler.WeightInitStrategy> supported =
+                    handler.getSupportedWeightInitStrategies();
+
+            // Show/hide each radio based on handler support
+            setRadioAvailable(scratchRadio,
+                    supported.contains(ClassifierHandler.WeightInitStrategy.SCRATCH));
+            setRadioAvailable(backbonePretrainedRadio,
+                    supported.contains(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED));
+            setRadioAvailable(maeEncoderRadio,
+                    supported.contains(ClassifierHandler.WeightInitStrategy.MAE_ENCODER));
+            // Continue training is always shown but may be disabled
+            setRadioAvailable(continueTrainingRadio,
+                    supported.contains(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING));
+
+            // If current selection is no longer supported, fall back to handler default
+            ClassifierHandler.WeightInitStrategy current = getSelectedWeightInitStrategy();
+            if (current == null || !supported.contains(current)) {
+                ClassifierHandler.WeightInitStrategy defaultStrategy = handler.getDefaultWeightInitStrategy();
+                // Check preferences for CNN backbone pretrained
+                if (supported.contains(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED)
+                        && DLClassifierPreferences.isUsePretrainedWeights()) {
+                    selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+                } else {
+                    selectWeightInitStrategy(defaultStrategy);
                 }
-            });
+            }
 
-            HBox topRow = new HBox(10, loadSettingsButton, loadedModelLabel);
-            topRow.setAlignment(Pos.CENTER_LEFT);
+            updateWeightInitSubContent();
+        }
 
-            VBox box = new VBox(5, topRow, continueTrainingCheck);
-            box.setPadding(new Insets(5, 10, 5, 10));
-            return box;
+        private void setRadioAvailable(RadioButton radio, boolean available) {
+            radio.setVisible(available);
+            radio.setManaged(available);
+            if (!available && radio.isSelected()) {
+                radio.setSelected(false);
+            }
+        }
+
+        /**
+         * Returns the currently selected weight initialization strategy.
+         */
+        private ClassifierHandler.WeightInitStrategy getSelectedWeightInitStrategy() {
+            Toggle selected = weightInitGroup.getSelectedToggle();
+            if (selected == null) return null;
+            return (ClassifierHandler.WeightInitStrategy) selected.getUserData();
+        }
+
+        /**
+         * Programmatically selects a weight initialization strategy radio button.
+         */
+        private void selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy strategy) {
+            if (strategy == null) return;
+            for (Toggle toggle : weightInitGroup.getToggles()) {
+                if (toggle.getUserData() == strategy) {
+                    toggle.setSelected(true);
+                    return;
+                }
+            }
         }
 
         @SuppressWarnings("unchecked")
@@ -477,9 +694,10 @@ public class TrainingDialog {
                             ((Number) ts.get("line_stroke_width")).intValue());
                 }
 
-                // Pretrained weights
-                if (ts.containsKey("use_pretrained_weights")) {
-                    usePretrainedCheck.setSelected((Boolean) ts.get("use_pretrained_weights"));
+                // Pretrained weights -> weight init radio
+                if (ts.containsKey("use_pretrained_weights")
+                        && Boolean.TRUE.equals(ts.get("use_pretrained_weights"))) {
+                    selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
                 }
 
                 // Scheduler
@@ -584,13 +802,16 @@ public class TrainingDialog {
                     pretrainedModelPtPath = ptPath.toString();
                 }
             });
-            continueTrainingCheck.setSelected(false);
             if (pretrainedModelPtPath == null) {
-                continueTrainingCheck.setDisable(true);
+                continueTrainingRadio.setDisable(true);
                 logger.warn("No model.pt found for '{}' -- continue training not available",
                         metadata.getName());
             } else {
                 validatePretrainedModelCompatibility();
+                // Auto-select continue training since user picked a model
+                if (!continueTrainingRadio.isDisabled()) {
+                    selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+                }
             }
 
             // Update UI label
@@ -607,7 +828,7 @@ public class TrainingDialog {
          * garbage results.
          */
         private void validatePretrainedModelCompatibility() {
-            if (pretrainedModelPtPath == null || continueTrainingCheck == null) {
+            if (pretrainedModelPtPath == null || continueTrainingRadio == null) {
                 return;
             }
 
@@ -618,12 +839,16 @@ public class TrainingDialog {
             boolean backboneMatch = Objects.equals(currentBackbone, pretrainedModelBackbone);
 
             if (archMatch && backboneMatch) {
-                continueTrainingCheck.setDisable(false);
+                continueTrainingRadio.setDisable(false);
             } else {
-                continueTrainingCheck.setDisable(true);
-                if (continueTrainingCheck.isSelected()) {
-                    continueTrainingCheck.setSelected(false);
-                    logger.info("Unchecked 'Initialize weights' -- architecture/backbone changed " +
+                continueTrainingRadio.setDisable(true);
+                if (getSelectedWeightInitStrategy() ==
+                        ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
+                    // Fall back to handler's default strategy
+                    ClassifierHandler handler = ClassifierRegistry.getHandler(currentArch)
+                            .orElse(ClassifierRegistry.getDefaultHandler());
+                    selectWeightInitStrategy(handler.getDefaultWeightInitStrategy());
+                    logger.info("Reset weight init -- architecture/backbone changed " +
                             "from {}/{} to {}/{}",
                             pretrainedModelArchitecture, pretrainedModelBackbone,
                             currentArch, currentBackbone);
@@ -830,6 +1055,7 @@ public class TrainingDialog {
                     validatePretrainedModelCompatibility());
             backboneCombo.valueProperty().addListener((obs, old, newVal) ->
                     validatePretrainedModelCompatibility());
+            backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
 
             backboneLabel = new Label("Encoder:");
             grid.add(backboneLabel, 0, row);
@@ -851,78 +1077,91 @@ public class TrainingDialog {
             return pane;
         }
 
-        private TitledPane createTransferLearningSection() {
-            VBox content = new VBox(10);
-            content.setPadding(new Insets(10));
+        /**
+         * Builds a TrainingConfig from the current dialog state.
+         * Used by both buildResult() and copyTrainingScript() to avoid duplication.
+         */
+        private TrainingConfig buildTrainingConfig() {
+            ClassifierHandler.WeightInitStrategy strategy = getSelectedWeightInitStrategy();
+            if (strategy == null) {
+                strategy = ClassifierHandler.WeightInitStrategy.SCRATCH;
+            }
 
-            // Use pretrained checkbox
-            usePretrainedCheck = new CheckBox("Use pretrained weights");
-            usePretrainedCheck.setSelected(DLClassifierPreferences.isUsePretrainedWeights());
-            TooltipHelper.installWithLink(usePretrainedCheck,
-                    "Initialize encoder with pretrained weights.\n" +
-                    "Dramatically improves convergence and final accuracy,\n" +
-                    "especially with limited training data. Recommended for\n" +
-                    "virtually all use cases.\n\n" +
-                    "Without pretrained weights, the model starts from random\n" +
-                    "initialization and requires much more data and epochs.",
-                    "https://cs231n.github.io/transfer-learning/");
+            boolean usePretrained = (strategy == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+            String pretrainedPath = null;
+            List<String> frozenLayers = new ArrayList<>();
 
-            Label infoLabel = new Label(
-                    "Transfer learning uses pretrained weights from ImageNet. " +
-                    "Freeze early layers to preserve general features, train later layers to adapt to your data."
-            );
-            infoLabel.setWrapText(true);
-            infoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 11px;");
+            switch (strategy) {
+                case BACKBONE_PRETRAINED:
+                    if (layerFreezePanel != null) {
+                        frozenLayers = layerFreezePanel.getFrozenLayerNames();
+                    }
+                    break;
+                case MAE_ENCODER:
+                    String maePath = maeEncoderPathField.getText();
+                    if (maePath != null && !maePath.isEmpty()) {
+                        pretrainedPath = maePath;
+                    }
+                    break;
+                case CONTINUE_TRAINING:
+                    pretrainedPath = pretrainedModelPtPath;
+                    break;
+                default:
+                    break;
+            }
 
-            // Update info label dynamically when backbone changes
-            backboneCombo.valueProperty().addListener((obs, old, newVal) -> {
-                if (newVal != null && newVal.contains("_")) {
-                    // Histology encoder selected
-                    infoLabel.setText(
-                            "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
-                            "Best for H&E brightfield. Less freezing needed. " +
-                            "For fluorescence or multi-channel images, use an ImageNet backbone instead. " +
-                            "~100MB download on first use (cached).");
-                    usePretrainedCheck.setText("Use histology pretrained weights");
-                } else {
-                    infoLabel.setText(
-                            "ImageNet-pretrained weights provide general edge/texture features " +
-                            "that transfer to most image types including fluorescence and multi-channel. " +
-                            "Freeze early layers to preserve these features.");
-                    usePretrainedCheck.setText("Use ImageNet pretrained weights");
-                }
-            });
+            return TrainingConfig.builder()
+                    .classifierType(architectureCombo.getValue())
+                    .backbone(backboneCombo.getValue())
+                    .epochs(epochsSpinner.getValue())
+                    .batchSize(batchSizeSpinner.getValue())
+                    .learningRate(learningRateSpinner.getValue())
+                    .validationSplit(validationSplitSpinner.getValue() / 100.0)
+                    .tileSize(tileSizeSpinner.getValue())
+                    .overlap(overlapSpinner.getValue())
+                    .downsample(parseDownsample(downsampleCombo.getValue()))
+                    .contextScale(parseContextScale(contextScaleCombo.getValue()))
+                    .augmentation(buildAugmentationConfig())
+                    .intensityAugMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()))
+                    .usePretrainedWeights(usePretrained)
+                    .frozenLayers(frozenLayers)
+                    .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
+                    .classWeightMultipliers(getClassWeightMultipliers())
+                    .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
+                    .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
+                    .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
+                    .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
+                    .mixedPrecision(mixedPrecisionCheck.isSelected())
+                    .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
+                    .progressiveResize(progressiveResizeCheck.isSelected())
+                    .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
+                    .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
+                    .pretrainedModelPath(pretrainedPath)
+                    .wholeImage(wholeImageCheck.isSelected())
+                    .build();
+        }
 
-            // Layer freeze panel
-            layerFreezePanel = new LayerFreezePanel();
-            layerFreezePanel.setBackend(backend);
-
-            // Bind visibility to pretrained checkbox
-            layerFreezePanel.disableProperty().bind(usePretrainedCheck.selectedProperty().not());
-
-            // Update layers when architecture/backbone changes;
-            // uncheck "Initialize weights" when pretrained is re-enabled (mutual exclusion)
-            usePretrainedCheck.selectedProperty().addListener((obs, old, newVal) -> {
-                if (newVal) {
-                    updateLayerFreezePanel();
-                    if (continueTrainingCheck.isSelected()) {
-                        continueTrainingCheck.setSelected(false);
+        /**
+         * Extracts class weight multipliers from the class list view.
+         */
+        private Map<String, Double> getClassWeightMultipliers() {
+            Map<String, Double> multipliers = new LinkedHashMap<>();
+            for (ClassItem item : classListView.getItems()) {
+                if (item.selected().get()) {
+                    double multiplier = item.weightMultiplier().get();
+                    if (multiplier != 1.0) {
+                        multipliers.put(item.name(), multiplier);
                     }
                 }
-            });
-            backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
-
-            content.getChildren().addAll(usePretrainedCheck, infoLabel, layerFreezePanel);
-
-            TitledPane pane = new TitledPane("TRANSFER LEARNING", content);
-            pane.setExpanded(false); // Collapsed by default - advanced option
-            pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create("Configure pretrained weight usage and layer freezing strategy"));
-            return pane;
+            }
+            return multipliers;
         }
 
         private void updateLayerFreezePanel() {
-            if (layerFreezePanel == null || !usePretrainedCheck.isSelected()) return;
+            if (layerFreezePanel == null
+                    || getSelectedWeightInitStrategy() != ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
+                return;
+            }
 
             String architecture = architectureCombo.getValue();
             String encoder = backboneCombo.getValue();
@@ -1955,15 +2194,8 @@ public class TrainingDialog {
         private void updateSectionsForArchitecture(String architecture) {
             boolean isMuViT = "muvit".equals(architecture);
 
-            // Transfer Learning section: MuViT doesn't use ImageNet pretrained backbones
-            if (transferSection != null) {
-                transferSection.setVisible(!isMuViT);
-                transferSection.setManaged(!isMuViT);
-                if (isMuViT) {
-                    // Disable pretrained weights since MuViT has its own pretraining
-                    usePretrainedCheck.setSelected(false);
-                }
-            }
+            // Update weight initialization radio buttons for this architecture
+            updateWeightInitOptions(architecture);
 
             // Backbone/Encoder row: MuViT shows model size in its handler UI instead
             if (backboneLabel != null) {
@@ -2259,33 +2491,13 @@ public class TrainingDialog {
             DLClassifierPreferences.setDefaultDownsample(parseDownsample(downsampleCombo.getValue()));
             DLClassifierPreferences.setDefaultContextScale(parseContextScale(contextScaleCombo.getValue()));
             DLClassifierPreferences.setLastLineStrokeWidth(lineStrokeWidthSpinner.getValue());
-            DLClassifierPreferences.setUsePretrainedWeights(usePretrainedCheck.isSelected());
+            DLClassifierPreferences.setUsePretrainedWeights(
+                    getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
             DLClassifierPreferences.setAugFlipHorizontal(flipHorizontalCheck.isSelected());
             DLClassifierPreferences.setAugFlipVertical(flipVerticalCheck.isSelected());
             DLClassifierPreferences.setAugRotation(rotationCheck.isSelected());
             DLClassifierPreferences.setAugIntensityMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()));
             DLClassifierPreferences.setAugElasticDeform(elasticCheck.isSelected());
-
-            // Get frozen layers for transfer learning
-            List<String> frozenLayers = new ArrayList<>();
-            if (usePretrainedCheck.isSelected() && layerFreezePanel != null) {
-                frozenLayers = layerFreezePanel.getFrozenLayerNames();
-            }
-
-            // Extract weight multipliers and class colors from selected class items
-            Map<String, Double> classWeightMultipliers = new LinkedHashMap<>();
-            Map<String, Integer> classColors = new LinkedHashMap<>();
-            for (ClassItem item : classListView.getItems()) {
-                if (item.selected().get()) {
-                    double multiplier = item.weightMultiplier().get();
-                    if (multiplier != 1.0) {
-                        classWeightMultipliers.put(item.name(), multiplier);
-                    }
-                    if (item.color() != null) {
-                        classColors.put(item.name(), item.color());
-                    }
-                }
-            }
 
             // Save training strategy preferences
             DLClassifierPreferences.setDefaultScheduler(mapSchedulerFromDisplay(schedulerCombo.getValue()));
@@ -2295,37 +2507,8 @@ public class TrainingDialog {
             DLClassifierPreferences.setDefaultEarlyStoppingPatience(earlyStoppingPatienceSpinner.getValue());
             DLClassifierPreferences.setDefaultMixedPrecision(mixedPrecisionCheck.isSelected());
 
-            // Build training config
-            TrainingConfig trainingConfig = TrainingConfig.builder()
-                    .classifierType(architectureCombo.getValue())
-                    .backbone(backboneCombo.getValue())
-                    .epochs(epochsSpinner.getValue())
-                    .batchSize(batchSizeSpinner.getValue())
-                    .learningRate(learningRateSpinner.getValue())
-                    .validationSplit(validationSplitSpinner.getValue() / 100.0)
-                    .tileSize(tileSizeSpinner.getValue())
-                    .overlap(overlapSpinner.getValue())
-                    .downsample(parseDownsample(downsampleCombo.getValue()))
-                    .contextScale(parseContextScale(contextScaleCombo.getValue()))
-                    .augmentation(buildAugmentationConfig())
-                    .intensityAugMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()))
-                    .usePretrainedWeights(usePretrainedCheck.isSelected())
-                    .frozenLayers(frozenLayers)
-                    .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
-                    .classWeightMultipliers(classWeightMultipliers)
-                    .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
-                    .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
-                    .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
-                    .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
-                    .mixedPrecision(mixedPrecisionCheck.isSelected())
-                    .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
-                    .progressiveResize(progressiveResizeCheck.isSelected())
-                    .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
-                    .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
-                    .pretrainedModelPath(
-                            continueTrainingCheck.isSelected() ? pretrainedModelPtPath : null)
-                    .wholeImage(wholeImageCheck.isSelected())
-                    .build();
+            // Build training config from unified weight init strategy
+            TrainingConfig trainingConfig = buildTrainingConfig();
 
             // Get channel config
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
@@ -2342,10 +2525,18 @@ public class TrainingDialog {
                     .map(item -> item.entry)
                     .collect(Collectors.toList());
 
-            // Collect handler-specific parameters (e.g., MuViT MAE pretraining config)
+            // Collect handler-specific parameters (e.g., MuViT architecture config)
             Map<String, Object> handlerParams = currentHandlerUI != null
                     ? currentHandlerUI.getParameters()
                     : Map.of();
+
+            // Extract class colors from selected class items
+            Map<String, Integer> classColors = new LinkedHashMap<>();
+            for (ClassItem item : classListView.getItems()) {
+                if (item.selected().get() && item.color() != null) {
+                    classColors.put(item.name(), item.color());
+                }
+            }
 
             return new TrainingDialogResult(
                     classifierNameField.getText().trim(),
@@ -2481,40 +2672,7 @@ public class TrainingDialog {
                 return;
             }
 
-            // Get frozen layers for transfer learning
-            List<String> frozenLayers = new ArrayList<>();
-            if (usePretrainedCheck.isSelected() && layerFreezePanel != null) {
-                frozenLayers = layerFreezePanel.getFrozenLayerNames();
-            }
-
-            TrainingConfig config = TrainingConfig.builder()
-                    .classifierType(architectureCombo.getValue())
-                    .backbone(backboneCombo.getValue())
-                    .epochs(epochsSpinner.getValue())
-                    .batchSize(batchSizeSpinner.getValue())
-                    .learningRate(learningRateSpinner.getValue())
-                    .validationSplit(validationSplitSpinner.getValue() / 100.0)
-                    .tileSize(tileSizeSpinner.getValue())
-                    .overlap(overlapSpinner.getValue())
-                    .downsample(parseDownsample(downsampleCombo.getValue()))
-                    .contextScale(parseContextScale(contextScaleCombo.getValue()))
-                    .augmentation(buildAugmentationConfig())
-                    .intensityAugMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()))
-                    .usePretrainedWeights(usePretrainedCheck.isSelected())
-                    .frozenLayers(frozenLayers)
-                    .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
-                    .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
-                    .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
-                    .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
-                    .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
-                    .mixedPrecision(mixedPrecisionCheck.isSelected())
-                    .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
-                    .progressiveResize(progressiveResizeCheck.isSelected())
-                    .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
-                    .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
-                    .wholeImage(wholeImageCheck.isSelected())
-                    .build();
-
+            TrainingConfig config = buildTrainingConfig();
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
 
             List<String> selectedClasses = classListView.getItems().stream()
