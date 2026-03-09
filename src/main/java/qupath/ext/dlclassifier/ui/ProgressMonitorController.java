@@ -76,7 +76,9 @@ public class ProgressMonitorController {
     private Consumer<Void> onPauseCallback;
     private Consumer<Void> onResumeCallback;
     private Consumer<Void> onCompleteEarlyCallback;
+    private Consumer<Void> onContinueTrainingCallback;
     private Consumer<Void> onReviewTrainingAreasCallback;
+    private final Button continueTrainingButton;
     private final Button reviewButton;
     private final Label reviewWarningLabel;
 
@@ -141,6 +143,10 @@ public class ProgressMonitorController {
         completeTrainingButton = new Button("Complete Training");
         completeTrainingButton.setVisible(false);
         completeTrainingButton.setManaged(false);
+
+        continueTrainingButton = new Button("Continue Training...");
+        continueTrainingButton.setVisible(false);
+        continueTrainingButton.setManaged(false);
 
         reviewButton = new Button("Review Training Areas...");
         reviewButton.setVisible(false);
@@ -284,6 +290,7 @@ public class ProgressMonitorController {
         if (showLossChart && showClassMetrics) {
             buttonBox.getChildren().add(pauseButton);
             buttonBox.getChildren().add(completeTrainingButton);
+            buttonBox.getChildren().add(continueTrainingButton);
             buttonBox.getChildren().add(reviewButton);
         }
         buttonBox.getChildren().add(cancelButton);
@@ -494,6 +501,17 @@ public class ProgressMonitorController {
     }
 
     /**
+     * Sets the callback for the "Continue Training..." button.
+     * If set, the button is shown after successful training completion so the user
+     * can resume from the last checkpoint for additional epochs.
+     *
+     * @param callback callback to invoke when the continue button is clicked
+     */
+    public void setOnContinueTraining(Consumer<Void> callback) {
+        this.onContinueTrainingCallback = callback;
+    }
+
+    /**
      * Sets the callback for the "Review Training Areas..." button.
      * If set, the button is shown after successful training completion.
      *
@@ -569,6 +587,17 @@ public class ProgressMonitorController {
                 statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: green;");
                 detail.set(message);
 
+                // Show continue-training button if callback is wired
+                if (onContinueTrainingCallback != null) {
+                    continueTrainingButton.setVisible(true);
+                    continueTrainingButton.setManaged(true);
+                    continueTrainingButton.setOnAction(e -> {
+                        continueTrainingButton.setVisible(false);
+                        continueTrainingButton.setManaged(false);
+                        onContinueTrainingCallback.accept(null);
+                    });
+                }
+
                 // Show review button if callback is wired
                 if (onReviewTrainingAreasCallback != null) {
                     reviewButton.setVisible(true);
@@ -637,6 +666,12 @@ public class ProgressMonitorController {
             pauseButton.setOnAction(e -> handlePause());
             completeTrainingButton.setVisible(false);
             completeTrainingButton.setManaged(false);
+            continueTrainingButton.setVisible(false);
+            continueTrainingButton.setManaged(false);
+            reviewButton.setVisible(false);
+            reviewButton.setManaged(false);
+            reviewWarningLabel.setVisible(false);
+            reviewWarningLabel.setManaged(false);
             cancelButton.setText("Cancel");
             cancelButton.setDisable(false);
             cancelButton.setOnAction(e -> handleCancel());

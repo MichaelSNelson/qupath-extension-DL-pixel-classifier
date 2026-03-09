@@ -633,8 +633,18 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         int bestEpoch = ((Number) task.outputs.getOrDefault("best_epoch", 0)).intValue();
         double bestMeanIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
 
+        // Store checkpoint for potential "continue training"
+        String completionCheckpoint = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
+        int lastEpoch = ((Number) task.outputs.getOrDefault("last_epoch", 0)).intValue();
+        int totalEpochs = ((Number) task.outputs.getOrDefault("total_epochs", 0)).intValue();
+        if (!completionCheckpoint.isEmpty() && !"null".equals(completionCheckpoint)) {
+            storeCheckpointInfo(jobId, completionCheckpoint, lastEpoch, inputs);
+            logger.info("Stored completion checkpoint for continue-training: epoch {}, path {}",
+                    lastEpoch, completionCheckpoint);
+        }
+
         return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
-                bestEpoch, bestMeanIoU);
+                bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint);
     }
 
     // ==================== Evaluation ====================

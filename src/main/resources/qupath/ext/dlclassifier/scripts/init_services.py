@@ -184,25 +184,35 @@ try:
                         model_type, encoder_name, num_channels,
                         metadata_channels, num_classes)
 
-            model_map = {
-                "unet": smp.Unet,
-                "unetplusplus": smp.UnetPlusPlus,
-                "deeplabv3": smp.DeepLabV3,
-                "deeplabv3plus": smp.DeepLabV3Plus,
-                "fpn": smp.FPN,
-                "pspnet": smp.PSPNet,
-                "manet": smp.MAnet,
-                "linknet": smp.Linknet,
-                "pan": smp.PAN,
-            }
+            # MuViT transformer: use dedicated factory (not SMP)
+            if model_type == "muvit":
+                from dlclassifier_server.services.muvit_model import (
+                    create_muvit_model)
+                model = create_muvit_model(
+                    architecture=arch,
+                    num_channels=num_channels,
+                    num_classes=num_classes,
+                )
+            else:
+                model_map = {
+                    "unet": smp.Unet,
+                    "unetplusplus": smp.UnetPlusPlus,
+                    "deeplabv3": smp.DeepLabV3,
+                    "deeplabv3plus": smp.DeepLabV3Plus,
+                    "fpn": smp.FPN,
+                    "pspnet": smp.PSPNet,
+                    "manet": smp.MAnet,
+                    "linknet": smp.Linknet,
+                    "pan": smp.PAN,
+                }
 
-            model_cls = model_map.get(model_type, smp.Unet)
-            model = model_cls(
-                encoder_name=smp_encoder_name,
-                encoder_weights=None,
-                in_channels=num_channels,
-                classes=num_classes
-            )
+                model_cls = model_map.get(model_type, smp.Unet)
+                model = model_cls(
+                    encoder_name=smp_encoder_name,
+                    encoder_weights=None,
+                    in_channels=num_channels,
+                    classes=num_classes
+                )
 
             # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
             # unique to BatchRenorm2d). Metadata flag may be lost when Java

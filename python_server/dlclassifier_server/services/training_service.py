@@ -1412,7 +1412,11 @@ class TrainingService:
             })
 
             # Log with per-class breakdown
-            logger.info(f"Epoch {epoch+1}/{epochs}: train_loss={train_loss:.4f}, "
+            # Use scientific notation for very small train_loss to avoid
+            # misleading 0.0000 display when loss < 0.00005 (common when
+            # overfitting a small training set).
+            tl_fmt = f"{train_loss:.2e}" if 0 < train_loss < 0.0001 else f"{train_loss:.4f}"
+            logger.info(f"Epoch {epoch+1}/{epochs}: train_loss={tl_fmt}, "
                        f"val_loss={val_loss:.4f}, acc={accuracy:.4f}, "
                        f"mIoU={mean_iou:.4f}, lr={current_lr:.6f}")
             iou_parts = " ".join(f"{k}={v:.3f}" for k, v in per_class_iou.items())
@@ -1522,6 +1526,20 @@ class TrainingService:
         # Log final memory status
         self.gpu_manager.log_memory_status(prefix="Training complete: ")
 
+        # Save checkpoint for potential "continue training" (before restoring best weights).
+        # This preserves the last-epoch model/optimizer/scheduler state for seamless resume.
+        completion_checkpoint_path = self._save_checkpoint(
+            model=model, optimizer=optimizer, scheduler=scheduler,
+            early_stopping=early_stopping, training_history=training_history,
+            best_score=best_score, best_score_mode=best_score_mode,
+            best_model_state=best_model_state, model_type=model_type,
+            training_config={
+                "model_type": model_type, "architecture": architecture,
+                "input_config": input_config, "training_params": training_params,
+                "classes": classes,
+            }
+        )
+
         # Clear cache before restoring weights
         self.gpu_manager.clear_cache()
 
@@ -1554,7 +1572,10 @@ class TrainingService:
             "best_epoch": best_epoch,
             "best_mean_iou": best_mean_iou,
             "epochs_trained": len(training_history),
-            "early_stopped": early_stopping.should_stop if early_stopping else False
+            "early_stopped": early_stopping.should_stop if early_stopping else False,
+            "checkpoint_path": completion_checkpoint_path,
+            "epoch": epochs,
+            "total_epochs": epochs,
         }
 
     def _create_scheduler(

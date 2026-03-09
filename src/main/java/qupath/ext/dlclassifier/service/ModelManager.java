@@ -361,15 +361,20 @@ public class ModelManager {
                         javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
                     }
                 }
-                // Merge Python-only architecture fields (e.g. use_batchrenorm)
-                // into the Java architecture map so they survive the overwrite
+                // Merge Python-only architecture fields into the Java architecture
+                // map so they survive the overwrite. This preserves:
+                //   use_batchrenorm, model_config, patch_size, level_scales,
+                //   rope_mode (MuViT), and any future architecture-specific fields.
                 if (pythonMeta.has("architecture")) {
                     JsonObject pyArch = pythonMeta.getAsJsonObject("architecture");
                     @SuppressWarnings("unchecked")
                     Map<String, Object> javaArch = (Map<String, Object>) javaMetadata.get("architecture");
-                    if (javaArch != null && pyArch.has("use_batchrenorm")) {
-                        javaArch.put("use_batchrenorm",
-                                pyArch.get("use_batchrenorm").getAsBoolean());
+                    if (javaArch != null) {
+                        for (String key : pyArch.keySet()) {
+                            if (!javaArch.containsKey(key)) {
+                                javaArch.put(key, gson.fromJson(pyArch.get(key), Object.class));
+                            }
+                        }
                     }
                 }
             } catch (Exception e) {

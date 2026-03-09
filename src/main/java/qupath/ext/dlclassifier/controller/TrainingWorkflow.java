@@ -515,6 +515,15 @@ public class TrainingWorkflow {
                     finalClassifierId, finalModelOutputDir));
         });
 
+        // Wire continue-training callback -- resumes from completion checkpoint
+        progress.setOnContinueTraining(v -> {
+            CompletableFuture.runAsync(() -> handleResume(
+                    currentJobId[0], classifierName, description, handler,
+                    trainingConfig, channelConfig, classNames,
+                    selectedImages, progress, currentJobId,
+                    finalClassifierId, finalModelOutputDir));
+        });
+
         // Suspend overlay during training to prevent Appose "thread death" races
         // from concurrent tile requests and to free GPU memory for training.
         OverlayService overlayService = OverlayService.getInstance();
@@ -891,10 +900,15 @@ public class TrainingWorkflow {
                                 );
 
                                 // Log with per-class breakdown
+                                // Use scientific notation for very small train_loss
+                                // to avoid misleading 0.0000 (overfitting small dataset)
+                                String tlFmt = (trainingProgress.loss() > 0 && trainingProgress.loss() < 0.0001)
+                                        ? String.format("%.2e", trainingProgress.loss())
+                                        : String.format("%.4f", trainingProgress.loss());
                                 StringBuilder logMsg = new StringBuilder();
                                 logMsg.append(String.format(
-                                        "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
-                                        trainingProgress.epoch(), trainingProgress.loss(),
+                                        "Epoch %d: train_loss=%s, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
+                                        trainingProgress.epoch(), tlFmt,
                                         trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
                                         trainingProgress.meanIoU()));
                                 progress.log(logMsg.toString());
@@ -1160,7 +1174,10 @@ public class TrainingWorkflow {
                 progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
             }
 
-            // 4. Resume training via backend
+            // 4. Suspend overlay during resumed training to free GPU memory
+            OverlayService.getInstance().suspendForTraining();
+
+            // Resume training via backend
             ClassifierBackend backend = BackendFactory.getBackend();
 
             final AtomicInteger lastLoggedEpochResume = new AtomicInteger(-1);
@@ -1191,10 +1208,13 @@ public class TrainingWorkflow {
                                     trainingProgress.perClassIoU(),
                                     trainingProgress.perClassLoss());
 
+                            String tlFmt = (trainingProgress.loss() > 0 && trainingProgress.loss() < 0.0001)
+                                    ? String.format("%.2e", trainingProgress.loss())
+                                    : String.format("%.4f", trainingProgress.loss());
                             StringBuilder logMsg = new StringBuilder();
                             logMsg.append(String.format(
-                                    "Epoch %d: train_loss=%.4f, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
-                                    trainingProgress.epoch(), trainingProgress.loss(),
+                                    "Epoch %d: train_loss=%s, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
+                                    trainingProgress.epoch(), tlFmt,
                                     trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
                                     trainingProgress.meanIoU()));
                             progress.log(logMsg.toString());
@@ -1261,6 +1281,9 @@ public class TrainingWorkflow {
                         true, filesInPlace);
                 progress.log("Classifier saved: " + metadata.getId());
 
+                // Update jobId so "Continue Training" can find the new checkpoint
+                currentJobId[0] = serverResult.jobId();
+
                 progress.complete(true, String.format(
                         "Classifier trained successfully!\nBest model: epoch %d\n" +
                         "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
@@ -1273,6 +1296,7 @@ public class TrainingWorkflow {
             progress.log("ERROR: Resume failed: " + e.getMessage());
             progress.complete(false, "Resume failed: " + e.getMessage());
         } finally {
+            OverlayService.getInstance().resumeAfterTraining();
             cleanupTempDir(tempDir);
         }
     }
