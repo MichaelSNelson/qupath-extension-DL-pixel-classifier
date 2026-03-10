@@ -432,6 +432,10 @@ public class ModelManagementWorkflow {
         try {
             List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
             classifierList.setAll(classifiers);
+            // Re-apply column sort order -- setAll() replaces the backing
+            // list content but does not re-sort according to the columns
+            // the user has clicked.
+            classifierTable.sort();
             logger.info("Loaded {} classifiers", classifiers.size());
 
             // Clear selection

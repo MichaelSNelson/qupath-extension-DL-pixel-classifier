@@ -11,7 +11,9 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.chart.PieChart;
 import javafx.scene.layout.*;
+import javafx.scene.Scene;
 import javafx.stage.FileChooser;
+import javafx.stage.Stage;
 import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +28,8 @@ import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.commands.MiniViewers;
+import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.images.ImageData;
@@ -224,6 +228,9 @@ public class TrainingDialog {
         private Label resolutionInfoLabel;
         private Label contextInfoLabel;
         private double nativePixelSizeMicrons = Double.NaN;
+
+        // Mini viewer preview (nullable, set when preview window is open)
+        private MiniViewers.MiniViewerManager previewManager;
 
         // Error display
         private VBox errorSummaryPanel;
@@ -1459,10 +1466,43 @@ public class TrainingDialog {
                     "2x: Half resolution -- good for tissue structures.\n" +
                     "4x: Quarter resolution -- each 512px tile covers 2048px of tissue.\n" +
                     "8x: Low resolution -- for large-scale region classification.\n\n" +
+                    "Tip: If your data is higher resolution than the model was\n" +
+                    "trained on, consider downsampling to match. For example,\n" +
+                    "use 2x for 40x data when the model was trained on 20x data,\n" +
+                    "so the model sees features at the expected physical scale.\n\n" +
+                    "Use the Preview button to see what the model will see\n" +
+                    "at the selected downsample level.\n\n" +
                     "Must match at inference time for consistent results.");
 
+            Button previewBtn = new Button("Preview");
+            previewBtn.setOnAction(e -> {
+                QuPathViewer viewer = QuPathGUI.getInstance().getViewer();
+                if (viewer == null || viewer.getImageData() == null) {
+                    Dialogs.showWarningNotification("Preview",
+                            "No image is currently open.");
+                    return;
+                }
+                double ds = parseDownsample(downsampleCombo.getValue());
+                previewManager = MiniViewers.createManager(viewer);
+                previewManager.setDownsample(ds);
+
+                Stage previewStage = new Stage();
+                previewStage.initOwner(QuPathGUI.getInstance().getStage());
+                previewStage.setTitle(String.format("Resolution Preview (%.0fx downsample)", ds));
+                Scene scene = new Scene(previewManager.getPane(), 400, 400);
+                previewStage.setScene(scene);
+                previewStage.setOnHiding(ev -> previewManager = null);
+                previewStage.show();
+            });
+            TooltipHelper.install(previewBtn,
+                    "Open a preview window showing the image at the\n" +
+                    "selected downsample level. This is what the model\n" +
+                    "will see during training.");
+
             grid.add(new Label("Resolution:"), 0, row);
-            grid.add(downsampleCombo, 1, row);
+            HBox dsBox = new HBox(8, downsampleCombo, previewBtn);
+            dsBox.setAlignment(Pos.CENTER_LEFT);
+            grid.add(dsBox, 1, row);
             row++;
 
             // Resolution info label
@@ -1505,7 +1545,12 @@ public class TrainingDialog {
 
             // Wire up listeners to update spatial info when any relevant value changes
             tileSizeSpinner.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
-            downsampleCombo.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
+            downsampleCombo.valueProperty().addListener((obs, old, newVal) -> {
+                updateSpatialInfoLabels();
+                if (previewManager != null) {
+                    previewManager.setDownsample(parseDownsample(newVal));
+                }
+            });
             contextScaleCombo.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
             // Initial update (will show pixel-only info until image is loaded)
             updateSpatialInfoLabels();
