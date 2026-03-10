@@ -731,6 +731,14 @@ public class TrainingWorkflow {
             Map<String, Double> weightMultipliers = trainingConfig.getClassWeightMultipliers();
 
             // Compute effective tile size (whole-image mode uses actual image dimensions)
+            // For ViT models, cap at the handler's max supported tile size since
+            // global self-attention is O(n^2) in patch count and huge tiles
+            // produce too many patches for the model to learn from effectively.
+            List<Integer> supportedSizes = handler.getSupportedTileSizes();
+            int maxHandlerTileSize = supportedSizes.isEmpty()
+                    ? Integer.MAX_VALUE
+                    : supportedSizes.stream().mapToInt(Integer::intValue).max().orElse(Integer.MAX_VALUE);
+
             int effectiveTileSize;
             if (trainingConfig.isWholeImage()) {
                 int maxW = 0, maxH = 0;
@@ -750,12 +758,31 @@ public class TrainingWorkflow {
                     maxW = imageData.getServer().getWidth();
                     maxH = imageData.getServer().getHeight();
                 }
-                effectiveTileSize = trainingConfig.computeEffectiveTileSize(maxW, maxH);
-                logger.info("Whole-image mode: max dimensions {}x{}, effective tile size {}",
-                        maxW, maxH, effectiveTileSize);
-                if (progress != null) {
-                    progress.log("Whole-image mode: effective tile size " + effectiveTileSize
-                            + "px (from " + maxW + "x" + maxH + " image)");
+
+                int uncappedSize = trainingConfig.computeEffectiveTileSize(maxW, maxH);
+                effectiveTileSize = trainingConfig.computeEffectiveTileSize(
+                        maxW, maxH, maxHandlerTileSize);
+
+                if (effectiveTileSize < uncappedSize) {
+                    logger.warn("Whole-image tile size capped from {}px to {}px "
+                            + "(max for {} architecture). The image will be tiled "
+                            + "instead of processed whole.",
+                            uncappedSize, effectiveTileSize, handler.getType());
+                    if (progress != null) {
+                        progress.log(String.format(
+                                "Whole-image mode: tile size capped at %dpx (max for %s). "
+                                + "Image (%dx%d) will be tiled -- ViT self-attention is O(n^2) "
+                                + "and %dpx would create too many patches to learn from.",
+                                effectiveTileSize, handler.getDisplayName(),
+                                maxW, maxH, uncappedSize));
+                    }
+                } else {
+                    logger.info("Whole-image mode: max dimensions {}x{}, effective tile size {}",
+                            maxW, maxH, effectiveTileSize);
+                    if (progress != null) {
+                        progress.log("Whole-image mode: effective tile size " + effectiveTileSize
+                                + "px (from " + maxW + "x" + maxH + " image)");
+                    }
                 }
             } else {
                 effectiveTileSize = trainingConfig.getTileSize();
@@ -1104,6 +1131,12 @@ public class TrainingWorkflow {
                 tempDir = Files.createTempDirectory("dl-training-resume");
             }
             // Compute effective tile size for resume (same logic as trainCore)
+            // Cap at handler's max supported tile size for ViT models
+            List<Integer> resumeSizes = handler.getSupportedTileSizes();
+            int resumeMaxTile = resumeSizes.isEmpty()
+                    ? Integer.MAX_VALUE
+                    : resumeSizes.stream().mapToInt(Integer::intValue).max().orElse(Integer.MAX_VALUE);
+
             int effectiveTileSize;
             if (trainingConfig.isWholeImage()) {
                 int maxW = 0, maxH = 0;
@@ -1126,7 +1159,8 @@ public class TrainingWorkflow {
                         maxH = currentImageData.getServer().getHeight();
                     }
                 }
-                effectiveTileSize = trainingConfig.computeEffectiveTileSize(maxW, maxH);
+                effectiveTileSize = trainingConfig.computeEffectiveTileSize(
+                        maxW, maxH, resumeMaxTile);
                 progress.log("Whole-image mode: effective tile size " + effectiveTileSize + "px");
             } else {
                 effectiveTileSize = trainingConfig.getTileSize();

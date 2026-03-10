@@ -416,10 +416,27 @@ public class TrainingConfig {
      * @return effective tile size (multiple of 32)
      */
     public int computeEffectiveTileSize(int imageWidth, int imageHeight) {
+        return computeEffectiveTileSize(imageWidth, imageHeight, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Computes the effective tile size for whole-image mode, capped at maxTileSize.
+     * <p>
+     * When the computed tile size exceeds maxTileSize (e.g., for ViT models
+     * where global self-attention is O(n^2) in patch count), the result is
+     * capped and the image will be tiled instead of processed whole.
+     *
+     * @param imageWidth   image width in pixels (at full resolution)
+     * @param imageHeight  image height in pixels (at full resolution)
+     * @param maxTileSize  maximum allowed tile size (from handler's supported tile sizes)
+     * @return effective tile size (multiple of 32, capped at maxTileSize)
+     */
+    public int computeEffectiveTileSize(int imageWidth, int imageHeight, int maxTileSize) {
         if (!wholeImage) return tileSize;
         int maxDim = Math.max(imageWidth, imageHeight);
         int rawSize = (int) Math.ceil(maxDim / downsample);
-        return ((rawSize + 31) / 32) * 32;
+        int rounded = ((rawSize + 31) / 32) * 32;
+        return Math.min(rounded, maxTileSize);
     }
 
     /**

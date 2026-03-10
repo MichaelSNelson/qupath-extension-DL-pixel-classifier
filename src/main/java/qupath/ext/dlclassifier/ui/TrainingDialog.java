@@ -160,6 +160,7 @@ public class TrainingDialog {
         private Spinner<Integer> tileSizeSpinner;
         private Spinner<Integer> overlapSpinner;
         private CheckBox wholeImageCheck;
+        private Label wholeImageInfoLabel;
         private ComboBox<String> downsampleCombo;
         private ComboBox<String> contextScaleCombo;
         private Spinner<Integer> lineStrokeWidthSpinner;
@@ -1447,11 +1448,22 @@ public class TrainingDialog {
                 if (checked) {
                     contextScaleCombo.setValue("None (single scale)");
                 }
+                updateWholeImageInfoLabel();
             });
+
+            // Info label shown when whole-image mode is checked and architecture
+            // has a tile size cap (ViT models)
+            wholeImageInfoLabel = new Label();
+            wholeImageInfoLabel.setStyle("-fx-text-fill: #CC7A00; -fx-font-size: 11px;");
+            wholeImageInfoLabel.setWrapText(true);
+            wholeImageInfoLabel.setVisible(false);
+            wholeImageInfoLabel.setManaged(false);
 
             grid.add(new Label("Tile Size:"), 0, row);
             grid.add(tileSizeSpinner, 1, row);
             grid.add(wholeImageCheck, 2, row);
+            row++;
+            grid.add(wholeImageInfoLabel, 0, row, 3, 1);
             row++;
 
             // Downsample
@@ -2394,6 +2406,51 @@ public class TrainingDialog {
                 if (isMuViT) {
                     contextScaleCombo.setValue("None (single scale)");
                 }
+            }
+
+            // Update whole-image info label for ViT tile size cap
+            updateWholeImageInfoLabel();
+        }
+
+        /**
+         * Shows or hides the whole-image info label based on architecture and checkbox state.
+         * For architectures with a max tile size (e.g., ViT/MuViT max 512px), warns
+         * that whole-image mode will be capped and the image will be tiled instead.
+         */
+        private void updateWholeImageInfoLabel() {
+            if (wholeImageInfoLabel == null) return;
+
+            if (!wholeImageCheck.isSelected()) {
+                wholeImageInfoLabel.setVisible(false);
+                wholeImageInfoLabel.setManaged(false);
+                return;
+            }
+
+            String arch = architectureCombo.getValue();
+            ClassifierHandler handler = ClassifierRegistry.getHandler(arch)
+                    .orElse(ClassifierRegistry.getDefaultHandler());
+            List<Integer> sizes = handler.getSupportedTileSizes();
+            int maxTile = sizes.isEmpty()
+                    ? Integer.MAX_VALUE
+                    : sizes.stream().mapToInt(Integer::intValue).max().orElse(Integer.MAX_VALUE);
+
+            if (maxTile <= 1024) {
+                // This architecture has a meaningful tile size cap
+                boolean isViT = "muvit".equals(arch);
+                String reason = isViT
+                        ? "ViT self-attention is O(n^2) in patch count -- larger tiles "
+                        + "create too many patches for the model to learn effectively"
+                        : "larger tiles require more GPU memory and may reduce training quality";
+                wholeImageInfoLabel.setText(String.format(
+                        "? %s limits tiles to %dpx max (%s). "
+                        + "If your image exceeds %dpx at the selected downsample, it will be "
+                        + "tiled automatically instead of processed whole.",
+                        handler.getDisplayName(), maxTile, reason, maxTile));
+                wholeImageInfoLabel.setVisible(true);
+                wholeImageInfoLabel.setManaged(true);
+            } else {
+                wholeImageInfoLabel.setVisible(false);
+                wholeImageInfoLabel.setManaged(false);
             }
         }
 
