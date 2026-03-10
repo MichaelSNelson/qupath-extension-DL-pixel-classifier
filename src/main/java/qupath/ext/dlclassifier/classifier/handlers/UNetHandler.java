@@ -1,11 +1,9 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
-import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
-import javafx.util.StringConverter;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
@@ -263,7 +261,6 @@ public class UNetHandler implements ClassifierHandler {
     private static class UNetTrainingUI implements TrainingUI {
 
         private final GridPane root;
-        private final ComboBox<String> backboneCombo;
         private final Spinner<Integer> freezeLayersSpinner;
 
         public UNetTrainingUI() {
@@ -272,27 +269,8 @@ public class UNetHandler implements ClassifierHandler {
             root.setVgap(10);
             root.setPadding(new Insets(10));
 
-            // Encoder selection
-            Label backboneLabel = new Label("Encoder:");
-            backboneCombo = new ComboBox<>(FXCollections.observableArrayList(BACKBONES));
-            backboneCombo.setValue("resnet34");
-            backboneCombo.setMaxWidth(Double.MAX_VALUE);
-
-            // Show human-readable display names in the combo dropdown
-            backboneCombo.setCellFactory(lv -> new ListCell<>() {
-                @Override
-                protected void updateItem(String item, boolean empty) {
-                    super.updateItem(item, empty);
-                    setText(empty || item == null ? null : getStaticBackboneDisplayName(item));
-                }
-            });
-            backboneCombo.setButtonCell(new ListCell<>() {
-                @Override
-                protected void updateItem(String item, boolean empty) {
-                    super.updateItem(item, empty);
-                    setText(empty || item == null ? null : getStaticBackboneDisplayName(item));
-                }
-            });
+            // Encoder selection is handled by TrainingDialog's backbone combo.
+            // This UI only provides UNet-specific parameters.
 
             // Freeze layers
             Label freezeLabel = new Label("Freeze Encoder Layers:");
@@ -302,10 +280,8 @@ public class UNetHandler implements ClassifierHandler {
             freezeLayersSpinner.setEditable(true);
             freezeLayersSpinner.setMaxWidth(100);
 
-            root.add(backboneLabel, 0, 0);
-            root.add(backboneCombo, 1, 0);
-            root.add(freezeLabel, 0, 1);
-            root.add(freezeLayersSpinner, 1, 1);
+            root.add(freezeLabel, 0, 0);
+            root.add(freezeLayersSpinner, 1, 0);
         }
 
         @Override
@@ -316,16 +292,12 @@ public class UNetHandler implements ClassifierHandler {
         @Override
         public Map<String, Object> getParameters() {
             Map<String, Object> params = new HashMap<>();
-            params.put("backbone", backboneCombo.getValue());
             params.put("freeze_encoder_layers", freezeLayersSpinner.getValue());
             return params;
         }
 
         @Override
         public Optional<String> validate() {
-            if (backboneCombo.getValue() == null) {
-                return Optional.of("Please select a backbone architecture");
-            }
             return Optional.empty();
         }
     }
