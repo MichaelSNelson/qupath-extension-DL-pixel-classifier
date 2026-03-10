@@ -2573,6 +2573,7 @@ public class TrainingDialog {
         }
 
         private void updateErrorSummary() {
+            if (errorListBox == null || errorSummaryPanel == null) return;
             if (validationErrors.isEmpty()) {
                 errorSummaryPanel.setVisible(false);
                 errorSummaryPanel.setManaged(false);
