@@ -16,7 +16,6 @@ These appear in **Edit > Preferences > DL Pixel Classifier**.
 
 | Preference | Key | Default | Description |
 |-----------|-----|---------|-------------|
-| Overlay Reflection Padding | `dlclassifier.overlayReflectionPadding` | `32` | Pixels of reflection padding per tile to reduce edge artifacts. Set to 0 to disable. |
 | Overlay Overlap (um) | `dlclassifier.overlayOverlapUm` | `25.0` | Target tile overlap distance in microns for overlays. Converted to pixels using the image's pixel calibration. Ensures consistent overlap regardless of objective/resolution. Minimum 64 pixels. |
 | Use GPU for Inference | `dlclassifier.useGPU` | `true` | Use GPU acceleration when available |
 | Training Data Export Directory | `dlclassifier.trainingExportDir` | `""` | Directory for exporting training data patches. Empty = use temp directory. |

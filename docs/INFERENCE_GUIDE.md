@@ -78,6 +78,10 @@ Overlap determines how much adjacent tiles share:
 
 For **overlay mode**, the overlap is automatically computed from a physical distance (default 25 um) using the image's pixel calibration. This ensures consistent overlap regardless of objective magnification. The preference **Overlay Overlap (um)** in **Edit > Preferences > DL Pixel Classifier** controls this distance.
 
+### Real-data context padding
+
+During inference, QuPath provides real surrounding image data around each tile via `inputPadding`. The padding amount is computed automatically (at least 64px, up to tileSize/2) and provides the CNN with real context at every tile boundary. This eliminates the need for artificial reflection padding -- the model always sees real image data, matching how training tiles are extracted with real surrounding context.
+
 The **blend mode** controls how overlapping predictions merge:
 
 | Blend Mode | Description | Recommended for |

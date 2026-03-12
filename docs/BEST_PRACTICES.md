@@ -190,6 +190,8 @@ The extension supports four normalization strategies. The choice affects how pix
 
 **BatchRenorm** -- All newly trained models use BatchRenorm instead of standard BatchNorm for the network's internal normalization layers. This eliminates a second source of tiling artifacts: standard BatchNorm accumulates running statistics during training that can diverge from actual tile statistics at inference time, causing inconsistent predictions at tile boundaries. BatchRenorm uses consistent global statistics in both training and inference, producing seamless tiled predictions. See [Buglakova et al., ICCV 2025](https://arxiv.org/abs/2503.19545).
 
+**Context padding** -- Training tiles are automatically extracted with a border of real surrounding image data. During inference, QuPath's `inputPadding` provides real context around each tile. Context padding ensures training geometry matches inference geometry: the model always sees real data at tile edges, never artificial reflection-padded data. The padding amount (`max(64, min(max(overlap, tileSize/4), tileSize/2))` pixels per side) is computed automatically. The mask border is filled with 255 (ignore_index) so the loss function ignores the padding region. This is disabled for whole-image mode where no surrounding data is available.
+
 ## Improving Results
 
 ### Quick wins

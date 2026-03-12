@@ -96,6 +96,8 @@ training_data/
 
 ```json
 {
+  "patch_size": 512,
+  "context_padding": 128,
   "classes": ["Background", "Foreground"],
   "class_weights": [1.0, 2.0],
   "unlabeled_index": 255
@@ -104,6 +106,8 @@ training_data/
 
 | Field | Description |
 |-------|-------------|
+| `patch_size` | Tile size in pixels (center content region) |
+| `context_padding` | Pixels of real-data border per side (0 = disabled). When >0, tiles on disk are `(patch_size + 2*context_padding)` pixels wide and masks have a 255 border. |
 | `classes` | List of class names (order = index) |
 | `class_weights` | Optional inverse-frequency weights for class balancing |
 | `unlabeled_index` | Pixel value for unlabeled regions (typically 255) |
