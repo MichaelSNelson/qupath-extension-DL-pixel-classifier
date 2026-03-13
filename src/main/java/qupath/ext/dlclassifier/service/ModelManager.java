@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.lib.common.GeneralTools;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.Project;
 
@@ -381,6 +382,14 @@ public class ModelManager {
                 logger.warn("Could not merge Python metadata: {}", e.getMessage());
             }
         }
+
+        // Add provenance version info
+        String extVersion = GeneralTools.getPackageVersion(ModelManager.class);
+        Map<String, String> provenance = new java.util.LinkedHashMap<>();
+        provenance.put("extension_version", extVersion != null ? extVersion : "dev");
+        provenance.put("qupath_version", GeneralTools.getVersion().toString());
+        provenance.put("saved_at", java.time.LocalDateTime.now().toString());
+        javaMetadata.put("provenance", provenance);
 
         String json = gson.toJson(javaMetadata);
         Files.writeString(metadataPath, json);
