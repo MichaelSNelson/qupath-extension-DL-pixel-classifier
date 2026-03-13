@@ -208,40 +208,48 @@ Before submitting a new `.py` script in `src/main/resources/.../scripts/`:
 - [ ] **No bare `import` of heavy libraries at top level** -- import inside functions or after the initialization check to keep startup fast
 - [ ] **Test on Windows** -- encoding, file paths (backslashes), and multiprocessing all behave differently
 
-## Version Compatibility (PROTOCOL_VERSION)
+## Version Compatibility (Enforced)
 
-The `dlclassifier-server` Python package is pip-installed via pixi from GitHub and cached independently of the Java JAR. When the JAR is updated but the Python package is not re-fetched, the two sides can be out of sync, causing silent failures (e.g., the `num_workers` deadlock that hung for 6 hours).
+The `dlclassifier-server` Python package is pip-installed via pixi from GitHub and cached independently of the Java JAR. When the JAR is updated but the Python package is not re-fetched, the two sides can be out of sync, causing silent failures (e.g., the LR finder bug in v0.3.3 where training appeared to run but learned nothing).
 
 ### How it works
 
-Both sides declare a `PROTOCOL_VERSION` integer:
+Version enforcement uses exact semver comparison:
 
-- **Python side:** `dlclassifier_server/__init__.py` exports `PROTOCOL_VERSION`
-- **Java side:** `init_services.py` (bundled in the JAR, always current) declares `_EXPECTED_PROTOCOL`
+- **Python side:** `dlclassifier_server/__init__.py` exports `__version__` (e.g. `"0.3.4"`)
+- **Java side:** `init_services.py` (bundled in the JAR, always current) declares `_REQUIRED_PYTHON_VERSION` (e.g. `"0.3.4"`)
 
-At startup, `init_services.py` compares the two. If the installed package is older, a warning is logged and stored in a global `version_warning` variable. The `health_check.py` script returns this warning to Java, which surfaces a one-time user notification.
+At startup, `init_services.py` parses both version strings into tuples and compares them. If the installed version is older than required:
 
-### When to bump PROTOCOL_VERSION
+1. `inference_service` is set to `None` (blocks all operations)
+2. `version_warning` is set with a descriptive error message
+3. `health_check.py` returns `healthy=False` and the warning string
+4. Java's `DLClassifierChecks` shows an **error notification** telling the user to rebuild
+5. Training and inference dialogs are **blocked** (not just warned)
 
-**Bump when:**
-- Python service method signatures change (new required params, removed params)
-- Training loop / DataLoader behavior changes affecting correctness
-- Bug fixes for silent failures (like `num_workers=0` enforcement)
-- New required fields in progress JSON that Java depends on
-- Changes to model loading logic that the monkey-patch covers
+### What the user sees
 
-**Do NOT bump for:**
-- New Python utility functions that Appose scripts don't call
-- Documentation, comments, test-only changes
-- Additive changes (new optional params with defaults, new service methods)
-- Performance improvements that don't change the API contract
+When the Python package is out of date:
+- An error notification appears: "Python environment is out of date. Go to DL Pixel Classifier > Rebuild Python Environment to update."
+- Training and inference menu items fail their health check and refuse to open
+- The QuPath log shows: `PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server vX.Y.Z but the extension requires vA.B.C or newer`
 
-### How to bump
+### When to bump versions
 
-1. Increment `PROTOCOL_VERSION` in `python_server/dlclassifier_server/__init__.py`
-2. Update `_EXPECTED_PROTOCOL` in `src/main/resources/.../scripts/init_services.py` to match
-3. Bump `__version__` in `__init__.py` and `version` in `pyproject.toml`
+**Bump when ANY Python code changes** -- this includes:
+- Bug fixes in training, inference, or model loading logic
+- New features in Python services
+- Changes to model loading, export, or architecture handling
+- Dependency version changes in pyproject.toml
+
+**How to bump:**
+
+1. Bump `version` in `python_server/pyproject.toml`
+2. Update the fallback `__version__` in `python_server/dlclassifier_server/__init__.py`
+3. Update `_REQUIRED_PYTHON_VERSION` in `src/main/resources/.../scripts/init_services.py`
 4. Update the version tag comment in `pixi.toml` to force re-fetch
+
+All three locations must match. The `_REQUIRED_PYTHON_VERSION` in the JAR script is the enforcement point -- it is the source of truth for "what Python version does this JAR need?"
 
 ## Checklist for New Python Services
 

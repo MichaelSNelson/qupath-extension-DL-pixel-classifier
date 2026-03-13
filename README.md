@@ -54,7 +54,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 1. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch, CUDA, and all dependencies automatically (~2-4 GB, first time only).
 
-   > **After updating the extension:** If you install a new version of this extension, you may need to re-run **Setup DL Environment...** to update the Python environment to match. The setup wizard will handle this automatically -- just run it again from the same menu location.
+   > **After updating the extension:** If you install a new version of this extension, you **must** rebuild the Python environment to match. The extension enforces version matching and will block training/inference if the environment is out of date. An error notification will appear with instructions. Go to **Extensions > DL Pixel Classifier > Rebuild Python Environment** to update.
 
 2. **Train a classifier** -- create annotations, open **Extensions > DL Pixel Classifier > Train Classifier...**, and click Start Training
 3. **Apply the classifier** -- open **Extensions > DL Pixel Classifier > Apply Classifier...**, select a model, choose an output type, and click Apply

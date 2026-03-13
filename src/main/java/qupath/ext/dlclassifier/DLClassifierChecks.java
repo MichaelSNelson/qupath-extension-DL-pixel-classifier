@@ -41,10 +41,13 @@ public final class DLClassifierChecks {
 
             if (healthy) {
                 logger.info("Classification backend is healthy");
-                showVersionWarningOnce();
             } else {
                 logger.warn("Classification backend health check failed");
             }
+            // Show version warning whether healthy or not -- when the Python
+            // package is outdated, health returns false and the user needs
+            // to know WHY (rebuild environment vs other failure).
+            showVersionWarningOnce();
 
             return healthy;
         } catch (Exception e) {
@@ -114,6 +117,8 @@ public final class DLClassifierChecks {
 
     /**
      * Shows a one-time user notification if the Python package is outdated.
+     * With version enforcement, an outdated package blocks initialization
+     * (health check returns false), so the user must rebuild to proceed.
      */
     private static void showVersionWarningOnce() {
         if (versionWarningShown)
@@ -122,9 +127,10 @@ public final class DLClassifierChecks {
         if (warning != null && !warning.isEmpty()) {
             versionWarningShown = true;
             Platform.runLater(() ->
-                    Dialogs.showWarningNotification("DL Pixel Classifier",
-                            "Python package is outdated and may cause issues.\n" +
-                            "Go to Utilities > Rebuild DL Environment to update."));
+                    Dialogs.showErrorNotification("DL Pixel Classifier - Update Required",
+                            "Python environment is out of date.\n" +
+                            "Go to DL Pixel Classifier > Rebuild Python Environment to update.\n" +
+                            "Training and inference are disabled until the environment is rebuilt."));
         }
     }
 }

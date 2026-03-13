@@ -26,296 +26,105 @@ logger = logging.getLogger("dlclassifier.appose")
 # The dlclassifier_server package is installed in the pixi environment
 # via the git URL in pixi.toml. No sys.path manipulation needed.
 
-# Import and initialize persistent services.
-# ImportError is NOT caught here -- if critical packages (torch, smp, etc.)
-# are missing, the init must fail loudly so the Java side knows the
-# environment is broken. Runtime errors (e.g. no GPU) are caught and
-# handled gracefully so the service can still run in CPU mode.
-from dlclassifier_server.services.gpu_manager import GPUManager
-from dlclassifier_server.services.inference_service import InferenceService
-from dlclassifier_server.services.model_registry import ModelRegistry
+# --- Version enforcement ---
+# The JAR bundles these scripts; the Python package is pip-installed in pixi.
+# Both sides MUST be in sync. When EITHER side is updated, bump the version
+# below to match the new pyproject.toml version and the health check will
+# block until the user rebuilds the pixi environment.
+_REQUIRED_PYTHON_VERSION = "0.3.4"
 
-try:
-    gpu_manager = GPUManager()
-    inference_service = InferenceService(device="auto", gpu_manager=gpu_manager)
-    model_registry = ModelRegistry()
 
-    logger.info("DL classifier services initialized successfully")
-    logger.info("Device: %s", inference_service._device_str)
+def _parse_version(v):
+    """Parse a version string into a comparable tuple of ints."""
+    try:
+        return tuple(int(x) for x in v.split(".")[:3])
+    except (ValueError, AttributeError):
+        return (0, 0, 0)
 
-    # --- Version compatibility check ---
-    # The installed dlclassifier_server package (pip/pixi) may be stale
-    # while the JAR (and these bundled scripts) are current. Check the
-    # protocol version to detect mismatches and warn the user.
-    import dlclassifier_server as _dls
-    _installed_version = getattr(_dls, "__version__", "unknown")
-    _installed_protocol = getattr(_dls, "PROTOCOL_VERSION", 0)
-    _EXPECTED_PROTOCOL = 2
 
-    if _installed_protocol < _EXPECTED_PROTOCOL:
-        logger.warning(
-            "PYTHON PACKAGE OUT OF DATE: dlclassifier-server v%s "
-            "(protocol %d) but extension requires protocol %d. "
-            "Go to Utilities > Rebuild DL Environment to update.",
-            _installed_version, _installed_protocol, _EXPECTED_PROTOCOL)
-        version_warning = (
-            "Python package outdated (v%s, protocol %d). "
-            "Expected protocol %d. Rebuild DL Environment to update."
-            % (_installed_version, _installed_protocol, _EXPECTED_PROTOCOL))
-    else:
-        version_warning = None
-        logger.info("dlclassifier-server v%s (protocol %d) -- OK",
-                    _installed_version, _installed_protocol)
+import dlclassifier_server as _dls
+_installed_version = getattr(_dls, "__version__", "unknown")
+_installed_tuple = _parse_version(_installed_version)
+_required_tuple = _parse_version(_REQUIRED_PYTHON_VERSION)
 
-    # Threading lock for GPU operations.
-    # Appose runs each task in its own thread. Without serialization,
-    # concurrent tile inference tasks race on model loading, CUDA memory
-    # allocation, and forward passes. PyTorch CUDA ops are thread-safe
-    # but concurrent batches can OOM and torch.compile is NOT thread-safe.
-    inference_lock = threading.Lock()
-
-    # --- Monkey-patch _load_model for stale pip package ---
-    # The installed dlclassifier_server package may be an older version
-    # that defaults to in_channels=3 instead of reading num_channels from
-    # the model metadata. This patch ensures multi-channel models (e.g.
-    # multiplex IF with 8 channels) load correctly.
-    import json as _json
-    from pathlib import Path as _Path
-
-    _orig_load_model = InferenceService._load_model
-
-    def _patched_load_model(self, model_path, compile_model=True):
-        """Load model with correct in_channels detected from checkpoint."""
-        import torch
-        import segmentation_models_pytorch as smp
-
-        # Use cache if available
-        if model_path in self._model_cache:
-            model_tuple = self._model_cache[model_path]
-            if (compile_model and model_tuple[0] == "pytorch"
-                    and model_path not in self._compiled_models):
-                if hasattr(self, '_try_compile_model'):
-                    self._try_compile_model(model_path, model_tuple)
-            return self._model_cache[model_path]
-
-        model_dir = _Path(model_path)
-
-        # ONNX path -- defer to original (ONNX doesn't need in_channels)
-        onnx_path = model_dir / "model.onnx"
-        if onnx_path.exists():
-            return _orig_load_model(self, model_path, compile_model)
-
-        # PyTorch path -- detect in_channels from checkpoint weights
-        pt_path = model_dir / "model.pt"
-        if pt_path.exists():
-            logger.info("Loading PyTorch model from %s (patched)", pt_path)
-
-            metadata_path = model_dir / "metadata.json"
-            if not metadata_path.exists():
-                raise FileNotFoundError(
-                    "Classifier metadata not found: %s. "
-                    "The classifier directory may be incomplete."
-                    % metadata_path)
-            try:
-                with open(metadata_path) as f:
-                    metadata = _json.load(f)
-            except _json.JSONDecodeError as e:
-                raise RuntimeError(
-                    "Classifier metadata is corrupt (%s): %s"
-                    % (metadata_path, e))
-
-            arch = metadata.get("architecture", {})
-            input_config = metadata.get("input_config", {})
-            model_type = arch.get("type", "unet")
-            encoder_name = arch.get("backbone", "resnet34")
-            # Check both Python-style (input_config.num_channels) and
-            # Java-style (architecture.input_channels) metadata formats.
-            # Java's ModelManager.saveClassifier() overwrites Python's
-            # metadata.json, replacing input_config with architecture format.
-            metadata_channels = input_config.get(
-                "num_channels", arch.get("input_channels", 3))
-            num_classes = len(metadata.get("classes",
-                                           [{"index": 0}, {"index": 1}]))
-
-            # Load checkpoint first so we can detect the actual in_channels
-            # from the encoder's first conv layer weight shape.
-            # This is the ground truth -- metadata may be wrong (known bug
-            # where training saves num_channels=3 for multi-channel models).
-            try:
-                state_dict = torch.load(pt_path, map_location=self.device,
-                                        weights_only=True)
-            except Exception as e:
-                raise RuntimeError(
-                    "Failed to load model weights from %s: %s. "
-                    "File may be corrupt." % (pt_path, e))
-
-            num_channels = metadata_channels
-            conv1_key = "encoder.conv1.weight"
-            if conv1_key in state_dict:
-                checkpoint_channels = state_dict[conv1_key].shape[1]
-                if checkpoint_channels != metadata_channels:
-                    logger.warning(
-                        "Metadata num_channels=%d but checkpoint "
-                        "encoder.conv1.weight has %d input channels. "
-                        "Using checkpoint value.",
-                        metadata_channels, checkpoint_channels)
-                num_channels = checkpoint_channels
-            else:
-                # Some encoder architectures use different key names.
-                # Search for the first conv weight to detect in_channels.
-                for key in state_dict:
-                    if ("conv" in key and "weight" in key
-                            and state_dict[key].dim() == 4):
-                        checkpoint_channels = state_dict[key].shape[1]
-                        if checkpoint_channels != metadata_channels:
-                            logger.warning(
-                                "Metadata num_channels=%d but checkpoint "
-                                "%s has %d input channels. "
-                                "Using checkpoint value.",
-                                metadata_channels, key, checkpoint_channels)
-                        num_channels = checkpoint_channels
-                        break
-
-            # Resolve custom encoder names (e.g. histology-pretrained) to
-            # base SMP encoder names. The checkpoint state_dict already
-            # contains the trained weights, so we only need the right
-            # architecture -- no need to download pretrained weights.
-            smp_encoder_name = encoder_name
-            try:
-                from dlclassifier_server.services.pretrained_models import (
-                    PretrainedModelsService)
-                if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
-                    smp_encoder_name = (
-                        PretrainedModelsService.HISTOLOGY_ENCODERS
-                        [encoder_name][0])
-                    logger.info(
-                        "Resolved custom encoder '%s' -> '%s' for SMP",
-                        encoder_name, smp_encoder_name)
-            except ImportError:
-                pass  # Server package not available; fall through
-
-            logger.info("Model: %s/%s, in_channels=%d (metadata=%d), "
-                        "classes=%d",
-                        model_type, encoder_name, num_channels,
-                        metadata_channels, num_classes)
-
-            # MuViT transformer: use dedicated factory (not SMP)
-            if model_type == "muvit":
-                from dlclassifier_server.services.muvit_model import (
-                    create_muvit_model)
-                model = create_muvit_model(
-                    architecture=arch,
-                    num_channels=num_channels,
-                    num_classes=num_classes,
-                )
-            else:
-                model_map = {
-                    "unet": smp.Unet,
-                    "unetplusplus": smp.UnetPlusPlus,
-                    "deeplabv3": smp.DeepLabV3,
-                    "deeplabv3plus": smp.DeepLabV3Plus,
-                    "fpn": smp.FPN,
-                    "pspnet": smp.PSPNet,
-                    "manet": smp.MAnet,
-                    "linknet": smp.Linknet,
-                    "pan": smp.PAN,
-                }
-
-                model_cls = model_map.get(model_type, smp.Unet)
-                model = model_cls(
-                    encoder_name=smp_encoder_name,
-                    encoder_weights=None,
-                    in_channels=num_channels,
-                    classes=num_classes
-                )
-
-            # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
-            # unique to BatchRenorm2d). Metadata flag may be lost when Java
-            # overwrites metadata.json, so detection from weights is robust.
-            has_batchrenorm = any(
-                k.endswith('.rmax') or k.endswith('.dmax')
-                for k in state_dict)
-            if has_batchrenorm:
-                from dlclassifier_server.utils.batchrenorm import (
-                    replace_bn_with_batchrenorm)
-                replace_bn_with_batchrenorm(model)
-                logger.info("Auto-detected BatchRenorm from state dict keys")
-
-            # Detect MAE checkpoint accidentally used as classifier
-            mae_keys = [k for k in state_dict if k.startswith("mae.")]
-            if mae_keys:
-                raise RuntimeError(
-                    "This model file contains MAE pretraining weights "
-                    "(not a trained classifier). Use 'Continue from model' "
-                    "during training to load MAE weights as initialization, "
-                    "then train a segmentation classifier.")
-
-            # Pre-validate shapes to produce clear error messages
-            model_state = model.state_dict()
-            shape_mismatches = []
-            for key in state_dict:
-                if (key in model_state
-                        and state_dict[key].shape != model_state[key].shape):
-                    shape_mismatches.append(
-                        "%s: checkpoint=%s model=%s" % (
-                            key, list(state_dict[key].shape),
-                            list(model_state[key].shape)))
-
-            if shape_mismatches:
-                detail = "\n  ".join(shape_mismatches[:5])
-                extra = ""
-                if len(shape_mismatches) > 5:
-                    extra = ("\n  ... and %d more"
-                             % (len(shape_mismatches) - 5))
-                raise RuntimeError(
-                    "Model architecture mismatch: %d weights have "
-                    "incompatible shapes.\n  %s%s\n"
-                    "The model.pt may be from a different training run "
-                    "or architecture configuration."
-                    % (len(shape_mismatches), detail, extra))
-
-            missing = set(model_state.keys()) - set(state_dict.keys())
-            if missing and len(missing) / max(1, len(model_state)) > 0.5:
-                raise RuntimeError(
-                    "Model architecture mismatch: %d/%d expected weights "
-                    "missing from checkpoint. The model.pt does not match "
-                    "the architecture in metadata.json."
-                    % (len(missing), len(model_state)))
-
-            try:
-                model.load_state_dict(state_dict)
-            except RuntimeError as e:
-                err = str(e)
-                if "size mismatch" in err or "Missing key" in err:
-                    raise RuntimeError(
-                        "Model weights do not match architecture. "
-                        "The classifier may need to be retrained. "
-                        "Detail: %s" % err) from None
-                raise
-
-            model = model.to(self.device)
-            model.eval()
-
-            self._model_cache[model_path] = ("pytorch", model)
-
-            if compile_model and hasattr(self, '_try_compile_model'):
-                self._try_compile_model(model_path, ("pytorch", model))
-
-            return self._model_cache[model_path]
-
-        raise FileNotFoundError("No model found at %s" % model_path)
-
-    InferenceService._load_model = _patched_load_model
-    logger.info("Patched InferenceService._load_model for multi-channel support")
-
-except Exception as e:
-    logger.error("Failed to initialize DL classifier services: %s", e)
-    # Store error so tasks can report it -- imports succeeded but
-    # runtime initialization failed (e.g. GPU not available)
-    init_error = str(e)
+if _installed_tuple < _required_tuple:
+    _msg = (
+        "PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server v%s "
+        "but the extension requires v%s or newer. "
+        "Go to DL Pixel Classifier > Rebuild Python Environment to update."
+        % (_installed_version, _REQUIRED_PYTHON_VERSION))
+    logger.error(_msg)
+    # Block initialization -- health check will return False and the Java
+    # side will show the version_warning to the user.
+    version_warning = _msg
     gpu_manager = None
     inference_service = None
     model_registry = None
+    inference_lock = threading.Lock()
+else:
+    version_warning = None
+    logger.info("dlclassifier-server v%s (required >= %s) -- OK",
+                _installed_version, _REQUIRED_PYTHON_VERSION)
+
+    # Import and initialize persistent services.
+    # ImportError is NOT caught here -- if critical packages (torch, smp, etc.)
+    # are missing, the init must fail loudly so the Java side knows the
+    # environment is broken. Runtime errors (e.g. no GPU) are caught and
+    # handled gracefully so the service can still run in CPU mode.
+    from dlclassifier_server.services.gpu_manager import GPUManager
+    from dlclassifier_server.services.inference_service import InferenceService
+    from dlclassifier_server.services.model_registry import ModelRegistry
+
+    try:
+        gpu_manager = GPUManager()
+        inference_service = InferenceService(device="auto", gpu_manager=gpu_manager)
+        model_registry = ModelRegistry()
+
+        logger.info("DL classifier services initialized successfully")
+        logger.info("Device: %s", inference_service._device_str)
+
+        # Threading lock for GPU operations.
+        # Appose runs each task in its own thread. Without serialization,
+        # concurrent tile inference tasks race on model loading, CUDA memory
+        # allocation, and forward passes. PyTorch CUDA ops are thread-safe
+        # but concurrent batches can OOM and torch.compile is NOT thread-safe.
+        inference_lock = threading.Lock()
+
+        # --- Register additional model factories ---
+        # These are optional; failure to load them should not block init.
+        try:
+            from dlclassifier_server.services.pretrained_models import (
+                PretrainedModelsService)
+            pretrained_service = PretrainedModelsService()
+            logger.info("PretrainedModelsService loaded (%d encoders)",
+                        len(pretrained_service.list_encoders()))
+        except Exception as e:
+            pretrained_service = None
+            logger.warning("PretrainedModelsService not available: %s", e)
+
+        try:
+            from dlclassifier_server.services.muvit_model import (
+                create_muvit_model)
+            logger.info("MuViT model factory loaded")
+        except Exception as e:
+            logger.warning("MuViT model factory not available: %s", e)
+
+        try:
+            from dlclassifier_server.utils.batchrenorm import (
+                replace_bn_with_batchrenorm)
+            logger.info("BatchRenorm utility loaded")
+        except Exception as e:
+            logger.warning("BatchRenorm utility not available: %s", e)
+
+    except Exception as e:
+        logger.error("Failed to initialize DL classifier services: %s", e)
+        # Store error so tasks can report it -- imports succeeded but
+        # runtime initialization failed (e.g. GPU not available)
+        init_error = str(e)
+        gpu_manager = None
+        inference_service = None
+        model_registry = None
+        inference_lock = threading.Lock()
 
 
 # --- Parent process watcher ---

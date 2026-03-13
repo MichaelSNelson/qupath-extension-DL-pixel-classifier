@@ -92,14 +92,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     Object warning = task.outputs.get("version_warning");
                     if (warning instanceof String w && !w.isEmpty()) {
                         versionWarning = w;
-                        logger.warn("Python package version warning: {}", w);
+                        logger.warn("Python package version mismatch: {}", w);
                     } else {
                         versionWarning = null;
                         Object ver = task.outputs.get("server_version");
-                        Object proto = task.outputs.get("protocol_version");
+                        Object req = task.outputs.get("required_version");
                         if (ver != null) {
-                            logger.info("dlclassifier-server v{} (protocol {})",
-                                    ver, proto != null ? proto : "?");
+                            logger.info("dlclassifier-server v{} (required >= {})",
+                                    ver, req != null ? req : "?");
                         }
                     }
 

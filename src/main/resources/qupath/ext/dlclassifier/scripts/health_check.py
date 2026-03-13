@@ -7,6 +7,9 @@ Outputs:
     gpu_name: str
     gpu_memory_mb: int
     device: str
+    server_version: str
+    required_version: str
+    version_warning: str
 """
 import logging
 
@@ -26,8 +29,8 @@ else:
     task.outputs["gpu_memory_mb"] = 0
     task.outputs["device"] = "unknown"
 
-# Version info -- read from the installed package and the init-time check
+# Version info
 import dlclassifier_server as _dls
 task.outputs["server_version"] = getattr(_dls, "__version__", "unknown")
-task.outputs["protocol_version"] = getattr(_dls, "PROTOCOL_VERSION", 0)
+task.outputs["required_version"] = globals().get("_REQUIRED_PYTHON_VERSION", "unknown")
 task.outputs["version_warning"] = globals().get("version_warning", "") or ""

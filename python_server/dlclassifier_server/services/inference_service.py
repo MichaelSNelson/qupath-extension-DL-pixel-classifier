@@ -676,10 +676,20 @@ class InferenceService:
         if pt_path.exists():
             logger.info("Loading PyTorch model from %s", pt_path)
 
-            # Load metadata for model creation
+            # Load and validate metadata
             metadata_path = model_dir / "metadata.json"
-            with open(metadata_path) as f:
-                metadata = json.load(f)
+            if not metadata_path.exists():
+                raise FileNotFoundError(
+                    "Classifier metadata not found: %s. "
+                    "The classifier directory may be incomplete."
+                    % metadata_path)
+            try:
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+            except json.JSONDecodeError as e:
+                raise RuntimeError(
+                    "Classifier metadata is corrupt (%s): %s"
+                    % (metadata_path, e))
 
             # Create model architecture
             import segmentation_models_pytorch as smp
@@ -690,13 +700,82 @@ class InferenceService:
             encoder_name = arch.get("backbone", "resnet34")
             # Prefer architecture.input_channels (from metadata.json) over
             # input_config.num_channels (only present in live Appose calls)
-            num_channels = arch.get("input_channels",
-                                    input_config.get("num_channels", 3))
+            metadata_channels = arch.get("input_channels",
+                                         input_config.get("num_channels", 3))
             # When context_scale > 1, model has 2x channels (detail + context)
             context_scale = arch.get("context_scale", 1)
             if context_scale > 1:
-                num_channels = num_channels * 2
+                metadata_channels = metadata_channels * 2
             num_classes = len(metadata.get("classes", [{"index": 0}, {"index": 1}]))
+
+            # Load checkpoint first so we can detect actual in_channels from
+            # the encoder's first conv layer -- this is ground truth when
+            # metadata is wrong (e.g. Java overwrites with incorrect value).
+            try:
+                state_dict = torch.load(
+                    pt_path, map_location=self.device, weights_only=True)
+            except Exception as e:
+                raise RuntimeError(
+                    "Failed to load model weights from %s: %s. "
+                    "File may be corrupt." % (pt_path, e))
+
+            # Detect MAE checkpoint accidentally used as classifier
+            mae_keys = [k for k in state_dict if k.startswith("mae.")]
+            if mae_keys:
+                raise RuntimeError(
+                    "This model file contains MAE pretraining weights "
+                    "(not a trained classifier). Use 'Continue from model' "
+                    "during training to load MAE weights as initialization, "
+                    "then train a segmentation classifier.")
+
+            # Detect actual in_channels from checkpoint weights
+            num_channels = metadata_channels
+            conv1_key = "encoder.conv1.weight"
+            if conv1_key in state_dict:
+                checkpoint_channels = state_dict[conv1_key].shape[1]
+                if checkpoint_channels != metadata_channels:
+                    logger.warning(
+                        "Metadata num_channels=%d but checkpoint "
+                        "encoder.conv1.weight has %d input channels. "
+                        "Using checkpoint value.",
+                        metadata_channels, checkpoint_channels)
+                num_channels = checkpoint_channels
+            else:
+                # Some encoder architectures use different key names.
+                # Search for the first conv weight to detect in_channels.
+                for key in state_dict:
+                    if ("conv" in key and "weight" in key
+                            and state_dict[key].dim() == 4):
+                        checkpoint_channels = state_dict[key].shape[1]
+                        if checkpoint_channels != metadata_channels:
+                            logger.warning(
+                                "Metadata num_channels=%d but checkpoint "
+                                "%s has %d input channels. "
+                                "Using checkpoint value.",
+                                metadata_channels, key, checkpoint_channels)
+                        num_channels = checkpoint_channels
+                        break
+
+            # Resolve custom encoder names (e.g. histology-pretrained) to
+            # base SMP encoder names. The checkpoint already contains the
+            # trained weights so we only need the right architecture.
+            smp_encoder_name = encoder_name
+            try:
+                from .pretrained_models import PretrainedModelsService
+                if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
+                    smp_encoder_name = (
+                        PretrainedModelsService.HISTOLOGY_ENCODERS
+                        [encoder_name][0])
+                    logger.info(
+                        "Resolved custom encoder '%s' -> '%s' for SMP",
+                        encoder_name, smp_encoder_name)
+            except ImportError:
+                pass
+
+            logger.info("Model: %s/%s, in_channels=%d (metadata=%d), "
+                        "classes=%d",
+                        model_type, encoder_name, num_channels,
+                        metadata_channels, num_classes)
 
             model_map = {
                 "unet": smp.Unet,
@@ -721,14 +800,11 @@ class InferenceService:
             else:
                 model_cls = model_map.get(model_type, smp.Unet)
                 model = model_cls(
-                    encoder_name=encoder_name,
+                    encoder_name=smp_encoder_name,
                     encoder_weights=None,
                     in_channels=num_channels,
                     classes=num_classes
                 )
-
-            state_dict = torch.load(
-                pt_path, map_location=self.device, weights_only=True)
 
             # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
             # unique to BatchRenorm2d). More robust than metadata flag which
@@ -740,7 +816,49 @@ class InferenceService:
                 replace_bn_with_batchrenorm(model)
                 logger.info("Auto-detected BatchRenorm from state dict keys")
 
-            model.load_state_dict(state_dict)
+            # Pre-validate shapes to produce clear error messages
+            model_state = model.state_dict()
+            shape_mismatches = []
+            for key in state_dict:
+                if (key in model_state
+                        and state_dict[key].shape != model_state[key].shape):
+                    shape_mismatches.append(
+                        "%s: checkpoint=%s model=%s" % (
+                            key, list(state_dict[key].shape),
+                            list(model_state[key].shape)))
+
+            if shape_mismatches:
+                detail = "\n  ".join(shape_mismatches[:5])
+                extra = ""
+                if len(shape_mismatches) > 5:
+                    extra = ("\n  ... and %d more"
+                             % (len(shape_mismatches) - 5))
+                raise RuntimeError(
+                    "Model architecture mismatch: %d weights have "
+                    "incompatible shapes.\n  %s%s\n"
+                    "The model.pt may be from a different training run "
+                    "or architecture configuration."
+                    % (len(shape_mismatches), detail, extra))
+
+            missing = set(model_state.keys()) - set(state_dict.keys())
+            if missing and len(missing) / max(1, len(model_state)) > 0.5:
+                raise RuntimeError(
+                    "Model architecture mismatch: %d/%d expected weights "
+                    "missing from checkpoint. The model.pt does not match "
+                    "the architecture in metadata.json."
+                    % (len(missing), len(model_state)))
+
+            try:
+                model.load_state_dict(state_dict)
+            except RuntimeError as e:
+                err = str(e)
+                if "size mismatch" in err or "Missing key" in err:
+                    raise RuntimeError(
+                        "Model weights do not match architecture. "
+                        "The classifier may need to be retrained. "
+                        "Detail: %s" % err) from None
+                raise
+
             model = model.to(self.device)
             model.eval()
 

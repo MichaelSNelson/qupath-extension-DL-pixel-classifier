@@ -47,7 +47,7 @@ On first launch after installing the extension, only **Setup DL Environment...**
 
 The training and inference menu items now appear automatically. On subsequent launches, the environment is detected on disk and everything is ready immediately.
 
-> **After updating the extension:** If you install a new version, you may need to re-run **Setup DL Environment...** (or **Utilities > Rebuild DL Environment...**) to update the Python environment to match.
+> **After updating the extension:** If you install a new version, you **must** rebuild the Python environment. The extension enforces version matching -- an error notification will appear and training/inference will be blocked until the environment is rebuilt. Go to **Utilities > Rebuild DL Environment...** to update.
 
 > **GPU not detected?** If the setup reports CPU-only but you have an NVIDIA GPU, make sure your NVIDIA drivers are installed and try **Utilities > Rebuild DL Environment...** See [Troubleshooting](docs/TROUBLESHOOTING.md) for details.
 
