@@ -134,7 +134,7 @@ public final class DLClassifierPreferences {
             "dlclassifier.lastOutputType", "RENDERED_OVERLAY");
 
     private static final StringProperty lastBlendMode = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastBlendMode", "LINEAR");
+            "dlclassifier.lastBlendMode", "CENTER_CROP");
 
     private static final DoubleProperty smoothing = PathPrefs.createPersistentPreference(
             "dlclassifier.smoothing", 1.0);

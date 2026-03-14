@@ -54,23 +54,25 @@ public class OverlaySettingsDialog {
         grid.add(new Label("Blend Mode:"), 0, row);
         ComboBox<InferenceConfig.BlendMode> blendModeCombo = new ComboBox<>();
         blendModeCombo.getItems().addAll(
+                InferenceConfig.BlendMode.CENTER_CROP,
                 InferenceConfig.BlendMode.LINEAR,
                 InferenceConfig.BlendMode.GAUSSIAN,
-                InferenceConfig.BlendMode.CENTER_CROP,
                 InferenceConfig.BlendMode.NONE);
         // Restore from preference
         InferenceConfig.BlendMode savedMode;
         try {
             savedMode = InferenceConfig.BlendMode.valueOf(DLClassifierPreferences.getLastBlendMode());
         } catch (IllegalArgumentException e) {
-            savedMode = InferenceConfig.BlendMode.LINEAR;
+            savedMode = InferenceConfig.BlendMode.CENTER_CROP;
         }
         blendModeCombo.setValue(savedMode);
         TooltipHelper.install(blendModeCombo,
-                "LINEAR: smooth linear ramp at tile boundaries\n" +
-                "GAUSSIAN: cosine bell blend (smoother, best for ViT models)\n" +
-                "CENTER_CROP: only use center predictions (no artifacts, ~4x slower)\n" +
-                "NONE: no blending, raw tile predictions");
+                "CENTER_CROP (Recommended): use only center predictions from each tile.\n" +
+                "  Eliminates all tile boundary artifacts.\n\n" +
+                "LINEAR: smooth linear ramp at tile boundaries.\n" +
+                "  Faster but may show faint grid lines.\n\n" +
+                "GAUSSIAN: cosine bell blend (slightly smoother than LINEAR).\n\n" +
+                "NONE: no blending, raw tile predictions.");
         grid.add(blendModeCombo, 1, row);
 
         row++;

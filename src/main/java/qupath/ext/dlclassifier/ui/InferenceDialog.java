@@ -463,21 +463,19 @@ public class InferenceDialog {
             try {
                 blendModeCombo.setValue(InferenceConfig.BlendMode.valueOf(DLClassifierPreferences.getLastBlendMode()));
             } catch (IllegalArgumentException e) {
-                blendModeCombo.setValue(InferenceConfig.BlendMode.LINEAR);
+                blendModeCombo.setValue(InferenceConfig.BlendMode.CENTER_CROP);
             }
             TooltipHelper.install(blendModeCombo,
-                    "Strategy for merging predictions in overlapping tile regions:\n\n" +
-                    "LINEAR: Weighted average favoring tile centers.\n" +
-                    "  Good balance of quality and speed. Recommended for CNN models.\n\n" +
+                    "Strategy for handling tile boundaries:\n\n" +
+                    "CENTER_CROP (Recommended): Use only center predictions from each tile.\n" +
+                    "  Eliminates all tile boundary artifacts. Slightly slower (~1.5x)\n" +
+                    "  because tiles need extra context padding.\n\n" +
+                    "LINEAR: Weighted average blending at tile boundaries.\n" +
+                    "  Faster but may show faint grid lines, especially with BatchNorm models.\n\n" +
                     "GAUSSIAN: Cosine-bell blending for smoother transitions.\n" +
-                    "  Recommended for ViT/MuViT models (set automatically for overlays).\n" +
-                    "  Better handles the smooth prediction gradients from global attention.\n\n" +
-                    "CENTER_CROP: Keep only center predictions, discard overlap margins.\n" +
-                    "  Zero boundary artifacts but ~4x slower (more tiles needed).\n" +
-                    "  Use when artifact-free results are critical.\n\n" +
-                    "NONE: No blending; last tile wins.\n" +
-                    "  Fastest option but may show visible tile seams.\n" +
-                    "  Only use with 0% overlap or for debugging.");
+                    "  Slightly better than LINEAR for ViT models.\n\n" +
+                    "NONE: No blending; raw tile predictions.\n" +
+                    "  Fastest but will show visible tile seams.");
 
             grid.add(new Label("Blend Mode:"), 0, row);
             grid.add(blendModeCombo, 1, row);
@@ -838,9 +836,10 @@ public class InferenceDialog {
             holeFillingSpinner.setDisable(!enableObjectOptions);
             smoothingSpinner.setDisable(!enableObjectOptions);
 
-            // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY
+            // Blend mode is relevant for all tiled output types
             boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
-                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
+                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY
+                    || outputType == InferenceConfig.OutputType.OVERLAY);
             blendModeCombo.setDisable(!enableBlend);
 
             // Auto-select "Apply to whole image" for on-demand OVERLAY only

@@ -330,8 +330,11 @@ public class DLPixelClassifier implements PixelClassifier {
                     request.getX(), request.getY(), tileWidth, tileHeight);
 
             // Schedule deferred refresh so earlier tiles get re-rendered with
-            // this tile now available as a neighbor
-            blendCache.scheduleRefresh();
+            // this tile now available as a neighbor (not needed for CENTER_CROP
+            // since each tile's visible region uses only its own center predictions)
+            if (inferenceConfig.getBlendMode() != InferenceConfig.BlendMode.CENTER_CROP) {
+                blendCache.scheduleRefresh();
+            }
 
             // Success -- reset error counter
             consecutiveErrors.set(0);
