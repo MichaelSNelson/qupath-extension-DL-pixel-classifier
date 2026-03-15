@@ -48,6 +48,10 @@ public class OverlayService {
     private ChannelConfiguration currentChannelConfig;
     private ImageData<BufferedImage> currentImageData;
 
+    /** User's model selection -- persists even when overlay is removed so toggle can re-create. */
+    private ClassifierMetadata selectedMetadata;
+    private ChannelConfiguration selectedChannelConfig;
+
     /** Observable property tracking whether live prediction is active. */
     private final BooleanProperty livePrediction = new SimpleBooleanProperty(false);
 
@@ -138,6 +142,65 @@ public class OverlayService {
         this.currentMetadata = metadata;
         this.currentChannelConfig = channelConfig;
         this.currentImageData = imageData;
+    }
+
+    /**
+     * Stores the user's model selection for quick toggle on/off.
+     * <p>
+     * This persists even when the overlay is removed, so the toggle menu
+     * item can re-create the overlay without prompting for model selection.
+     *
+     * @param metadata      classifier metadata
+     * @param channelConfig channel configuration
+     */
+    public void selectModel(ClassifierMetadata metadata, ChannelConfiguration channelConfig) {
+        this.selectedMetadata = metadata;
+        this.selectedChannelConfig = channelConfig;
+        logger.info("Overlay model selected: {}", metadata.getName());
+    }
+
+    /**
+     * Returns whether a model has been selected for overlay use.
+     */
+    public boolean hasSelectedModel() {
+        return selectedMetadata != null && selectedChannelConfig != null;
+    }
+
+    /**
+     * Returns the currently selected model metadata, or null if none selected.
+     */
+    public ClassifierMetadata getSelectedMetadata() {
+        return selectedMetadata;
+    }
+
+    /**
+     * Creates an overlay from the stored model selection on the given image.
+     * <p>
+     * Uses CENTER_CROP blend mode and reads overlay smoothing from preferences.
+     *
+     * @param imageData the image to overlay
+     * @return true if the overlay was created
+     */
+    public boolean createOverlayFromSelection(ImageData<BufferedImage> imageData) {
+        if (selectedMetadata == null || selectedChannelConfig == null) {
+            logger.warn("Cannot create overlay -- no model selected");
+            return false;
+        }
+
+        int tileSize = selectedMetadata.getInputWidth();
+        double smoothingSigma = DLClassifierPreferences.getOverlaySmoothing();
+        InferenceConfig config = InferenceConfig.builder()
+                .tileSize(tileSize)
+                .blendMode(InferenceConfig.BlendMode.CENTER_CROP)
+                .overlaySmoothingSigma(smoothingSigma)
+                .outputType(InferenceConfig.OutputType.OVERLAY)
+                .build();
+
+        DLPixelClassifier pixelClassifier = new DLPixelClassifier(
+                selectedMetadata, selectedChannelConfig, config, imageData);
+        applyClassifierOverlay(imageData, pixelClassifier,
+                selectedMetadata, selectedChannelConfig);
+        return true;
     }
 
     /**

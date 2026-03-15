@@ -220,53 +220,61 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
         inferenceOption.visibleProperty().bind(environmentReady);
 
-        // Separator between train/inference and live prediction
+        // Separator between train/inference and overlay controls
         SeparatorMenuItem sep1 = new SeparatorMenuItem();
         sep1.visibleProperty().bind(environmentReady);
 
-        // 3) Toggle Prediction Overlay - toggle live tile classification on/off
-        //    When checked and no overlay exists, prompts user to select a classifier
-        CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
-        TooltipHelper.installOnMenuItem(livePredictionOption,
-                "Toggle live DL classification overlay on the current viewer.\n" +
-                        "If no overlay exists, you will be prompted to select a classifier.\n" +
-                        "When unchecked, the overlay is removed and GPU memory is freed.");
         OverlayService overlayService = OverlayService.getInstance();
-        // Sync CheckMenuItem state from the property (for programmatic changes)
-        overlayService.livePredictionProperty().addListener((obs, wasLive, isLive) ->
-                livePredictionOption.setSelected(isLive));
-        // Trigger overlay creation or removal when user clicks the CheckMenuItem
-        livePredictionOption.setOnAction(e -> {
-            if (livePredictionOption.isSelected()) {
-                if (overlayService.hasOverlay()) {
-                    // Overlay exists - just re-enable live prediction
-                    overlayService.setLivePrediction(true);
-                } else {
-                    // No overlay - create one by prompting for classifier selection
-                    createOverlayFromClassifierSelection(qupath, overlayService, livePredictionOption);
-                }
-            } else {
-                // Unchecked - remove the overlay entirely
-                overlayService.removeOverlay();
-            }
-        });
         BooleanBinding noImage = Bindings.createBooleanBinding(
                 () -> qupath.getImageData() == null,
                 qupath.imageDataProperty()
         );
+
+        // 3) Select Overlay Model - choose which classifier to use for the overlay
+        MenuItem selectModelOption = new MenuItem("Select Overlay Model...");
+        TooltipHelper.installOnMenuItem(selectModelOption,
+                "Choose a trained classifier for the prediction overlay.\n" +
+                        "The selected model is used when toggling the overlay on/off.");
+        selectModelOption.setOnAction(e -> selectOverlayModel(qupath, overlayService));
+        selectModelOption.disableProperty().bind(noImage);
+        selectModelOption.visibleProperty().bind(environmentReady);
+
+        // 4) Toggle Prediction Overlay - simple on/off toggle
+        CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
+        TooltipHelper.installOnMenuItem(livePredictionOption,
+                "Toggle the DL classification overlay on/off.\n" +
+                        "Uses the model chosen via 'Select Overlay Model'.\n" +
+                        "If no model is selected, you will be prompted to choose one.");
+        // Sync CheckMenuItem state from the property (for programmatic changes)
+        overlayService.livePredictionProperty().addListener((obs, wasLive, isLive) ->
+                livePredictionOption.setSelected(isLive));
+        // Toggle overlay on/off
+        livePredictionOption.setOnAction(e -> {
+            if (livePredictionOption.isSelected()) {
+                if (overlayService.hasOverlay()) {
+                    overlayService.setLivePrediction(true);
+                } else if (overlayService.hasSelectedModel()) {
+                    // Model already selected - create overlay directly
+                    ImageData<BufferedImage> imageData = qupath.getImageData();
+                    if (imageData != null) {
+                        overlayService.createOverlayFromSelection(imageData);
+                    } else {
+                        livePredictionOption.setSelected(false);
+                    }
+                } else {
+                    // No model selected - prompt user
+                    selectOverlayModel(qupath, overlayService);
+                    if (!overlayService.hasOverlay()) {
+                        livePredictionOption.setSelected(false);
+                    }
+                }
+            } else {
+                overlayService.removeOverlay();
+            }
+        });
         livePredictionOption.disableProperty().bind(
                 noImage.or(overlayService.trainingActiveProperty()));
         livePredictionOption.visibleProperty().bind(environmentReady);
-
-        // 4) Overlay Settings - configure blend mode and overlap
-        MenuItem overlaySettingsOption = new MenuItem(res.getString("menu.overlaySettings"));
-        TooltipHelper.installOnMenuItem(overlaySettingsOption,
-                "Configure blend mode and tile overlap for the prediction overlay.\n" +
-                        "Changes apply immediately if an overlay is active.");
-        overlaySettingsOption.setOnAction(e ->
-                new qupath.ext.dlclassifier.ui.OverlaySettingsDialog(overlayService).show());
-        overlaySettingsOption.disableProperty().bind(noImage);
-        overlaySettingsOption.visibleProperty().bind(environmentReady);
 
         // Separator before models
         SeparatorMenuItem sep2 = new SeparatorMenuItem();
@@ -355,8 +363,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         pythonConsoleOption.setOnAction(e -> PythonConsoleWindow.getInstance().show());
         pythonConsoleOption.visibleProperty().bind(environmentReady);
 
-        utilitiesMenu.getItems().addAll(freeGpuOption, maePretrainOption,
-                new SeparatorMenuItem(), systemInfoOption,
+        // Overlay Settings - configure prediction smoothing
+        MenuItem overlaySettingsOption = new MenuItem("Overlay Settings...");
+        TooltipHelper.installOnMenuItem(overlaySettingsOption,
+                "Configure prediction smoothing for the overlay.\n" +
+                        "Changes apply immediately if an overlay is active.");
+        overlaySettingsOption.setOnAction(e ->
+                new qupath.ext.dlclassifier.ui.OverlaySettingsDialog(overlayService).show());
+        overlaySettingsOption.visibleProperty().bind(environmentReady);
+
+        utilitiesMenu.getItems().addAll(overlaySettingsOption, freeGpuOption,
+                maePretrainOption, new SeparatorMenuItem(), systemInfoOption,
                 pythonConsoleOption, new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
@@ -366,8 +383,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 trainOption,
                 inferenceOption,
                 sep1,
+                selectModelOption,
                 livePredictionOption,
-                overlaySettingsOption,
                 sep2,
                 modelsOption,
                 sep3,
@@ -696,15 +713,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     }
 
     /**
-     * Prompts the user to select a classifier and creates a live overlay.
-     * Called when the user checks "Toggle Prediction Overlay" and no overlay exists.
+     * Prompts the user to select a classifier for overlay use.
+     * Stores the selection in OverlayService and immediately creates the overlay
+     * if an image is open.
      */
-    private void createOverlayFromClassifierSelection(QuPathGUI qupath,
-                                                       OverlayService overlayService,
-                                                       CheckMenuItem livePredictionOption) {
+    private void selectOverlayModel(QuPathGUI qupath, OverlayService overlayService) {
         ImageData<BufferedImage> imageData = qupath.getImageData();
         if (imageData == null) {
-            livePredictionOption.setSelected(false);
             Dialogs.showWarningNotification(EXTENSION_NAME, "No image is open.");
             return;
         }
@@ -713,7 +728,6 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         ModelManager modelManager = new ModelManager();
         List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
         if (classifiers.isEmpty()) {
-            livePredictionOption.setSelected(false);
             Dialogs.showWarningNotification(EXTENSION_NAME,
                     "No classifiers available. Train a classifier first.");
             return;
@@ -727,14 +741,23 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return b.getCreatedAt().compareTo(a.getCreatedAt());
         });
 
-        // Show a choice dialog
+        // Show a choice dialog, pre-select current model if one is selected
         List<String> names = classifiers.stream()
                 .map(c -> c.getName() + " (" + c.getId() + ")")
                 .toList();
-        String choice = Dialogs.showChoiceDialog("Select Classifier",
-                "Choose a classifier for the live overlay:", names, names.get(0));
+        String defaultChoice = names.get(0);
+        if (overlayService.getSelectedMetadata() != null) {
+            String currentId = overlayService.getSelectedMetadata().getId();
+            for (int i = 0; i < classifiers.size(); i++) {
+                if (classifiers.get(i).getId().equals(currentId)) {
+                    defaultChoice = names.get(i);
+                    break;
+                }
+            }
+        }
+        String choice = Dialogs.showChoiceDialog("Select Overlay Model",
+                "Choose a classifier for the prediction overlay:", names, defaultChoice);
         if (choice == null) {
-            livePredictionOption.setSelected(false);
             return;
         }
 
@@ -755,28 +778,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 .normalizationStrategy(metadata.getNormalizationStrategy())
                 .build();
 
-        // Build inference config from preferences
-        double overlapPercent = DLClassifierPreferences.getTileOverlapPercent();
-        InferenceConfig.BlendMode blendMode;
-        try {
-            blendMode = InferenceConfig.BlendMode.valueOf(DLClassifierPreferences.getLastBlendMode());
-        } catch (IllegalArgumentException e) {
-            blendMode = InferenceConfig.BlendMode.LINEAR;
-        }
-        InferenceConfig inferenceConfig = InferenceConfig.builder()
-                .tileSize(metadata.getInputWidth())
-                .overlapPercent(overlapPercent)
-                .blendMode(blendMode)
-                .outputType(InferenceConfig.OutputType.OVERLAY)
-                .build();
-
-        // Create the pixel classifier and apply overlay (store params for re-creation)
-        DLPixelClassifier pixelClassifier = new DLPixelClassifier(
-                metadata, channelConfig, inferenceConfig, imageData);
-        overlayService.applyClassifierOverlay(imageData, pixelClassifier,
-                metadata, channelConfig);
+        // Store selection and create overlay
+        overlayService.selectModel(metadata, channelConfig);
+        overlayService.createOverlayFromSelection(imageData);
         Dialogs.showInfoNotification(EXTENSION_NAME,
-                "Live DL overlay applied: " + metadata.getName());
+                "Overlay model: " + metadata.getName());
     }
 
     /**
