@@ -78,6 +78,9 @@ public class InferenceConfig {
     private final boolean useGPU;
     private final boolean useTTA;
 
+    // Overlay probability smoothing
+    private final double overlaySmoothingSigma;
+
     private InferenceConfig(Builder builder) {
         this.tileSize = builder.tileSize;
         this.overlap = builder.overlap;
@@ -91,6 +94,7 @@ public class InferenceConfig {
         this.maxTilesInMemory = builder.maxTilesInMemory;
         this.useGPU = builder.useGPU;
         this.useTTA = builder.useTTA;
+        this.overlaySmoothingSigma = builder.overlaySmoothingSigma;
     }
 
     // Getters
@@ -153,6 +157,18 @@ public class InferenceConfig {
     }
 
     /**
+     * Returns the Gaussian sigma for overlay probability smoothing.
+     * <p>
+     * When > 0, a Gaussian blur is applied to probability maps before argmax
+     * to smooth noisy per-pixel predictions. A sigma of 2.0 is a good default.
+     *
+     * @return sigma in pixels (0 = no smoothing)
+     */
+    public double getOverlaySmoothingSigma() {
+        return overlaySmoothingSigma;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -180,6 +196,7 @@ public class InferenceConfig {
                 maxTilesInMemory == that.maxTilesInMemory &&
                 useGPU == that.useGPU &&
                 useTTA == that.useTTA &&
+                Double.compare(that.overlaySmoothingSigma, overlaySmoothingSigma) == 0 &&
                 blendMode == that.blendMode &&
                 outputType == that.outputType &&
                 objectType == that.objectType;
@@ -189,7 +206,7 @@ public class InferenceConfig {
     public int hashCode() {
         return Objects.hash(tileSize, overlap, overlapPercent, blendMode, outputType, objectType,
                 minObjectSizeMicrons, holeFillingMicrons, boundarySmoothing,
-                maxTilesInMemory, useGPU, useTTA);
+                maxTilesInMemory, useGPU, useTTA, overlaySmoothingSigma);
     }
 
     @Override
@@ -218,6 +235,7 @@ public class InferenceConfig {
         private int maxTilesInMemory = 50;
         private boolean useGPU = true;
         private boolean useTTA = false;
+        private double overlaySmoothingSigma = 2.0;
 
         public Builder tileSize(int tileSize) {
             this.tileSize = tileSize;
@@ -336,6 +354,20 @@ public class InferenceConfig {
          */
         public Builder useTTA(boolean useTTA) {
             this.useTTA = useTTA;
+            return this;
+        }
+
+        /**
+         * Sets the Gaussian sigma for overlay probability smoothing.
+         * <p>
+         * A Gaussian blur is applied to probability maps before argmax to smooth
+         * noisy per-pixel predictions. Set to 0 to disable smoothing.
+         *
+         * @param sigma Gaussian sigma in pixels (0 = no smoothing, 2.0 = recommended)
+         * @return this builder
+         */
+        public Builder overlaySmoothingSigma(double sigma) {
+            this.overlaySmoothingSigma = Math.max(0.0, sigma);
             return this;
         }
 

@@ -139,6 +139,9 @@ public final class DLClassifierPreferences {
     private static final DoubleProperty smoothing = PathPrefs.createPersistentPreference(
             "dlclassifier.smoothing", 1.0);
 
+    private static final DoubleProperty overlaySmoothing = PathPrefs.createPersistentPreference(
+            "dlclassifier.overlaySmoothing", 2.0);
+
     private static final StringProperty applicationScope = PathPrefs.createPersistentPreference(
             "dlclassifier.applicationScope", "ALL_ANNOTATIONS");
 
@@ -626,6 +629,18 @@ public final class DLClassifierPreferences {
 
     public static DoubleProperty smoothingProperty() {
         return smoothing;
+    }
+
+    public static double getOverlaySmoothing() {
+        return overlaySmoothing.get();
+    }
+
+    public static void setOverlaySmoothing(double value) {
+        overlaySmoothing.set(value);
+    }
+
+    public static DoubleProperty overlaySmoothingProperty() {
+        return overlaySmoothing;
     }
 
     public static String getApplicationScope() {

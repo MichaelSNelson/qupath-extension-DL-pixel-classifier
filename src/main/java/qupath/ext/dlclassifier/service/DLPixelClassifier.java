@@ -505,9 +505,16 @@ public class DLPixelClassifier implements PixelClassifier {
 
     /**
      * Creates a TYPE_BYTE_INDEXED image where each pixel value is the argmax
-     * class index from the probability map.
+     * class index from the probability map. Applies Gaussian smoothing to the
+     * probability maps before argmax if configured (sigma > 0).
      */
     private BufferedImage createClassIndexImage(float[][][] probMap, int width, int height) {
+        // Smooth probability maps before argmax to reduce noisy per-pixel predictions
+        double sigma = inferenceConfig.getOverlaySmoothingSigma();
+        if (sigma > 0) {
+            probMap = gaussianSmoothProbabilities(probMap, width, height, sigma);
+        }
+
         BufferedImage indexed = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_INDEXED, colorModel);
         var raster = indexed.getRaster();
 
@@ -527,6 +534,71 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         return indexed;
+    }
+
+    /**
+     * Applies separable Gaussian smoothing to each class channel of a probability map.
+     * <p>
+     * This smooths noisy per-pixel predictions before argmax, producing cleaner
+     * classification boundaries without the tile-boundary artifacts that blending
+     * approaches introduce. Uses a 1D Gaussian kernel applied horizontally then
+     * vertically (separable convolution) for efficiency.
+     *
+     * @param probMap probability map [height][width][numClasses]
+     * @param width   map width
+     * @param height  map height
+     * @param sigma   Gaussian sigma in pixels
+     * @return smoothed probability map (new array)
+     */
+    private static float[][][] gaussianSmoothProbabilities(float[][][] probMap,
+                                                            int width, int height, double sigma) {
+        int radius = (int) Math.ceil(sigma * 2.5);
+        if (radius < 1) return probMap;
+
+        // Build 1D Gaussian kernel
+        float[] kernel = new float[2 * radius + 1];
+        float kernelSum = 0;
+        for (int i = -radius; i <= radius; i++) {
+            kernel[i + radius] = (float) Math.exp(-0.5 * (i * i) / (sigma * sigma));
+            kernelSum += kernel[i + radius];
+        }
+        for (int i = 0; i < kernel.length; i++) {
+            kernel[i] /= kernelSum;
+        }
+
+        int numClasses = probMap[0][0].length;
+
+        // Horizontal pass
+        float[][][] temp = new float[height][width][numClasses];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                for (int c = 0; c < numClasses; c++) {
+                    float sum = 0;
+                    for (int k = -radius; k <= radius; k++) {
+                        int xx = Math.max(0, Math.min(width - 1, x + k));
+                        sum += kernel[k + radius] * probMap[y][xx][c];
+                    }
+                    temp[y][x][c] = sum;
+                }
+            }
+        }
+
+        // Vertical pass
+        float[][][] result = new float[height][width][numClasses];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                for (int c = 0; c < numClasses; c++) {
+                    float sum = 0;
+                    for (int k = -radius; k <= radius; k++) {
+                        int yy = Math.max(0, Math.min(height - 1, y + k));
+                        sum += kernel[k + radius] * temp[yy][x][c];
+                    }
+                    result[y][x][c] = sum;
+                }
+            }
+        }
+
+        return result;
     }
 
     /**

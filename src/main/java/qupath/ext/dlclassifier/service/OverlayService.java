@@ -141,28 +141,27 @@ public class OverlayService {
     }
 
     /**
-     * Recreates the overlay with new blend mode and overlap settings.
+     * Recreates the overlay with current preference settings.
      * <p>
      * Requires that the overlay was originally created via the overload that
-     * stores metadata and channel config. Builds a new {@link InferenceConfig}
-     * from the given parameters, constructs a new {@link DLPixelClassifier},
-     * and replaces the current overlay.
+     * stores metadata and channel config. Always uses CENTER_CROP blend mode
+     * for artifact-free tile boundaries, and reads overlay smoothing from
+     * preferences.
      *
-     * @param blendMode      the blend mode to use
-     * @param overlapPercent tile overlap as a percentage (0-50)
      * @return true if the overlay was successfully recreated
      */
-    public boolean recreateOverlay(InferenceConfig.BlendMode blendMode, double overlapPercent) {
+    public boolean recreateOverlay() {
         if (currentMetadata == null || currentChannelConfig == null || currentImageData == null) {
             logger.warn("Cannot recreate overlay -- no stored construction parameters");
             return false;
         }
 
         int tileSize = currentMetadata.getInputWidth();
+        double smoothingSigma = DLClassifierPreferences.getOverlaySmoothing();
         InferenceConfig newConfig = InferenceConfig.builder()
                 .tileSize(tileSize)
-                .overlapPercent(overlapPercent)
-                .blendMode(blendMode)
+                .blendMode(InferenceConfig.BlendMode.CENTER_CROP)
+                .overlaySmoothingSigma(smoothingSigma)
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 

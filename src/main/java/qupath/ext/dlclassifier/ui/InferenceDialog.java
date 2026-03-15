@@ -836,11 +836,14 @@ public class InferenceDialog {
             holeFillingSpinner.setDisable(!enableObjectOptions);
             smoothingSpinner.setDisable(!enableObjectOptions);
 
-            // Blend mode is relevant for all tiled output types
+            // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY (Python-side blending).
+            // OVERLAY always uses CENTER_CROP for artifact-free tile boundaries.
             boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
-                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY
-                    || outputType == InferenceConfig.OutputType.OVERLAY);
+                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
             blendModeCombo.setDisable(!enableBlend);
+            if (outputType == InferenceConfig.OutputType.OVERLAY) {
+                blendModeCombo.setValue(InferenceConfig.BlendMode.CENTER_CROP);
+            }
 
             // Auto-select "Apply to whole image" for on-demand OVERLAY only
             if (outputType == InferenceConfig.OutputType.OVERLAY) {
@@ -890,6 +893,7 @@ public class InferenceDialog {
                     .smoothing(smoothingSpinner.getValue())
                     .useGPU(useGPUCheck.isSelected())
                     .useTTA(useTTACheck.isSelected())
+                    .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
@@ -925,6 +929,7 @@ public class InferenceDialog {
                     .smoothing(smoothingSpinner.getValue())
                     .useGPU(useGPUCheck.isSelected())
                     .useTTA(useTTACheck.isSelected())
+                    .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
