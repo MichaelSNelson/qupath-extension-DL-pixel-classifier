@@ -283,34 +283,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(extensionCL);
 
-        // Retry loop: "thread death" from concurrent overlay tile requests can
-        // arrive as a stale error on the training task due to Appose message
-        // ordering races. Retry once after a brief delay to let the queue settle.
-        int maxAttempts = 2;
+        // No retry for training -- it is a long-running stateful operation.
+        // If Appose reports "thread death", the Python-side may still be running.
+        // Retrying would create a duplicate training process on the same GPU.
         try {
-            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-                try {
-                    return executeTrainingTask(appose, inputs, jobId, extensionCL,
-                            progressCallback, cancelledCheck);
-                } catch (IOException e) {
-                    String error = e.getMessage() != null ? e.getMessage() : "";
-                    boolean isThreadDeath = error.toLowerCase().contains("thread death");
-                    if (isThreadDeath && attempt < maxAttempts) {
-                        logger.warn("Training task got transient 'thread death' error " +
-                                "(attempt {}/{}), retrying after delay...", attempt, maxAttempts);
-                        try {
-                            Thread.sleep(3000);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            throw new IOException("Training interrupted during retry", ie);
-                        }
-                        continue;
-                    }
-                    throw e;
-                }
-            }
-            // Unreachable, but compiler requires it
-            throw new IOException("Training failed after " + maxAttempts + " attempts");
+            return executeTrainingTask(appose, inputs, jobId, extensionCL,
+                    progressCallback, cancelledCheck);
         } finally {
             Thread.currentThread().setContextClassLoader(originalCL);
         }
@@ -541,10 +519,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     }
 
     /**
-     * Executes a training task via Appose, with retry on transient "thread death" errors.
-     * <p>
-     * Thread death can occur when stale messages from a previous task (e.g. just-completed
-     * training) are misrouted to the new task before the Appose worker stabilizes.
+     * Executes a training task via Appose. No retry -- training is a long-running
+     * stateful operation and retrying risks duplicate GPU processes.
      */
     private ClassifierClient.TrainingResult executeTrainingTask(
             ApposeService appose,
@@ -554,119 +530,104 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck) throws IOException {
 
-        for (int attempt = 0; attempt < MAX_TASK_RETRIES; attempt++) {
-            Task task = appose.createTask("train", inputs);
+        Task task = appose.createTask("train", inputs);
 
-            // Listen for progress events
-            task.listen(event -> {
-                if (event.responseType == ResponseType.UPDATE && event.message != null) {
-                    try {
-                        ClassifierClient.TrainingProgress progress = parseProgressJson(event.message);
-                        if (progressCallback != null) {
-                            progressCallback.accept(progress);
-                        }
-                    } catch (Exception e) {
-                        logger.debug("Failed to parse training progress: {}", e.getMessage());
+        // Listen for progress events
+        task.listen(event -> {
+            if (event.responseType == ResponseType.UPDATE && event.message != null) {
+                try {
+                    ClassifierClient.TrainingProgress progress = parseProgressJson(event.message);
+                    if (progressCallback != null) {
+                        progressCallback.accept(progress);
                     }
+                } catch (Exception e) {
+                    logger.debug("Failed to parse training progress: {}", e.getMessage());
                 }
-            });
-
-            // Start the task
-            task.start();
-
-            // Poll for cancellation in a background thread.
-            // The cancel thread also needs TCCL because task.cancel()
-            // sends a JSON message via Groovy serialization.
-            Thread cancelThread = new Thread(() -> {
-                Thread.currentThread().setContextClassLoader(extensionCL);
-                while (!task.status.isFinished()) {
-                    if (cancelledCheck != null && cancelledCheck.get()) {
-                        logger.info("Training cancel requested, sending to Appose task");
-                        task.cancel();
-                        break;
-                    }
-                    try {
-                        Thread.sleep(500);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-            }, "DLClassifier-ApposeTrainCancel");
-            cancelThread.setDaemon(true);
-            cancelThread.start();
-
-            // Wait for completion
-            try {
-                task.waitFor();
-            } catch (Exception e) {
-                if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
-                    logger.info("Training cancelled via Appose");
-                    // Try to recover model_path in case cancel arrived after model was saved
-                    String cancelledModelPath = null;
-                    if (task.outputs != null && task.outputs.containsKey("model_path")) {
-                        String mp = String.valueOf(task.outputs.get("model_path"));
-                        if (!mp.isEmpty() && !"null".equals(mp)) {
-                            cancelledModelPath = mp;
-                        }
-                    }
-                    return new ClassifierClient.TrainingResult(jobId, cancelledModelPath, 0, 0);
-                }
-                // Retry on transient "thread death" from stale worker state
-                String msg = e.getMessage() != null ? e.getMessage() : "";
-                if (msg.toLowerCase().contains("thread death")
-                        && attempt < MAX_TASK_RETRIES - 1) {
-                    logger.warn("Training task got transient 'thread death' " +
-                            "(attempt {}/{}), retrying after {}ms...",
-                            attempt + 1, MAX_TASK_RETRIES, TASK_RETRY_DELAY_MS);
-                    try {
-                        Thread.sleep(TASK_RETRY_DELAY_MS);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("Training interrupted during retry", ie);
-                    }
-                    continue;
-                }
-                throw new IOException("Training failed: " + task.error, e);
             }
+        });
 
-            // Check if training was paused (not cancelled, not failed)
-            String status = String.valueOf(task.outputs.getOrDefault("status", "completed"));
-            if ("paused".equals(status)) {
-                String checkpointPath = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
-                int lastEpoch = ((Number) task.outputs.getOrDefault("last_epoch", 0)).intValue();
-                int totalEpochs = ((Number) task.outputs.getOrDefault("total_epochs", 0)).intValue();
-                logger.info("Training paused at epoch {}/{}, checkpoint: {}", lastEpoch, totalEpochs, checkpointPath);
+        // Start the task
+        task.start();
 
-                // Store checkpoint info for resume/finalize
-                storeCheckpointInfo(jobId, checkpointPath, lastEpoch, inputs);
-
-                return new ClassifierClient.TrainingResult(
-                        jobId, null, 0, 0, 0, 0, true, lastEpoch, totalEpochs, checkpointPath);
+        // Poll for cancellation in a background thread.
+        // The cancel thread also needs TCCL because task.cancel()
+        // sends a JSON message via Groovy serialization.
+        Thread cancelThread = new Thread(() -> {
+            Thread.currentThread().setContextClassLoader(extensionCL);
+            while (!task.status.isFinished()) {
+                if (cancelledCheck != null && cancelledCheck.get()) {
+                    logger.info("Training cancel requested, sending to Appose task");
+                    task.cancel();
+                    break;
+                }
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
+        }, "DLClassifier-ApposeTrainCancel");
+        cancelThread.setDaemon(true);
+        cancelThread.start();
 
-            // Normal completion
-            String modelPath = String.valueOf(task.outputs.get("model_path"));
-            double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
-            double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
-            int bestEpoch = ((Number) task.outputs.getOrDefault("best_epoch", 0)).intValue();
-            double bestMeanIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
+        // Wait for completion
+        try {
+            task.waitFor();
+        } catch (Exception e) {
+            if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
+                logger.info("Training cancelled via Appose");
+                // Try to recover model_path in case cancel arrived after model was saved
+                String cancelledModelPath = null;
+                if (task.outputs != null && task.outputs.containsKey("model_path")) {
+                    String mp = String.valueOf(task.outputs.get("model_path"));
+                    if (!mp.isEmpty() && !"null".equals(mp)) {
+                        cancelledModelPath = mp;
+                    }
+                }
+                return new ClassifierClient.TrainingResult(jobId, cancelledModelPath, 0, 0);
+            }
+            // Do NOT retry training on "thread death". Training is a long-running
+            // stateful operation -- the Python-side task may still be executing even
+            // though Appose reported failure. Retrying would create a second concurrent
+            // training run on the same GPU, causing deadlock or OOM.
+            throw new IOException("Training failed: " + task.error, e);
+        }
 
-            // Store checkpoint for potential "continue training"
-            String completionCheckpoint = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
+        // Check if training was paused (not cancelled, not failed)
+        String status = String.valueOf(task.outputs.getOrDefault("status", "completed"));
+        if ("paused".equals(status)) {
+            String checkpointPath = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
             int lastEpoch = ((Number) task.outputs.getOrDefault("last_epoch", 0)).intValue();
             int totalEpochs = ((Number) task.outputs.getOrDefault("total_epochs", 0)).intValue();
-            if (!completionCheckpoint.isEmpty() && !"null".equals(completionCheckpoint)) {
-                storeCheckpointInfo(jobId, completionCheckpoint, lastEpoch, inputs);
-                logger.info("Stored completion checkpoint for continue-training: epoch {}, path {}",
-                        lastEpoch, completionCheckpoint);
-            }
+            logger.info("Training paused at epoch {}/{}, checkpoint: {}", lastEpoch, totalEpochs, checkpointPath);
 
-            return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
-                    bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint);
+            // Store checkpoint info for resume/finalize
+            storeCheckpointInfo(jobId, checkpointPath, lastEpoch, inputs);
+
+            return new ClassifierClient.TrainingResult(
+                    jobId, null, 0, 0, 0, 0, true, lastEpoch, totalEpochs, checkpointPath);
         }
-        // All retries exhausted (should not reach here -- last attempt throws)
-        throw new IOException("Training failed after " + MAX_TASK_RETRIES + " attempts");
+
+        // Normal completion
+        String modelPath = String.valueOf(task.outputs.get("model_path"));
+        double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
+        double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
+        int bestEpoch = ((Number) task.outputs.getOrDefault("best_epoch", 0)).intValue();
+        double bestMeanIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
+
+        // Store checkpoint for potential "continue training"
+        String completionCheckpoint = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
+        int lastEpoch = ((Number) task.outputs.getOrDefault("last_epoch", 0)).intValue();
+        int totalEpochs = ((Number) task.outputs.getOrDefault("total_epochs", 0)).intValue();
+        if (!completionCheckpoint.isEmpty() && !"null".equals(completionCheckpoint)) {
+            storeCheckpointInfo(jobId, completionCheckpoint, lastEpoch, inputs);
+            logger.info("Stored completion checkpoint for continue-training: epoch {}, path {}",
+                    lastEpoch, completionCheckpoint);
+        }
+
+        return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
+                bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint);
     }
 
     // ==================== Evaluation ====================
