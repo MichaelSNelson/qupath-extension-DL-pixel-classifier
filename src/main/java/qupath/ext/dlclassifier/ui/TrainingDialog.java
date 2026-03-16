@@ -628,8 +628,10 @@ public class TrainingDialog {
             if (backboneCombo != null) backboneCombo.setDisable(continuing);
             boolean wholeImage = wholeImageCheck != null && wholeImageCheck.isSelected();
             if (tileSizeSpinner != null) tileSizeSpinner.setDisable(continuing || wholeImage);
-            if (downsampleCombo != null && !wholeImage) downsampleCombo.setDisable(continuing);
-            if (contextScaleCombo != null && !wholeImage) contextScaleCombo.setDisable(continuing);
+            // Downsample stays enabled in whole-image mode so the user can adjust
+            // it to fit within the architecture's max tile size.
+            if (downsampleCombo != null) downsampleCombo.setDisable(continuing);
+            if (contextScaleCombo != null) contextScaleCombo.setDisable(continuing || wholeImage);
         }
 
         /**
@@ -1115,15 +1117,20 @@ public class TrainingDialog {
                         long annotationCount = data.getHierarchy().getAnnotationObjects().stream()
                                 .filter(a -> a.getPathClass() != null)
                                 .count();
+                        int imgW = data.getServer().getWidth();
+                        int imgH = data.getServer().getHeight();
                         data.getServer().close();
                         if (annotationCount > 0) {
-                            ImageSelectionItem item = new ImageSelectionItem(entry, annotationCount);
-                            // When image selection changes, update button state and mark classes stale
+                            ImageSelectionItem item = new ImageSelectionItem(
+                                    entry, annotationCount, imgW, imgH);
+                            // When image selection changes, update button state, mark classes
+                            // stale, and recheck whole-image size warning
                             item.selected.addListener((obs, old, newVal) -> {
                                 updateLoadClassesButtonState();
                                 if (classesLoaded) {
                                     markClassesStale();
                                 }
+                                updateWholeImageInfoLabel();
                             });
                             imageSelectionList.getItems().add(item);
                         }
@@ -1499,7 +1506,10 @@ public class TrainingDialog {
                         ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
                 tileSizeSpinner.setDisable(checked || continuing);
                 overlapSpinner.setDisable(checked);
-                downsampleCombo.setDisable(checked || continuing);
+                // Downsample stays enabled in whole-image mode -- the user may
+                // need to increase it so the downsampled image fits within the
+                // architecture's max tile size.
+                downsampleCombo.setDisable(continuing);
                 contextScaleCombo.setDisable(checked || continuing);
                 if (checked) {
                     contextScaleCombo.setValue("None (single scale)");
@@ -1626,6 +1636,7 @@ public class TrainingDialog {
             tileSizeSpinner.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
             downsampleCombo.valueProperty().addListener((obs, old, newVal) -> {
                 updateSpatialInfoLabels();
+                updateWholeImageInfoLabel();
                 if (previewManager != null) {
                     double ds = parseDownsample(newVal);
                     previewManager.setDownsample(ds);
@@ -2477,14 +2488,16 @@ public class TrainingDialog {
         }
 
         /**
-         * Shows or hides the whole-image info label based on architecture and checkbox state.
-         * For architectures with a max tile size (e.g., ViT/MuViT max 512px), warns
-         * that whole-image mode will be capped and the image will be tiled instead.
+         * Shows or hides the whole-image info label based on architecture, downsample,
+         * and actual selected image dimensions.
+         * <p>
+         * Orange text = informational warning (images fit at current downsample).
+         * Red text = images WILL be tiled instead of processed whole at this downsample.
          */
         private void updateWholeImageInfoLabel() {
             if (wholeImageInfoLabel == null) return;
 
-            if (!wholeImageCheck.isSelected()) {
+            if (wholeImageCheck == null || !wholeImageCheck.isSelected()) {
                 wholeImageInfoLabel.setVisible(false);
                 wholeImageInfoLabel.setManaged(false);
                 return;
@@ -2498,24 +2511,57 @@ public class TrainingDialog {
                     ? Integer.MAX_VALUE
                     : sizes.stream().mapToInt(Integer::intValue).max().orElse(Integer.MAX_VALUE);
 
-            if (maxTile <= 1024) {
-                // This architecture has a meaningful tile size cap
-                boolean isViT = "muvit".equals(arch);
-                String reason = isViT
-                        ? "ViT self-attention is O(n^2) in patch count -- larger tiles "
-                        + "create too many patches for the model to learn effectively"
-                        : "larger tiles require more GPU memory and may reduce training quality";
-                wholeImageInfoLabel.setText(String.format(
-                        "? %s limits tiles to %dpx max (%s). "
-                        + "If your image exceeds %dpx at the selected downsample, it will be "
-                        + "tiled automatically instead of processed whole.",
-                        handler.getDisplayName(), maxTile, reason, maxTile));
-                wholeImageInfoLabel.setVisible(true);
-                wholeImageInfoLabel.setManaged(true);
-            } else {
+            if (maxTile > 1024) {
                 wholeImageInfoLabel.setVisible(false);
                 wholeImageInfoLabel.setManaged(false);
+                return;
             }
+
+            // Compute the largest selected image dimension at the current downsample
+            double downsample = parseDownsample(downsampleCombo.getValue());
+            int maxDimAtDs = 0;
+            String largestImageName = null;
+            if (imageSelectionList != null) {
+                for (ImageSelectionItem item : imageSelectionList.getItems()) {
+                    if (!item.selected.get()) continue;
+                    int dim = (int) Math.ceil(
+                            Math.max(item.imageWidth, item.imageHeight) / downsample);
+                    if (dim > maxDimAtDs) {
+                        maxDimAtDs = dim;
+                        largestImageName = item.entry.getImageName();
+                    }
+                }
+            }
+
+            boolean willBeTiled = maxDimAtDs > maxTile;
+
+            if (willBeTiled) {
+                // RED: images exceed max tile size -- whole-image mode will be ignored
+                wholeImageInfoLabel.setStyle(
+                        "-fx-text-fill: #CC0000; -fx-font-size: 11px; -fx-font-weight: bold;");
+                wholeImageInfoLabel.setText(String.format(
+                        "WARNING: \"%s\" is %dpx at %.0fx downsample, exceeding the %dpx max. "
+                        + "This image WILL BE TILED, not processed whole. "
+                        + "Increase downsample to fit within %dpx.",
+                        largestImageName, maxDimAtDs, downsample, maxTile, maxTile));
+            } else {
+                // ORANGE: informational -- images fit, but there is a cap
+                wholeImageInfoLabel.setStyle(
+                        "-fx-text-fill: #CC7A00; -fx-font-size: 11px; -fx-font-weight: normal;");
+                if (maxDimAtDs > 0) {
+                    wholeImageInfoLabel.setText(String.format(
+                            "%s limits tiles to %dpx max. Your largest selected image is "
+                            + "%dpx at %.0fx downsample -- fits within the limit.",
+                            handler.getDisplayName(), maxTile, maxDimAtDs, downsample));
+                } else {
+                    wholeImageInfoLabel.setText(String.format(
+                            "%s limits tiles to %dpx max. If your image exceeds %dpx "
+                            + "at the selected downsample, it will be tiled automatically.",
+                            handler.getDisplayName(), maxTile, maxTile));
+                }
+            }
+            wholeImageInfoLabel.setVisible(true);
+            wholeImageInfoLabel.setManaged(true);
         }
 
         private void updateBackboneOptions(String architecture) {
@@ -3237,12 +3283,17 @@ public class TrainingDialog {
         final ProjectImageEntry<BufferedImage> entry;
         final String imageName;
         final long annotationCount;
+        final int imageWidth;
+        final int imageHeight;
         final javafx.beans.property.BooleanProperty selected;
 
-        ImageSelectionItem(ProjectImageEntry<BufferedImage> entry, long annotationCount) {
+        ImageSelectionItem(ProjectImageEntry<BufferedImage> entry, long annotationCount,
+                           int imageWidth, int imageHeight) {
             this.entry = entry;
             this.imageName = entry.getImageName() + " (" + annotationCount + " annotations)";
             this.annotationCount = annotationCount;
+            this.imageWidth = imageWidth;
+            this.imageHeight = imageHeight;
             this.selected = new javafx.beans.property.SimpleBooleanProperty(true);
         }
     }
