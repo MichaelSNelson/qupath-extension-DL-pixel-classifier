@@ -264,8 +264,12 @@ Histology-specific encoder weights are loaded via **[timm (PyTorch Image Models)
 
 ## License
 
-Apache License 2.0
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
 Contributions welcome! Please open issues or pull requests on GitHub.
+
+## AI-Assisted Development
+
+This project was developed with assistance from [Claude](https://claude.ai) (Anthropic). Claude was used as a development tool for code generation, architecture design, debugging, and documentation throughout the project.
