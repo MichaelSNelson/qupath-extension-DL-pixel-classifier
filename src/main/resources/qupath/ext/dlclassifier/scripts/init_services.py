@@ -132,19 +132,46 @@ else:
 # shutdown hook never runs, so stdin never closes and this process lives
 # forever. This daemon thread polls the parent PID and exits if it dies.
 
-def _parent_alive(pid):
-    """Check if a process with the given PID is still running."""
+def _get_process_create_time_win32(pid):
+    """Get process creation time on Windows. Returns int or None."""
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.windll.kernel32
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        creation = wintypes.FILETIME()
+        exit_t = wintypes.FILETIME()
+        kern = wintypes.FILETIME()
+        user = wintypes.FILETIME()
+        ok = kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation), ctypes.byref(exit_t),
+            ctypes.byref(kern), ctypes.byref(user)
+        )
+        if ok:
+            return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        return None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _parent_alive(pid, expected_create_time=None):
+    """Check if the *original* parent process is still running.
+
+    On Windows, PIDs are recycled quickly -- a different process may
+    reuse the same PID after QuPath dies.  We compare the process
+    creation time to detect recycled PIDs.
+    """
     if sys.platform == 'win32':
-        # os.kill(pid, 0) does NOT work on Windows -- signal 0 maps to
-        # CTRL_C_EVENT which crashes the process. Use the Win32 API instead.
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return True
-        return False
+        create_time = _get_process_create_time_win32(pid)
+        if create_time is None:
+            return False  # Process does not exist
+        if expected_create_time is not None and create_time != expected_create_time:
+            return False  # PID was recycled -- different process
+        return True
     else:
         try:
             os.kill(pid, 0)  # Signal 0 = existence check (Unix only)
@@ -160,9 +187,17 @@ def _watch_parent():
     ppid = os.getppid()
     if ppid <= 1:
         return  # No meaningful parent to watch (already orphaned or init)
+
+    # Capture the parent's creation time at startup so we can detect
+    # PID recycling on Windows (where a killed process's PID may be
+    # reused by an unrelated process within seconds).
+    parent_create_time = None
+    if sys.platform == 'win32':
+        parent_create_time = _get_process_create_time_win32(ppid)
+
     logger.info("Parent process watcher started (parent PID: %d)", ppid)
     while True:
-        time.sleep(3)
+        time.sleep(1)
         try:
             # Check 1: parent PID changed (Linux reparents to init/systemd)
             current_ppid = os.getppid()
@@ -170,8 +205,8 @@ def _watch_parent():
                 logger.warning("Parent process changed (%d -> %d), exiting",
                                ppid, current_ppid)
                 os._exit(1)
-            # Check 2: parent PID no longer exists
-            if not _parent_alive(ppid):
+            # Check 2: parent PID no longer exists (or was recycled)
+            if not _parent_alive(ppid, parent_create_time):
                 logger.warning("Parent process %d no longer exists, exiting",
                                ppid)
                 os._exit(1)
