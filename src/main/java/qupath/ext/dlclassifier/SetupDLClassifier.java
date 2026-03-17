@@ -857,6 +857,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             case "computing_stats" -> "Computing normalization statistics...";
             case "starting_training" -> "Starting first epoch...";
             case "saving_model" -> "Saving encoder weights...";
+            case "training_batch" -> "Training...";
             default -> "Setting up (" + phase + ")...";
         };
     }

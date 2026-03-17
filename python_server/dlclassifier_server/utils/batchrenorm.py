@@ -71,9 +71,15 @@ class BatchRenorm2d(nn.Module):
         self.momentum = momentum
         self.affine = affine
 
-        # Clipping bounds for r and d correction factors
+        # Clipping bounds for r and d correction factors.
+        # Stored as both tensor buffers (for state_dict serialization) and
+        # plain Python floats (for fast access in forward() without forcing
+        # GPU-CPU sync on MPS/CUDA -- .item() on a device tensor is a sync
+        # barrier that kills pipelining).
         self.register_buffer("rmax", torch.tensor(rmax))
         self.register_buffer("dmax", torch.tensor(dmax))
+        self._rmax_val: float = rmax
+        self._dmax_val: float = dmax
 
         if affine:
             self.weight = nn.Parameter(torch.ones(num_features))
@@ -102,12 +108,13 @@ class BatchRenorm2d(nn.Module):
 
             running_std = (self.running_var + self.eps).sqrt()
 
-            # Compute correction factors with clipping
-            r = (batch_std.detach() / running_std).clamp(
-                1.0 / self.rmax.item(), self.rmax.item()
-            )
+            # Compute correction factors with clipping.
+            # Use cached Python floats to avoid .item() GPU-CPU sync barriers.
+            rmax = self._rmax_val
+            dmax = self._dmax_val
+            r = (batch_std.detach() / running_std).clamp(1.0 / rmax, rmax)
             d = ((batch_mean.detach() - self.running_mean) / running_std).clamp(
-                -self.dmax.item(), self.dmax.item()
+                -dmax, dmax
             )
 
             # Normalize using batch stats, then apply correction
@@ -138,7 +145,7 @@ class BatchRenorm2d(nn.Module):
     def extra_repr(self) -> str:
         return (
             f"{self.num_features}, eps={self.eps}, momentum={self.momentum}, "
-            f"affine={self.affine}, rmax={self.rmax.item()}, dmax={self.dmax.item()}"
+            f"affine={self.affine}, rmax={self._rmax_val}, dmax={self._dmax_val}"
         )
 
 
@@ -205,6 +212,8 @@ def set_batchrenorm_limits(model: nn.Module, rmax: float, dmax: float):
         if isinstance(module, BatchRenorm2d):
             module.rmax.fill_(rmax)
             module.dmax.fill_(dmax)
+            module._rmax_val = float(rmax)
+            module._dmax_val = float(dmax)
 
 
 def _set_module(model: nn.Module, name: str, new_module: nn.Module):

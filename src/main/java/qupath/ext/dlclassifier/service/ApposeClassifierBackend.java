@@ -1282,12 +1282,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         String status = obj.has("status") ? obj.get("status").getAsString() : null;
         String setupPhase = obj.has("setup_phase") ? obj.get("setup_phase").getAsString() : null;
 
-        // Training config summary (present in "training_config" setup phase)
+        // Training config summary (present in "training_config" and "training_batch" setup phases).
+        // Values may be strings or numbers, so use getAsString() for primitives (Gson
+        // converts numbers to their string representation).
         Map<String, String> configSummary = new LinkedHashMap<>();
         if (obj.has("config") && !obj.get("config").isJsonNull()) {
             JsonObject cfg = obj.getAsJsonObject("config");
             for (String key : cfg.keySet()) {
-                configSummary.put(key, cfg.get(key).getAsString());
+                var element = cfg.get(key);
+                if (element.isJsonPrimitive()) {
+                    configSummary.put(key, element.getAsString());
+                } else {
+                    configSummary.put(key, element.toString());
+                }
             }
         }
 

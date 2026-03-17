@@ -219,6 +219,7 @@ task.update(
 
 def setup_callback(phase, data=None):
     """Forward setup phase updates to Appose task events."""
+    import math
     total_epochs = training_params.get("epochs", 50)
     msg = {
         "status": "setup",
@@ -227,10 +228,20 @@ def setup_callback(phase, data=None):
         "total_epochs": total_epochs,
     }
     if data:
-        msg["config"] = data
+        # Sanitize floats to prevent NaN/Inf breaking JSON protocol
+        safe_data = {}
+        for k, v in data.items():
+            if isinstance(v, float) and not math.isfinite(v):
+                safe_data[k] = 0.0
+            else:
+                safe_data[k] = v
+        msg["config"] = safe_data
+        # For batch-level progress, use the epoch from data for progress bar
+        if "epoch" in data:
+            msg["epoch"] = data["epoch"]
     task.update(
         message=json.dumps(msg),
-        current=0,
+        current=msg["epoch"],
         maximum=total_epochs
     )
 

@@ -921,6 +921,21 @@ public class TrainingWorkflow {
                                             progress.log("  " + entry.getKey() + ": " + entry.getValue());
                                         }
                                     }
+                                } else if ("training_batch".equals(trainingProgress.setupPhase())) {
+                                    // Batch-level progress within an epoch (for long epochs on slow devices)
+                                    var cfg = trainingProgress.configSummary();
+                                    if (cfg != null) {
+                                        String batch = cfg.getOrDefault("batch", "?");
+                                        String totalBatches = cfg.getOrDefault("total_batches", "?");
+                                        String batchEpoch = cfg.getOrDefault("epoch", "?");
+                                        String totalEp = cfg.getOrDefault("total_epochs", String.valueOf(trainingProgress.totalEpochs()));
+                                        String elapsed = cfg.getOrDefault("elapsed_seconds", "");
+                                        String elapsedStr = elapsed.isEmpty() ? "" : " (" + elapsed + "s)";
+                                        progress.setStatus(String.format("Epoch %s/%s - batch %s/%s%s",
+                                                batchEpoch, totalEp, batch, totalBatches, elapsedStr));
+                                        progress.setDetail(String.format("Batch %s/%s - loss: %s",
+                                                batch, totalBatches, cfg.getOrDefault("batch_loss", "?")));
+                                    }
                                 } else {
                                     // "setup" = granular phase updates during setup
                                     progress.setStatus(formatSetupPhase(trainingProgress.setupPhase()));

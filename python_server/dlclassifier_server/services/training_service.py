@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional
 
@@ -1654,6 +1655,12 @@ class TrainingService:
             effective_batches = 0
             optimizer.zero_grad()
 
+            total_batches = len(active_train_loader)
+            # Log every ~10% of batches (at least every 50 batches) so
+            # long epochs on slow devices (MPS) show visible progress.
+            log_interval = max(1, min(50, total_batches // 10))
+            epoch_start_time = time.time()
+
             for batch_idx, (images, masks) in enumerate(active_train_loader):
                 images = images.to(self.device)
                 masks = masks.to(self.device)
@@ -1699,6 +1706,40 @@ class TrainingService:
                     if isinstance(scheduler, OneCycleLR):
                         scheduler.step()
 
+                # Periodic batch progress logging
+                if (batch_idx + 1) % log_interval == 0 or batch_idx == 0:
+                    elapsed = time.time() - epoch_start_time
+                    avg_loss = train_loss / (batch_idx + 1)
+                    batches_done = batch_idx + 1
+                    if elapsed > 0 and batches_done > 1:
+                        sec_per_batch = elapsed / batches_done
+                        remaining = sec_per_batch * (total_batches - batches_done)
+                        eta_str = f", ETA {remaining:.0f}s"
+                    else:
+                        eta_str = ""
+                    logger.info(
+                        f"  Epoch {epoch+1} batch {batches_done}/{total_batches} "
+                        f"loss={avg_loss:.4f} ({elapsed:.0f}s elapsed{eta_str})")
+                    # Report batch-level progress to Java UI via setup_callback
+                    if setup_callback:
+                        try:
+                            setup_callback("training_batch", {
+                                "epoch": epoch + 1,
+                                "total_epochs": epochs,
+                                "batch": batches_done,
+                                "total_batches": total_batches,
+                                "batch_loss": avg_loss,
+                                "elapsed_seconds": round(elapsed, 1),
+                            })
+                        except Exception:
+                            pass
+
+                # Check cancellation between batches
+                if cancel_flag and cancel_flag.is_set():
+                    logger.info("Training cancelled mid-epoch at batch %d/%d",
+                                batch_idx + 1, total_batches)
+                    break
+
             train_loss /= max(len(active_train_loader), 1)
 
             # Validation
@@ -1714,8 +1755,12 @@ class TrainingService:
             class_loss_sum = torch.zeros(num_classes, device=self.device)
             class_pixel_count = torch.zeros(num_classes, device=self.device)
 
+            val_total_batches = len(active_val_loader)
+            val_log_interval = max(1, min(50, val_total_batches // 10))
+            val_start_time = time.time()
+
             with torch.no_grad():
-                for images, masks in active_val_loader:
+                for val_batch_idx, (images, masks) in enumerate(active_val_loader):
                     images = images.to(self.device)
                     masks = masks.to(self.device)
 
@@ -1756,6 +1801,14 @@ class TrainingService:
                         if c_count > 0:
                             class_loss_sum[c] += per_pixel_loss[c_mask].sum()
                             class_pixel_count[c] += c_count
+
+                    # Periodic validation progress logging
+                    if (val_batch_idx + 1) % val_log_interval == 0:
+                        val_elapsed = time.time() - val_start_time
+                        logger.info(
+                            f"  Epoch {epoch+1} val batch "
+                            f"{val_batch_idx+1}/{val_total_batches} "
+                            f"({val_elapsed:.0f}s elapsed)")
 
             val_loss /= max(len(active_val_loader), 1)
             accuracy = correct / max(total, 1)
