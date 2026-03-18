@@ -179,7 +179,44 @@ public class ApposeService {
                         .logDebug()
                         .build();
 
-                logger.info("Appose environment built successfully");
+                logger.info("Appose environment built successfully at: {}", environment.base());
+
+                // Diagnostic: verify the environment is actually populated
+                Path envDir = Path.of(environment.base());
+                Path pixiEnvDir = envDir.resolve(".pixi/envs/default");
+                boolean hasPixiEnv = Files.isDirectory(pixiEnvDir);
+                logger.info("Environment diagnostics:");
+                logger.info("  base: {}", envDir);
+                logger.info("  .pixi/envs/default exists: {}", hasPixiEnv);
+                logger.info("  binPaths: {}", environment.binPaths());
+                if (hasPixiEnv) {
+                    // List top-level contents of the env dir to verify it's populated
+                    try (var entries = Files.list(pixiEnvDir)) {
+                        String contents = entries.map(p -> p.getFileName().toString())
+                                .collect(Collectors.joining(", "));
+                        logger.info("  .pixi/envs/default contents: {}", contents);
+                    }
+                } else {
+                    // Check what IS in the environment directory
+                    if (Files.isDirectory(envDir)) {
+                        try (var entries = Files.list(envDir)) {
+                            String contents = entries.map(p -> p.getFileName().toString())
+                                    .collect(Collectors.joining(", "));
+                            logger.info("  envDir contents: {}", contents);
+                        }
+                    }
+                }
+
+                if (!hasPixiEnv) {
+                    logger.error("pixi environment was not actually installed -- "
+                            + ".pixi/envs/default does not exist after build. "
+                            + "Appose may have skipped pixi install.");
+                    throw new IOException("Pixi environment build did not install dependencies. "
+                            + "The environment directory was created at " + envDir
+                            + " but .pixi/envs/default is missing. "
+                            + "This usually means pixi failed to run. "
+                            + "Check the QuPath log for pixi output above this message.");
+                }
 
                 // Install dlclassifier-server via pip (outside pixi resolver).
                 // Pixi's PyPI resolver panics on git+subdirectory dependencies,
