@@ -727,38 +727,31 @@ public class ApposeService {
     private void installDLClassifierServer() throws IOException {
         Path envBase = Path.of(environment.base());
 
-        // Find pip in the pixi environment's bin directory
-        Path pip;
-        if (GeneralTools.isWindows()) {
-            pip = envBase.resolve(".pixi/envs/default/Scripts/pip.exe");
+        // Find pip executable in the pixi environment
+        Path pip = findPipExecutable(envBase);
+
+        // Build the pip install command
+        java.util.List<String> command;
+        if (pip != null) {
+            logger.info("Installing dlclassifier-server via pip: {}", pip);
+            command = java.util.List.of(
+                    pip.toString(), "install", "--upgrade", "--no-deps",
+                    DL_SERVER_PIP_URL);
         } else {
-            pip = envBase.resolve(".pixi/envs/default/bin/pip");
-        }
-
-        if (!Files.isRegularFile(pip)) {
-            // Fallback: try to find pip via environment bin paths
-            for (String binPath : environment.binPaths()) {
-                Path candidate = GeneralTools.isWindows()
-                        ? Path.of(binPath, "pip.exe")
-                        : Path.of(binPath, "pip");
-                if (Files.isRegularFile(candidate)) {
-                    pip = candidate;
-                    break;
-                }
+            // Fallback: use python -m pip (works even when pip has no standalone script)
+            Path python = findPythonExecutable(envBase);
+            if (python == null) {
+                throw new IOException("Cannot find pip or python in the pixi environment at "
+                        + envBase + " -- environment may be corrupt. "
+                        + "Try Utilities > Rebuild DL Environment.");
             }
+            logger.info("Installing dlclassifier-server via python -m pip: {}", python);
+            command = java.util.List.of(
+                    python.toString(), "-m", "pip", "install", "--upgrade", "--no-deps",
+                    DL_SERVER_PIP_URL);
         }
 
-        if (!Files.isRegularFile(pip)) {
-            throw new IOException("Cannot find pip in the pixi environment at "
-                    + envBase + " -- environment may be corrupt. "
-                    + "Try Utilities > Rebuild DL Environment.");
-        }
-
-        logger.info("Installing dlclassifier-server via pip: {}", pip);
-        ProcessBuilder pb = new ProcessBuilder(
-                pip.toString(), "install", "--upgrade", "--no-deps",
-                DL_SERVER_PIP_URL
-        );
+        ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(envBase.toFile());
         pb.redirectErrorStream(true);
         Process process = pb.start();
@@ -787,6 +780,59 @@ public class ApposeService {
                     + exitCode + "):\n" + output);
         }
         logger.info("dlclassifier-server installed successfully");
+    }
+
+    /**
+     * Finds the pip executable in the pixi environment.
+     * Checks the standard pixi location first, then falls back to
+     * environment bin paths.
+     *
+     * @return path to pip, or null if not found
+     */
+    private Path findPipExecutable(Path envBase) {
+        // Standard pixi location
+        Path pip;
+        if (GeneralTools.isWindows()) {
+            pip = envBase.resolve(".pixi/envs/default/Scripts/pip.exe");
+        } else {
+            pip = envBase.resolve(".pixi/envs/default/bin/pip");
+        }
+        if (Files.isRegularFile(pip)) return pip;
+
+        // Fallback: search environment bin paths
+        for (String binPath : environment.binPaths()) {
+            Path candidate = GeneralTools.isWindows()
+                    ? Path.of(binPath, "pip.exe")
+                    : Path.of(binPath, "pip");
+            if (Files.isRegularFile(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * Finds the Python executable in the pixi environment.
+     * Uses the Appose Environment.python() method first, then falls back
+     * to standard pixi paths.
+     *
+     * @return path to python, or null if not found
+     */
+    private Path findPythonExecutable(Path envBase) {
+        // Standard pixi location
+        Path python;
+        if (GeneralTools.isWindows()) {
+            python = envBase.resolve(".pixi/envs/default/python.exe");
+        } else {
+            python = envBase.resolve(".pixi/envs/default/bin/python");
+        }
+        if (Files.isRegularFile(python)) return python;
+
+        // Search environment bin paths
+        for (String binPath : environment.binPaths()) {
+            String exeName = GeneralTools.isWindows() ? "python.exe" : "python";
+            Path candidate = Path.of(binPath, exeName);
+            if (Files.isRegularFile(candidate)) return candidate;
+        }
+        return null;
     }
 
     /**
