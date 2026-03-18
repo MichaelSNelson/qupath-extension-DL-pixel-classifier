@@ -273,8 +273,14 @@ public class TrainingDialog {
             okButton.setDisable(true);
             okButton.setDefaultButton(true);
             okButton.setOnAction(e -> {
+                var result = buildResult();
+                if (result == null) {
+                    // buildResult() returned null (e.g. user chose "go back"
+                    // from VRAM warning or channel mismatch) -- keep dialog open
+                    return;
+                }
                 resultDelivered = true;
-                onResult.accept(buildResult());
+                onResult.accept(result);
                 dialog.close();
             });
 
