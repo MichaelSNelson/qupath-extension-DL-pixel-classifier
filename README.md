@@ -85,6 +85,24 @@ See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifie
 
 > **Note:** A separate Python installation is **not** required. The extension manages its own embedded Python environment via [Appose](https://github.com/apposed/appose).
 
+### CUDA / GPU Driver Requirements
+
+The extension bundles **PyTorch with CUDA 12** support. You do **not** need to install CUDA separately -- PyTorch includes its own CUDA runtime. However, you **do** need NVIDIA drivers new enough to support CUDA 12:
+
+| Component | Version |
+|-----------|---------|
+| Python | 3.11 |
+| PyTorch | >= 2.1.0 (currently resolves to ~2.10) |
+| CUDA (bundled with PyTorch) | 12.x |
+| **Minimum NVIDIA driver (Linux)** | **>= 525.60.13** |
+| **Minimum NVIDIA driver (Windows)** | **>= 528.33** |
+
+To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your driver is too old, update it from the [NVIDIA Driver Downloads](https://www.nvidia.com/Download/index.aspx) page.
+
+**Apple Silicon (M-series):** Uses MPS backend automatically. No driver installation needed, but training is significantly slower than CUDA. See the hardware warning above.
+
+**Intel Mac:** Not supported. Use Windows or Linux with an NVIDIA GPU for best results.
+
 ## Documentation
 
 | Guide | Description |

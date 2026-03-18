@@ -1,6 +1,9 @@
 [workspace]
 channels = ["conda-forge", "pytorch"]
-platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
+# Note: osx-64 (Intel Mac) removed -- pixi panics trying to cross-resolve
+# git-based PyPI dependencies for osx-64 when running on Windows/ARM Mac.
+# Intel Macs are not a supported target for this extension.
+platforms = ["linux-64", "osx-arm64", "win-64"]
 
 # CUDA hint: tells pixi that CUDA 12 is available on the host.
 # macOS ignores this (no NVIDIA support). On Linux/Windows it steers
@@ -44,5 +47,5 @@ onnx = ">=1.15.0"
 onnxruntime = ">=1.16.0"
 
 # DL classifier server (from GitHub)
-# Bump this comment to force pixi re-fetch: v0.2.9+mae-prefix-fix
+# Bump this comment to force pixi re-fetch: v0.3.7+drop-osx64
 dlclassifier-server = { git = "https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git", subdirectory = "python_server" }
