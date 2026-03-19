@@ -1342,7 +1342,7 @@ class TrainingService:
             if scheduler is not None:
                 if isinstance(scheduler, OneCycleLR):
                     remaining_epochs = epochs - start_epoch
-                    steps_per_epoch = len(train_loader) // accumulation_steps
+                    steps_per_epoch = -(-len(train_loader) // accumulation_steps)
                     remaining_steps = remaining_epochs * max(steps_per_epoch, 1)
                     if remaining_steps > 0:
                         resume_config = training_params.get("scheduler_config", {})
@@ -1624,7 +1624,7 @@ class TrainingService:
                 if isinstance(scheduler, OneCycleLR):
                     remaining_epochs = epochs - phase1_end_epoch
                     remaining_steps = remaining_epochs * (
-                        len(train_loader) // accumulation_steps)
+                        -(-len(train_loader) // accumulation_steps))
                     remaining_steps = max(remaining_steps, 1)
                     max_lr = scheduler_config.get(
                         "max_lr", optimizer.param_groups[0]["lr"] * 10)
@@ -2210,7 +2210,7 @@ class TrainingService:
                     else optimizer.param_groups[0]["lr"] * 10
 
             accumulation_steps = scheduler_config.get("accumulation_steps", 1)
-            total_steps = epochs * (steps_per_epoch // accumulation_steps)
+            total_steps = epochs * -(-steps_per_epoch // accumulation_steps)
             # Ensure at least 1 step
             total_steps = max(total_steps, 1)
 
