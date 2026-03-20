@@ -215,6 +215,32 @@ public class InferenceConfig {
                 tileSize, overlap, overlapPercent, outputType, objectType, blendMode, useTTA);
     }
 
+    /**
+     * Computes the effective per-side padding for tile overlap.
+     * <p>
+     * Both the overlay (expanded reads + center crop) and Apply Classifier
+     * (TileProcessor batch inference) use this to ensure consistent tile
+     * boundary handling. The result is a per-side padding value; total
+     * overlap between adjacent tiles is {@code 2 * effectivePadding}.
+     * <p>
+     * Guardrails:
+     * <ul>
+     *   <li>Minimum 25% of tileSize (tileSize/4) per side</li>
+     *   <li>Floor of 64px</li>
+     *   <li>Ceiling of 3/8 tileSize (ensures stride >= 25% of tileSize)</li>
+     * </ul>
+     *
+     * @param tileSize      tile size in pixels
+     * @param configOverlap configured overlap in pixels (from user preferences)
+     * @return effective padding per side
+     */
+    public static int computeEffectivePadding(int tileSize, int configOverlap) {
+        int minContextPadding = tileSize / 4;
+        int padding = Math.max(configOverlap, minContextPadding);
+        int maxPadding = Math.max(64, tileSize * 3 / 8);
+        return Math.max(64, Math.min(padding, maxPadding));
+    }
+
     public static Builder builder() {
         return new Builder();
     }

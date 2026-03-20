@@ -107,7 +107,8 @@ public class DLPixelClassifier implements PixelClassifier {
         this.inferenceConfig = inferenceConfig;
         this.downsample = metadata.getDownsample();
         this.contextScale = metadata.getContextScale();
-        this.inputPadding = computeOverlayPadding(inferenceConfig.getTileSize());
+        this.inputPadding = InferenceConfig.computeEffectivePadding(
+                inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
 
         // Always use GAUSSIAN blending for overlays -- the cosine-bell S-curve
         // smoothly averages overlapping predictions from adjacent tiles,
@@ -713,7 +714,8 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         int tileSize = inferenceConfig.getTileSize();
-        int padding = computeOverlayPadding(tileSize);
+        int padding = InferenceConfig.computeEffectivePadding(
+                tileSize, inferenceConfig.getOverlap());
 
         return new PixelClassifierMetadata.Builder()
                 .inputResolution(cal)
@@ -724,29 +726,6 @@ public class DLPixelClassifier implements PixelClassifier {
                 .classificationLabels(labels)
                 .outputChannels(channels)
                 .build();
-    }
-
-    /**
-     * Computes overlay tile padding from InferenceConfig overlap.
-     * <p>
-     * Uses the larger of the configured overlap and tileSize/4 to ensure
-     * sufficient CNN context for artifact-free tile boundaries.
-     * The tileSize/4 floor guarantees at least 25% padding even when the
-     * user sets a low overlap percentage.
-     *
-     * @param tileSize tile size in pixels
-     * @return padding in pixels (at least 64, at most tileSize/2)
-     */
-    private int computeOverlayPadding(int tileSize) {
-        // inputPadding is PER-SIDE: QuPath's visible stride = tileSize - 2*inputPadding.
-        // Padding must be strictly less than tileSize/2 or the stride collapses to zero
-        // and QuPath sends the entire viewport as a single (impossibly large) tile request.
-        int configOverlap = inferenceConfig.getOverlap();
-        int minContextPadding = tileSize / 4;  // 25% minimum padding per side
-        int padding = Math.max(configOverlap, minContextPadding);
-        // Clamp: at least 64, at most 3/8 of tileSize (ensures >= 25% visible stride)
-        int maxPadding = Math.max(64, tileSize * 3 / 8);
-        return Math.max(64, Math.min(padding, maxPadding));
     }
 
     /**

@@ -9,6 +9,7 @@ import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
@@ -1828,20 +1829,15 @@ public class TrainingWorkflow {
 
     /**
      * Computes context padding for training tiles to match inference geometry.
-     * Mirrors {@code DLPixelClassifier.computeOverlayPadding()} so that training
-     * tiles include the same amount of surrounding real data as inference tiles.
+     * Delegates to the shared {@link InferenceConfig#computeEffectivePadding}
+     * so training, overlay, and Apply Classifier all use the same computation.
      *
      * @param tileSize tile size in pixels
      * @param config   training configuration (provides overlap setting)
      * @return padding in pixels (at least 64, at most tileSize*3/8)
      */
     private static int computeTrainingContextPadding(int tileSize, TrainingConfig config) {
-        int configOverlap = config.getOverlap();
-        int minPadding = tileSize / 4;
-        int padding = Math.max(configOverlap, minPadding);
-        // Max 3/8 of tileSize ensures visible stride >= 25% of tileSize
-        int maxPadding = Math.max(64, tileSize * 3 / 8);
-        return Math.max(64, Math.min(padding, maxPadding));
+        return InferenceConfig.computeEffectivePadding(tileSize, config.getOverlap());
     }
 
     /**

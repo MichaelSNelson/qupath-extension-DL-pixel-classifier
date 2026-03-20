@@ -246,13 +246,11 @@ public class InferenceWorkflow {
                         server, classifier, channels,
                         classifier.getContextScale(), classifier.getDownsample());
 
-                // Enforce minimum overlap for spatial output (see runInferenceWithProgress)
-                int effectiveOverlap = config.getOverlap();
-                if (config.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
-                    effectiveOverlap = Math.max(effectiveOverlap, config.getTileSize() / 2);
-                }
+                // Use same effective overlap as the overlay path
+                int effectivePadding = InferenceConfig.computeEffectivePadding(
+                        config.getTileSize(), config.getOverlap());
                 TileProcessor tileProcessor = new TileProcessor(
-                        config.getTileSize(), effectiveOverlap,
+                        config.getTileSize(), 2 * effectivePadding,
                         config.getBlendMode(), config.getMaxTilesInMemory());
 
                 ClassifierBackend backend = BackendFactory.getBackend();
@@ -456,17 +454,12 @@ public class InferenceWorkflow {
                         server, metadata, channelConfig,
                         metadata.getContextScale(), metadata.getDownsample());
 
-                // Create tile processor.
-                // For spatial output (OBJECTS), enforce minimum 50% overlap so
-                // each pixel is covered by the reliable center region of at least
-                // one tile -- matching the overlay's expanded-read + center-crop
-                // approach. Without this, the model's less reliable edge predictions
-                // contaminate the merged result, causing patchy missing detections.
-                int effectiveOverlap = inferenceConfig.getOverlap();
-                if (inferenceConfig.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
-                    int minOverlap = inferenceConfig.getTileSize() / 2;
-                    effectiveOverlap = Math.max(effectiveOverlap, minOverlap);
-                }
+                // Create tile processor with effective overlap matching the overlay.
+                // Both paths use InferenceConfig.computeEffectivePadding() so the
+                // same user-configured overlap produces the same tile boundaries.
+                int effectivePadding = InferenceConfig.computeEffectivePadding(
+                        inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
+                int effectiveOverlap = 2 * effectivePadding;
                 TileProcessor tileProcessor = new TileProcessor(
                         inferenceConfig.getTileSize(), effectiveOverlap,
                         inferenceConfig.getBlendMode(),
