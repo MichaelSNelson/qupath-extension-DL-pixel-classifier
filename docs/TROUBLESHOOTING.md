@@ -158,6 +158,79 @@ If training starts but stops making progress (no new epoch updates):
 
 > **Note:** In versions before 0.3.5, a transient "thread death" error could cause the extension to retry training, creating two concurrent training processes on the same GPU that deadlock. This has been fixed -- training no longer retries on thread death errors.
 
+### What can I do if training is interrupted?
+
+If training is interrupted -- whether by a crash, power outage, or accidental QuPath close -- your progress is automatically saved. The extension writes a full checkpoint to disk every time a new best epoch is found during training.
+
+#### Automatic crash-recovery checkpoint
+
+During training, the file `best_in_progress_{model_type}.pt` is saved to the checkpoints directory whenever validation metrics improve:
+
+| OS | Checkpoint path |
+|----|----------------|
+| Windows | `C:\Users\<you>\.dlclassifier\checkpoints\` |
+| macOS / Linux | `~/.dlclassifier/checkpoints/` |
+
+This file contains everything needed to either **recover the trained model** or **resume training**:
+
+- Best model weights (from the epoch with the highest validation score)
+- Optimizer state (learning rate, momentum, adaptive parameters)
+- Scheduler state (learning rate schedule position)
+- Early stopping state (patience counter, best score)
+- Full training history (per-epoch metrics)
+- Model configuration (architecture, backbone, classes, input config)
+
+The checkpoint is saved in the same format as the pause/resume checkpoint, so all recovery methods work identically.
+
+#### Option 1: Recover the best model (no further training needed)
+
+If the model had already converged before the interruption, you can finalize it into a usable classifier:
+
+1. Open QuPath with the DL Pixel Classifier extension
+2. Open the **Python Console** (Utilities menu)
+3. Use the `finalize_training.py` script with the checkpoint path:
+
+The finalize script loads the checkpoint, extracts the best model weights, and saves a complete classifier (model.pt + metadata.json + ONNX export) that you can use for inference.
+
+> **Tip:** Check the QuPath log from your interrupted session -- it logs the checkpoint path each time a new best is saved:
+> `Best checkpoint saved to disk (epoch 42): C:\Users\you\.dlclassifier\checkpoints\best_in_progress_unet.pt`
+
+#### Option 2: Resume training from the checkpoint
+
+If you want to continue training from where it left off:
+
+1. Open the training dialog (**Extensions > DL Pixel Classifier > Train DL Pixel Classifier**)
+2. Select **Continue from checkpoint** in the Weight Initialization section
+3. Browse to the `best_in_progress_{model_type}.pt` file
+4. Training resumes from the last best epoch with all optimizer state intact
+
+> **Note:** Training resumes from the epoch where the best model was saved, not from the epoch where the crash occurred. For example, if the best model was at epoch 30 and the crash happened at epoch 45, training resumes from epoch 30. Epochs 31-45 are re-trained, but the model's optimizer and scheduler state are preserved, so results should be similar.
+
+#### Option 3: Use the Pause feature to save progress intentionally
+
+If you anticipate needing to stop training (e.g., end of day, shared workstation):
+
+1. Click **Pause** in the training progress dialog
+2. Training saves a full checkpoint and stops
+3. You can then:
+   - **Resume** to continue training immediately
+   - **Complete Training** to finalize the best model without further training
+   - **Close** to stop and come back later (checkpoint persists on disk and in memory)
+
+The pause checkpoint is stored both in memory (for immediate resume within the same QuPath session) and on disk (for recovery after restart).
+
+#### What is NOT recoverable
+
+| Scenario | Model recovery | Resume training |
+|----------|---------------|-----------------|
+| Crash after at least one best epoch saved | Yes | Yes (from last best epoch) |
+| Crash before any validation epoch completes | No | No |
+| Power outage during checkpoint write | Possibly corrupted | Possibly corrupted |
+| Pause, then cancel, same QuPath session | Yes | Yes |
+| Pause, then cancel, after QuPath restart | Yes (from .pt file) | Yes (load .pt manually) |
+
+> **Tip:** The best-in-progress checkpoint is automatically cleaned up when training completes normally or is cancelled with a save. If you see a `best_in_progress_*.pt` file in the checkpoints directory, it means a previous training was interrupted and can be recovered.
+
 ### Training produces poor results
 
 See [BEST_PRACTICES.md](BEST_PRACTICES.md) for detailed guidance on improving results.

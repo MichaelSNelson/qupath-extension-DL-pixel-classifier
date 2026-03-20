@@ -257,6 +257,12 @@ Click **Cancel** at any time. A dialog offers three choices:
 
 After choosing, the dialog becomes closeable immediately -- you do not need to wait for background cleanup. The saved model is fully usable for inference or for continuing training later.
 
+### If training is interrupted unexpectedly
+
+If training is interrupted by a crash, power outage, or accidental close, your progress is automatically protected. The extension saves a full checkpoint to disk every time validation metrics improve, so you can recover the best model or resume training from the last best epoch.
+
+See [Troubleshooting: What can I do if training is interrupted?](TROUBLESHOOTING.md#what-can-i-do-if-training-is-interrupted) for detailed recovery instructions.
+
 ### What to watch for
 
 - **Training loss should decrease** over epochs
