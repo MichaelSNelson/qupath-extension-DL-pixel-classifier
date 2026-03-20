@@ -892,25 +892,41 @@ public class TrainingDialog {
                     ClassifierClient.TrainingResult result =
                             backend.finalizeTraining(checkpointPath, finalOutputDir);
 
-                    // Load the recovered model's metadata
-                    ModelManager modelManager = new ModelManager();
-                    List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
+                    // Load metadata from the recovered model's directory
+                    java.nio.file.Path metadataPath = java.nio.file.Path.of(
+                            result.modelPath(), "metadata.json");
                     ClassifierMetadata recovered = null;
-                    for (ClassifierMetadata cm : classifiers) {
-                        // Match by model path
-                        Optional<java.nio.file.Path> mp = modelManager.getModelPath(cm.getId());
-                        if (mp.isPresent() && mp.get().getParent().toString()
-                                .equals(result.modelPath())) {
-                            recovered = cm;
-                            break;
+                    if (java.nio.file.Files.exists(metadataPath)) {
+                        try (java.io.FileReader reader = new java.io.FileReader(
+                                metadataPath.toFile())) {
+                            recovered = new Gson().fromJson(reader, ClassifierMetadata.class);
+                        } catch (Exception parseEx) {
+                            logger.warn("Could not parse recovered metadata: {}",
+                                    parseEx.getMessage());
                         }
                     }
 
+                    // Store the .pt path directly (getModelPath can't find it
+                    // because the directory name doesn't match the model ID)
+                    java.nio.file.Path recoveredPt = java.nio.file.Path.of(
+                            result.modelPath(), "model.pt");
+                    String recoveredPtPath = java.nio.file.Files.exists(recoveredPt)
+                            ? recoveredPt.toString() : null;
+
                     ClassifierMetadata finalRecovered = recovered;
+                    String finalPtPath = recoveredPtPath;
                     Platform.runLater(() -> {
                         if (finalRecovered != null) {
                             loadSettingsFromModel(finalRecovered);
+                            // Override the .pt path since getModelPath can't find it
+                            if (finalPtPath != null) {
+                                pretrainedModelPtPath = finalPtPath;
+                                selectWeightInitStrategy(
+                                        ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+                            }
                             loadedModelLabel.setText("Recovered from: " + selected.getName());
+                            loadedModelLabel.setStyle(
+                                    "-fx-text-fill: #666; -fx-font-style: italic;");
                             logger.info("Loaded settings from recovered checkpoint: {}",
                                     selected.getName());
                         } else {
