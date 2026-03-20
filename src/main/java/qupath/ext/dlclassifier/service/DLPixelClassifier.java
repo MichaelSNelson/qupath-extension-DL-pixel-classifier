@@ -241,9 +241,7 @@ public class DLPixelClassifier implements PixelClassifier {
             float[][][] blended = blendCache.blendWithNeighbors(cachedProbMap,
                     request.getX(), request.getY(), cachedW, cachedH);
             consecutiveErrors.set(0);
-            // Crop expanded prob map to the stride region QuPath expects
-            float[][][] cropped = cropToStride(blended, request);
-            return createClassIndexImage(cropped, cropped[0].length, cropped.length);
+            return createClassIndexImage(blended, cachedW, cachedH);
         }
 
         ImageServer<BufferedImage> server = imageData.getServer();
@@ -378,22 +376,27 @@ public class DLPixelClassifier implements PixelClassifier {
                 logger.debug("Failed to delete tile output: {}", outputPath);
             }
 
-            // Cache the probability map and blend with available neighbors
-            blendCache.cache(request.getX(), request.getY(), probMap);
+            // Crop expanded prob map to stride dimensions before caching.
+            // The expanded read gave the model full context, but the cache and
+            // blending must use stride-sized maps (the blending code assumes
+            // symmetric inputPadding which doesn't hold for edge tiles).
+            float[][][] strideProbMap = cropToStride(probMap, request);
+            int strideW = strideProbMap[0].length;
+            int strideH = strideProbMap.length;
+
+            // Cache stride-sized map and blend with available neighbors
+            blendCache.cache(request.getX(), request.getY(), strideProbMap);
             logger.debug("BLEND cached at ({}, {}), dims={}x{}, step=({},{}), cache={}",
-                    request.getX(), request.getY(), tileWidth, tileHeight,
+                    request.getX(), request.getY(), strideW, strideH,
                     blendCache.getEmpiricalStepX(), blendCache.getEmpiricalStepY(),
                     blendCache.size());
 
-            float[][][] blended = blendCache.blendWithNeighbors(probMap,
-                    request.getX(), request.getY(), tileWidth, tileHeight);
+            float[][][] blended = blendCache.blendWithNeighbors(strideProbMap,
+                    request.getX(), request.getY(), strideW, strideH);
 
             // Schedule deferred refresh so earlier tiles get re-rendered with
             // this tile now available as a neighbor for blending
             blendCache.scheduleRefresh();
-
-            // Crop expanded prob map to the stride region QuPath expects
-            float[][][] cropped = cropToStride(blended, request);
 
             // Success -- reset error counter and log progress
             consecutiveErrors.set(0);
@@ -401,9 +404,9 @@ public class DLPixelClassifier implements PixelClassifier {
             if (completed <= 10 || completed % 50 == 0) {
                 logger.info("Overlay tile {} completed at ({}, {}), expanded={}x{}, stride={}x{}",
                         completed, request.getX(), request.getY(),
-                        tileWidth, tileHeight, cropped[0].length, cropped.length);
+                        tileWidth, tileHeight, strideW, strideH);
             }
-            return createClassIndexImage(cropped, cropped[0].length, cropped.length);
+            return createClassIndexImage(blended, strideW, strideH);
 
         } catch (IOException e) {
             // During shutdown, interrupted threads and missing temp files are expected.

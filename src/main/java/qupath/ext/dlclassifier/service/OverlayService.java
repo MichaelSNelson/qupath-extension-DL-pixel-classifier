@@ -119,7 +119,7 @@ public class OverlayService {
         } else {
             this.currentClassifier = null;
         }
-        livePrediction.set(true);
+        Platform.runLater(() -> livePrediction.set(true));
         logger.info("Applied pixel classifier overlay");
     }
 
@@ -286,7 +286,7 @@ public class OverlayService {
             }
 
             currentOverlay = null;
-            livePrediction.set(false);
+            Platform.runLater(() -> livePrediction.set(false));
             currentMetadata = null;
             currentChannelConfig = null;
             currentImageData = null;
