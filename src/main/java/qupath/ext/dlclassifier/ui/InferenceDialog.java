@@ -291,27 +291,32 @@ public class InferenceDialog {
 
             int row = 0;
 
-            // Output type - restore from preferences
-            outputTypeCombo = new ComboBox<>(FXCollections.observableArrayList(InferenceConfig.OutputType.values()));
+            // Output type - only OBJECTS and MEASUREMENTS are offered here.
+            // Overlays are handled via the dedicated Toggle Overlay menu item.
+            outputTypeCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    InferenceConfig.OutputType.OBJECTS,
+                    InferenceConfig.OutputType.MEASUREMENTS));
             try {
-                outputTypeCombo.setValue(InferenceConfig.OutputType.valueOf(DLClassifierPreferences.getLastOutputType()));
+                InferenceConfig.OutputType saved = InferenceConfig.OutputType.valueOf(
+                        DLClassifierPreferences.getLastOutputType());
+                // Only restore if it's one of the available options
+                if (saved == InferenceConfig.OutputType.OBJECTS
+                        || saved == InferenceConfig.OutputType.MEASUREMENTS) {
+                    outputTypeCombo.setValue(saved);
+                } else {
+                    outputTypeCombo.setValue(InferenceConfig.OutputType.OBJECTS);
+                }
             } catch (IllegalArgumentException e) {
-                outputTypeCombo.setValue(InferenceConfig.OutputType.RENDERED_OVERLAY);
+                outputTypeCombo.setValue(InferenceConfig.OutputType.OBJECTS);
             }
             TooltipHelper.install(outputTypeCombo,
                     "How classification results are represented:\n\n" +
-                    "RENDERED_OVERLAY (Recommended): Blended classification overlay.\n" +
-                    "  Runs batch inference with tile blending, producing a seamless\n" +
-                    "  overlay that accurately represents what OBJECTS output would\n" +
-                    "  look like. Best for validating classifier quality.\n\n" +
-                    "OVERLAY: Fast on-demand classification overlay.\n" +
-                    "  Each tile is classified independently as you pan/zoom.\n" +
-                    "  Fast for browsing large images, but may show visible tile\n" +
-                    "  boundary artifacts. Does NOT accurately represent OBJECTS output.\n\n" +
                     "OBJECTS: Create detection/annotation objects for classified regions.\n" +
                     "  Best for spatial analysis and counting discrete structures.\n\n" +
                     "MEASUREMENTS: Add per-class probability measurements to annotations.\n" +
-                    "  Best for quantification workflows (e.g. % area per class).");
+                    "  Best for quantification workflows (e.g. % area per class).\n\n" +
+                    "For quick visualization, use the Toggle Overlay in the main menu\n" +
+                    "(Extensions > DL Pixel Classifier > Toggle Prediction Overlay).");
 
             grid.add(new Label("Output Type:"), 0, row);
             grid.add(outputTypeCombo, 1, row);
@@ -838,19 +843,8 @@ public class InferenceDialog {
             holeFillingSpinner.setDisable(!enableObjectOptions);
             smoothingSpinner.setDisable(!enableObjectOptions);
 
-            // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY (Python-side blending).
-            // OVERLAY always uses GAUSSIAN for artifact-free tile boundaries.
-            boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
-                    || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
-            blendModeCombo.setDisable(!enableBlend);
-            if (outputType == InferenceConfig.OutputType.OVERLAY) {
-                blendModeCombo.setValue(InferenceConfig.BlendMode.GAUSSIAN);
-            }
-
-            // Auto-select "Apply to whole image" for on-demand OVERLAY only
-            if (outputType == InferenceConfig.OutputType.OVERLAY) {
-                applyToWholeImageRadio.setSelected(true);
-            }
+            // Blend mode is relevant for OBJECTS output (Python-side blending)
+            blendModeCombo.setDisable(!enableObjectOptions);
         }
 
         private void updateValidation() {

@@ -131,7 +131,7 @@ public final class DLClassifierPreferences {
     // ==================== Inference Dialog Preferences ====================
 
     private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastOutputType", "RENDERED_OVERLAY");
+            "dlclassifier.lastOutputType", "OBJECTS");
 
     private static final StringProperty lastBlendMode = PathPrefs.createPersistentPreference(
             "dlclassifier.lastBlendMode", "GAUSSIAN");
