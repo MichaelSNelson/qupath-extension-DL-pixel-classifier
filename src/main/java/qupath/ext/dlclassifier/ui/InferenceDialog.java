@@ -324,7 +324,12 @@ public class InferenceDialog {
 
             // Object type (DETECTION vs ANNOTATION) - only for OBJECTS output
             objectTypeCombo = new ComboBox<>(FXCollections.observableArrayList(OutputObjectType.values()));
-            objectTypeCombo.setValue(OutputObjectType.DETECTION);
+            try {
+                objectTypeCombo.setValue(OutputObjectType.valueOf(
+                        DLClassifierPreferences.getDefaultObjectType()));
+            } catch (IllegalArgumentException e) {
+                objectTypeCombo.setValue(OutputObjectType.DETECTION);
+            }
             TooltipHelper.install(objectTypeCombo,
                     "QuPath object type for classified regions:\n\n" +
                     "DETECTION: Lightweight, non-editable objects for quantification.\n" +
@@ -337,7 +342,8 @@ public class InferenceDialog {
             row++;
 
             // Min object size (for OBJECTS output)
-            minObjectSizeSpinner = new Spinner<>(0.0, 10000.0, 10.0, 1.0);
+            minObjectSizeSpinner = new Spinner<>(0.0, 10000.0,
+                    DLClassifierPreferences.getMinObjectSizeMicrons(), 1.0);
             minObjectSizeSpinner.setEditable(true);
             minObjectSizeSpinner.setPrefWidth(100);
             TooltipHelper.install(minObjectSizeSpinner,
@@ -351,7 +357,8 @@ public class InferenceDialog {
             row++;
 
             // Hole filling
-            holeFillingSpinner = new Spinner<>(0.0, 1000.0, 5.0, 1.0);
+            holeFillingSpinner = new Spinner<>(0.0, 1000.0,
+                    DLClassifierPreferences.getHoleFillingMicrons(), 1.0);
             holeFillingSpinner.setEditable(true);
             holeFillingSpinner.setPrefWidth(100);
             TooltipHelper.install(holeFillingSpinner,
@@ -870,6 +877,12 @@ public class InferenceDialog {
             DLClassifierPreferences.setSmoothing(smoothingSpinner.getValue());
             DLClassifierPreferences.setApplicationScope(scope.name());
             DLClassifierPreferences.setCreateBackup(createBackupCheck.isSelected());
+            DLClassifierPreferences.setTileSize(tileSizeSpinner.getValue());
+            DLClassifierPreferences.setTileOverlapPercent(overlapPercentSpinner.getValue());
+            DLClassifierPreferences.setUseGPU(useGPUCheck.isSelected());
+            DLClassifierPreferences.setDefaultObjectType(objectTypeCombo.getValue().name());
+            DLClassifierPreferences.setMinObjectSizeMicrons(minObjectSizeSpinner.getValue());
+            DLClassifierPreferences.setHoleFillingMicrons(holeFillingSpinner.getValue());
 
             ClassifierMetadata classifier = classifierTable.getSelectionModel().getSelectedItem();
 
