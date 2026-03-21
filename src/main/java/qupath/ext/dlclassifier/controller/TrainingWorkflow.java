@@ -535,7 +535,7 @@ public class TrainingWorkflow {
                     currentJobId[0], classifierName, description, handler,
                     trainingConfig, channelConfig, classNames,
                     selectedImages, progress, classColors,
-                    finalClassifierId, finalModelOutputDir));
+                    finalClassifierId, finalModelOutputDir, modelPathHolder));
         });
 
         // Wire continue-training callback -- resumes from completion checkpoint
@@ -1556,7 +1556,8 @@ public class TrainingWorkflow {
                                      ProgressMonitorController progress,
                                      Map<String, Integer> classColors,
                                      String classifierId,
-                                     Path modelOutputDir) {
+                                     Path modelOutputDir,
+                                     String[] modelPathHolder) {
         try {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
@@ -1641,6 +1642,11 @@ public class TrainingWorkflow {
             modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
                     true, filesInPlace);
             progress.log("Classifier saved: " + metadata.getId());
+
+            // Set model path so Review Training Areas can find the model
+            if (modelPathHolder != null && modelPathHolder.length > 0) {
+                modelPathHolder[0] = serverResult.modelPath();
+            }
 
             progress.complete(true, String.format(
                     "Training completed early!\nBest model: epoch %d\n"
