@@ -11,6 +11,8 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
+
+import java.time.LocalDateTime;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
@@ -1113,6 +1115,7 @@ public class TrainingWorkflow {
                         .finalLoss(serverResult.finalLoss())
                         .finalAccuracy(serverResult.finalAccuracy())
                         .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                        .createdAt(LocalDateTime.now())
                         .build();
                 boolean filesInPlace = modelOutputDir != null;
                 ModelManager modelManager = new ModelManager();
@@ -1164,6 +1167,7 @@ public class TrainingWorkflow {
                     .finalLoss(serverResult.finalLoss())
                     .finalAccuracy(serverResult.finalAccuracy())
                     .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                    .createdAt(LocalDateTime.now())
                     .build();
 
             // Save the classifier. When modelOutputDir is set, files are already
@@ -1477,6 +1481,7 @@ public class TrainingWorkflow {
                             .finalLoss(serverResult.finalLoss())
                             .finalAccuracy(serverResult.finalAccuracy())
                             .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                            .createdAt(LocalDateTime.now())
                             .build();
                     ModelManager rManager = new ModelManager();
                     rManager.saveClassifier(rMeta, Path.of(savedPath), true, false);
@@ -1512,6 +1517,7 @@ public class TrainingWorkflow {
                         .finalLoss(serverResult.finalLoss())
                         .finalAccuracy(serverResult.finalAccuracy())
                         .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                        .createdAt(LocalDateTime.now())
                         .build();
 
                 boolean filesInPlace = modelOutputDir != null;
@@ -1635,6 +1641,7 @@ public class TrainingWorkflow {
                     .finalLoss(serverResult.finalLoss())
                     .finalAccuracy(serverResult.finalAccuracy())
                     .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                    .createdAt(LocalDateTime.now())
                     .build();
 
             boolean filesInPlace = modelOutputDir != null;
@@ -1646,6 +1653,28 @@ public class TrainingWorkflow {
             // Set model path so Review Training Areas can find the model
             if (modelPathHolder != null && modelPathHolder.length > 0) {
                 modelPathHolder[0] = serverResult.modelPath();
+            }
+
+            // Clean up training checkpoint files from the model directory.
+            // These are only needed for crash recovery and resume -- the final
+            // model.pt is the only file needed for inference.
+            Path modelDir = modelOutputDir != null ? modelOutputDir
+                    : Path.of(serverResult.modelPath());
+            if (Files.isDirectory(modelDir)) {
+                try (var files = Files.list(modelDir)) {
+                    files.filter(p -> {
+                        String name = p.getFileName().toString();
+                        return name.startsWith("best_in_progress_")
+                                || name.startsWith("checkpoint_");
+                    }).forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                            logger.debug("Cleaned up training artifact: {}", p.getFileName());
+                        } catch (IOException ignored) {}
+                    });
+                } catch (IOException e) {
+                    logger.debug("Could not clean up training artifacts: {}", e.getMessage());
+                }
             }
 
             progress.complete(true, String.format(
