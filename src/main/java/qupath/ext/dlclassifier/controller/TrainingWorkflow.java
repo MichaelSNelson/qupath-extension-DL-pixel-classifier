@@ -105,8 +105,21 @@ public class TrainingWorkflow {
             double bestMeanIoU,
             int epochsCompleted,
             boolean success,
-            String message
-    ) {}
+            String message,
+            String focusClassName,
+            double focusClassIoU,
+            boolean focusClassTargetMet
+    ) {
+        /** Compact constructor without focus class info. */
+        public TrainingResult(String classifierId, String classifierName,
+                              double finalLoss, double finalAccuracy,
+                              int bestEpoch, double bestMeanIoU,
+                              int epochsCompleted, boolean success, String message) {
+            this(classifierId, classifierName, finalLoss, finalAccuracy,
+                    bestEpoch, bestMeanIoU, epochsCompleted, success, message,
+                    null, 0.0, true);
+        }
+    }
 
     /**
      * Parameters for resuming training.
@@ -552,13 +565,45 @@ public class TrainingWorkflow {
                     if (result.message() != null && result.message().contains("cancelled")) {
                         completionMsg = result.message();
                     } else {
-                        completionMsg = String.format(
+                        StringBuilder sb = new StringBuilder();
+                        sb.append(String.format(
                                 "Classifier trained successfully!\nBest model: epoch %d\n"
                                 + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
                                 result.bestEpoch(), result.finalLoss(),
-                                result.finalAccuracy() * 100, result.bestMeanIoU());
+                                result.finalAccuracy() * 100, result.bestMeanIoU()));
+                        if (result.focusClassName() != null) {
+                            sb.append(String.format("\nFocus class '%s' IoU: %.4f",
+                                    result.focusClassName(), result.focusClassIoU()));
+                            if (!result.focusClassTargetMet()) {
+                                sb.append(" [TARGET NOT MET]");
+                            }
+                        }
+                        completionMsg = sb.toString();
                     }
-                    progress.complete(true, completionMsg);
+                    // Warn with a dialog if focus class target was not met
+                    if (result.focusClassName() != null && !result.focusClassTargetMet()) {
+                        String warningMsg = completionMsg;
+                        progress.complete(true, completionMsg);
+                        Platform.runLater(() -> {
+                            var alert = new javafx.scene.control.Alert(
+                                    javafx.scene.control.Alert.AlertType.WARNING);
+                            alert.setTitle("Focus Class Target Not Met");
+                            alert.setHeaderText(String.format(
+                                    "Focus class '%s' did not reach the target IoU",
+                                    result.focusClassName()));
+                            alert.setContentText(String.format(
+                                    "Best IoU: %.4f\n\n"
+                                    + "The model was saved but may not perform well "
+                                    + "for class '%s'. Consider:\n"
+                                    + "- Adding more training annotations for this class\n"
+                                    + "- Training for more epochs\n"
+                                    + "- Checking that the class appears in the validation split",
+                                    result.focusClassIoU(), result.focusClassName()));
+                            alert.show();
+                        });
+                    } else {
+                        progress.complete(true, completionMsg);
+                    }
                 } else if (result.message() != null && result.message().contains("paused")) {
                     // Paused state is handled by showPausedState - don't close
                     logger.info("Training paused, waiting for user action");
@@ -1138,7 +1183,10 @@ public class TrainingWorkflow {
                     serverResult.bestMeanIoU(),
                     trainingConfig.getEpochs(),
                     true,
-                    "Training completed successfully"
+                    "Training completed successfully",
+                    serverResult.focusClassName(),
+                    serverResult.focusClassIoU(),
+                    serverResult.focusClassTargetMet()
             );
 
         } catch (Exception e) {

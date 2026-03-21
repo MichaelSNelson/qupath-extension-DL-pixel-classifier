@@ -2068,7 +2068,7 @@ class TrainingService:
             model = model.cpu()
             self.gpu_manager.clear_cache()
             self.gpu_manager.log_memory_status(prefix="Cancelled (GPU freed): ")
-            return {
+            cancel_result = {
                 "status": "cancelled",
                 "model_path": cancel_best_model_path,
                 "last_model_path": cancel_last_model_path,
@@ -2081,6 +2081,14 @@ class TrainingService:
                 "total_epochs": epochs,
                 "epochs_trained": len(training_history),
             }
+            if focus_class:
+                cancel_result["focus_class_name"] = focus_class
+                cancel_result["focus_class_iou"] = best_score
+                cancel_result["focus_class_target_met"] = (
+                    best_score >= focus_class_min_iou if focus_class_min_iou > 0 else True
+                )
+                cancel_result["focus_class_min_iou"] = focus_class_min_iou
+            return cancel_result
 
         # Log final memory status
         self.gpu_manager.log_memory_status(prefix="Training complete: ")
@@ -2126,7 +2134,8 @@ class TrainingService:
         # Clean up in-progress best model (final model saved above)
         self._cleanup_best_in_progress(model_type)
 
-        return {
+        # Report focus class IoU so Java can warn when target not met
+        result = {
             "model_path": model_path,
             "final_loss": best_loss,
             "final_accuracy": best_accuracy,
@@ -2139,6 +2148,23 @@ class TrainingService:
             "epoch": len(training_history),
             "total_epochs": epochs,
         }
+        if focus_class:
+            result["focus_class_name"] = focus_class
+            result["focus_class_iou"] = best_score  # best_score IS focus class IoU when focus_class is set
+            result["focus_class_target_met"] = (
+                best_score >= focus_class_min_iou if focus_class_min_iou > 0 else True
+            )
+            result["focus_class_min_iou"] = focus_class_min_iou
+            if best_score < focus_class_min_iou and focus_class_min_iou > 0:
+                logger.warning(
+                    "Focus class '%s' IoU %.4f did not meet target %.4f",
+                    focus_class, best_score, focus_class_min_iou)
+                if best_score == 0.0:
+                    logger.warning(
+                        "Focus class '%s' had 0.0 IoU -- check that this class "
+                        "has sufficient samples in the validation split",
+                        focus_class)
+        return result
 
     def _create_scheduler(
         self,

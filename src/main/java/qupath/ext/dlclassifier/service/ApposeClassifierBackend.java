@@ -619,11 +619,23 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     logger.info("Cancel with save: best model={}, last model={}, epoch {}/{}",
                             cancelBestPath, cancelLastPath, cancelLastEpoch, cancelTotalEpochs);
                 }
+                // Extract focus class info from cancel result
+                String cancelFocusName = null;
+                double cancelFocusIoU = 0.0;
+                boolean cancelFocusMet = true;
+                if (task.outputs != null && task.outputs.containsKey("focus_class_name")) {
+                    cancelFocusName = String.valueOf(task.outputs.get("focus_class_name"));
+                    cancelFocusIoU = task.outputs.containsKey("focus_class_iou")
+                            ? ((Number) task.outputs.get("focus_class_iou")).doubleValue() : 0.0;
+                    cancelFocusMet = task.outputs.containsKey("focus_class_target_met")
+                            ? (Boolean) task.outputs.get("focus_class_target_met") : true;
+                }
                 return new ClassifierClient.TrainingResult(
                         jobId, cancelBestPath, cancelLoss, cancelAcc,
                         cancelBestEpoch, cancelBestMIoU, false,
                         cancelLastEpoch, cancelTotalEpochs, cancelCheckpoint,
-                        true, cancelLastPath);
+                        true, cancelLastPath,
+                        cancelFocusName, cancelFocusIoU, cancelFocusMet);
             }
             // Do NOT retry training on "thread death". Training is a long-running
             // stateful operation -- the Python-side task may still be executing even
@@ -645,7 +657,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
             return new ClassifierClient.TrainingResult(
                     jobId, null, 0, 0, 0, 0, true, lastEpoch, totalEpochs, checkpointPath,
-                    false, null);
+                    false, null, null, 0.0, true);
         }
 
         // Normal completion
@@ -665,9 +677,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     lastEpoch, completionCheckpoint);
         }
 
+        // Extract focus class IoU if present (null when no focus class was set)
+        String focusClassName = task.outputs.containsKey("focus_class_name")
+                ? String.valueOf(task.outputs.get("focus_class_name")) : null;
+        double focusClassIoU = task.outputs.containsKey("focus_class_iou")
+                ? ((Number) task.outputs.get("focus_class_iou")).doubleValue() : 0.0;
+        boolean focusClassTargetMet = task.outputs.containsKey("focus_class_target_met")
+                ? (Boolean) task.outputs.get("focus_class_target_met") : true;
+
         return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
                 bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint,
-                false, null);
+                false, null, focusClassName, focusClassIoU, focusClassTargetMet);
     }
 
     // ==================== Evaluation ====================
