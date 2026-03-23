@@ -715,7 +715,7 @@ public class ApposeService {
      * to look for pyproject.toml in the python_server/ directory.
      */
     private static final String DL_SERVER_PIP_URL =
-            "dlclassifier-server @ https://github.com/MichaelSNelson/"
+            "dlclassifier-server @ https://github.com/uw-loci/"
                     + "qupath-extension-DL-pixel-classifier/archive/refs/heads/"
                     + "master.tar.gz#subdirectory=python_server";
 
