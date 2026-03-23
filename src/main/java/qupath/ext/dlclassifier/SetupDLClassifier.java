@@ -14,6 +14,8 @@ import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.controller.DLClassifierController;
@@ -82,7 +84,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     private static final String EXTENSION_DESCRIPTION = res.getString("description");
     private static final Version EXTENSION_QUPATH_VERSION = Version.parse("v0.6.0");
     private static final GitHubRepo EXTENSION_REPOSITORY =
-            GitHubRepo.create(EXTENSION_NAME, "uw-loci", "qupath-extension-DL-pixel-classifier");
+            GitHubRepo.create(EXTENSION_NAME, "uw-loci", "qupath-extension-dl-pixel-classifier");
 
     /**
      * Observable property tracking whether the DL environment is ready for use.
@@ -180,6 +182,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     private void addMenuItem(QuPathGUI qupath) {
         // Create the top level Extensions > DL Pixel Classifier menu
         var extensionMenu = qupath.getMenu("Extensions>" + EXTENSION_NAME, true);
+
+        // Add colored indicator dot for quick identification in the menu
+        if (DLClassifierPreferences.isShowMenuDot()) {
+            int argb = DLClassifierPreferences.getMenuDotColor();
+            int a = (argb >> 24) & 0xFF;
+            int r = (argb >> 16) & 0xFF;
+            int g = (argb >> 8) & 0xFF;
+            int b = argb & 0xFF;
+            Color dotColor = Color.rgb(r, g, b, a / 255.0);
+            extensionMenu.setGraphic(new Circle(4, dotColor));
+        }
 
         // === SETUP MENU ITEM (visible only when environment not ready) ===
         MenuItem setupItem = new MenuItem(res.getString("menu.setupEnvironment"));
