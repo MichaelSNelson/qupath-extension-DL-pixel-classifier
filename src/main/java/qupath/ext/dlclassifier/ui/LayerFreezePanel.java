@@ -378,6 +378,26 @@ public class LayerFreezePanel extends VBox {
     }
 
     /**
+     * Restores frozen layer state from a list of layer names.
+     * Layers whose names appear in the list are frozen; all others are unfrozen.
+     * Names that don't match any current layer are silently ignored.
+     *
+     * @param frozenNames list of layer names to freeze
+     */
+    public void setFrozenLayerNames(List<String> frozenNames) {
+        if (frozenNames == null || frozenNames.isEmpty()) {
+            return;
+        }
+        var nameSet = new java.util.HashSet<>(frozenNames);
+        for (LayerItem layer : layers) {
+            layer.setFrozen(nameSet.contains(layer.getName()));
+        }
+        layerListView.refresh();
+        updateStatus();
+        logger.info("Restored {} frozen layers from saved settings", frozenNames.size());
+    }
+
+    /**
      * Gets all layers and their freeze state.
      */
     public List<LayerItem> getLayers() {

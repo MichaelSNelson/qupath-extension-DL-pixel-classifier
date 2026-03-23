@@ -266,6 +266,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("training_params", trainingParams);
         inputs.put("classes", classNames);
         inputs.put("data_path", trainingDataPath.toString());
+        // Pass classifier name so it survives in checkpoints for recovery
+        if (trainingConfig.getClassifierName() != null && !trainingConfig.getClassifierName().isEmpty()) {
+            inputs.put("classifier_name", trainingConfig.getClassifierName());
+        }
 
         // Continue training: load weights from a previously trained model
         if (trainingConfig.getPretrainedModelPath() != null) {

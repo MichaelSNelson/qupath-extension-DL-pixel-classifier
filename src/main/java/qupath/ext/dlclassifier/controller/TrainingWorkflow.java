@@ -418,6 +418,9 @@ public class TrainingWorkflow {
             logger.debug("Could not check GPU status: {}", e.getMessage());
         }
 
+        // Store classifier name in config so it survives in checkpoints
+        trainingConfig.setClassifierName(classifierName);
+
         // Generate classifierId early so model files can be saved directly
         // to the project directory during training (not just at the end).
         String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")

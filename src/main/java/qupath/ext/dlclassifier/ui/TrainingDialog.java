@@ -1050,6 +1050,23 @@ public class TrainingDialog {
                     selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
                 }
 
+                // Frozen layers -> restore freeze panel state
+                if (ts.containsKey("frozen_layers") && layerFreezePanel != null) {
+                    Object fl = ts.get("frozen_layers");
+                    if (fl instanceof List<?> frozenList) {
+                        List<String> frozenNames = new ArrayList<>();
+                        for (Object item : frozenList) {
+                            frozenNames.add(String.valueOf(item));
+                        }
+                        // Defer until layer panel is populated (may be loading async)
+                        Platform.runLater(() -> {
+                            if (layerFreezePanel != null) {
+                                layerFreezePanel.setFrozenLayerNames(frozenNames);
+                            }
+                        });
+                    }
+                }
+
                 // Scheduler
                 if (ts.containsKey("scheduler_type")) {
                     schedulerCombo.setValue(mapSchedulerToDisplay((String) ts.get("scheduler_type")));
@@ -1170,9 +1187,17 @@ public class TrainingDialog {
             }
 
             // --- Classifier name and description ---
+            // Use the original classifier name if it looks like a user-specified name
+            // (not the generic "UNET Classifier" etc.). Otherwise prefix with "Retrain_".
+            String originalName = metadata.getName();
             String timestamp = java.time.LocalDate.now().toString().replace("-", "");
-            classifierNameField.setText("Retrain_" + metadata.getName() + "_" + timestamp);
-            descriptionField.setText("Retrained from: " + metadata.getName());
+            if (originalName != null && !originalName.isEmpty()
+                    && !originalName.toUpperCase().endsWith(" CLASSIFIER")) {
+                classifierNameField.setText(originalName);
+            } else {
+                classifierNameField.setText("Retrain_" + originalName + "_" + timestamp);
+            }
+            descriptionField.setText("Retrained from: " + originalName);
 
             // Store source model's class list for auto-matching after class loading
             sourceModelClassNames = metadata.getClassNames();
@@ -1507,6 +1532,14 @@ public class TrainingDialog {
                     break;
                 case CONTINUE_TRAINING:
                     pretrainedPath = pretrainedModelPtPath;
+                    // Continue training should use discriminative LRs (encoder gets
+                    // lower LR to preserve learned features, decoder/head get full LR
+                    // to adapt to new/changed annotations). Also apply frozen layers
+                    // if the user selected any.
+                    usePretrained = true;
+                    if (layerFreezePanel != null) {
+                        frozenLayers = layerFreezePanel.getFrozenLayerNames();
+                    }
                     break;
                 default:
                     break;

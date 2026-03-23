@@ -64,6 +64,11 @@ try:
 except NameError:
     model_output_dir = None
 
+try:
+    classifier_name
+except NameError:
+    classifier_name = None
+
 # Import training service (heavier import, done here rather than init)
 from dlclassifier_server.services.training_service import TrainingService
 import dlclassifier_server.services.training_service as _tsm
@@ -430,6 +435,10 @@ if pretrained_model_path and not checkpoint_path:
         except Exception as e:
             logger.warning("Could not patch frozen-layers path for "
                            "pretrained weights: %s", e)
+
+# Include classifier name in training_params so it survives in checkpoints
+if classifier_name:
+    training_params["classifier_name"] = classifier_name
 
 try:
     result = training_service.train(

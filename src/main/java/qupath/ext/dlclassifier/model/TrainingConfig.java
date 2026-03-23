@@ -86,6 +86,10 @@ public class TrainingConfig {
     // to redirect model saving directly into the project's classifiers directory.
     private String modelOutputDir;
 
+    // Transient runtime field: user-specified classifier name.
+    // Passed to Python so it survives in checkpoints for recovery.
+    private String classifierName;
+
     // Transient runtime overrides for whole-image mode.
     // When set (> 0), these override the builder-configured values so that
     // downstream code (backend, serialization) automatically uses the safe values.
@@ -488,6 +492,21 @@ public class TrainingConfig {
      */
     public void setModelOutputDir(String modelOutputDir) {
         this.modelOutputDir = modelOutputDir;
+    }
+
+    /**
+     * Gets the user-specified classifier name.
+     * Stored in checkpoints so it survives training interruption and recovery.
+     */
+    public String getClassifierName() {
+        return classifierName;
+    }
+
+    /**
+     * Sets the user-specified classifier name.
+     */
+    public void setClassifierName(String classifierName) {
+        this.classifierName = classifierName;
     }
 
     /**

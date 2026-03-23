@@ -1313,6 +1313,11 @@ class TrainingService:
             steps_per_epoch=len(train_loader)
         )
 
+        # Save scheduler_config back into training_params so it survives in
+        # checkpoints. On resume, the config (including LR Finder max_lr)
+        # is read from training_params["scheduler_config"].
+        training_params["scheduler_config"] = scheduler_config
+
         # Setup mixed precision training with BF16 auto-detection
         use_mixed_precision = (
             training_params.get("mixed_precision", True)
@@ -1391,6 +1396,18 @@ class TrainingService:
                 best_score = checkpoint["best_loss"]
             if "best_model_state" in checkpoint:
                 best_model_state = checkpoint["best_model_state"]
+
+            # Re-apply frozen layers (load_state_dict restores weights but
+            # doesn't freeze parameters -- requires_grad is not in state_dict)
+            if frozen_layers:
+                frozen_count = 0
+                for param_name, param in model.named_parameters():
+                    if any(layer in param_name for layer in frozen_layers):
+                        param.requires_grad = False
+                        frozen_count += 1
+                if frozen_count > 0:
+                    logger.info(f"Re-froze {frozen_count} parameters after "
+                                f"checkpoint resume ({len(frozen_layers)} layer groups)")
 
             logger.info(f"Resumed from checkpoint at epoch {start_epoch}, "
                        f"best_score={best_score:.4f}")
@@ -2045,12 +2062,14 @@ class TrainingService:
                 }
             )
             # Save last-epoch model (current model state)
+            _cls_name = training_params.get("classifier_name")
             cancel_last_model_path = self._save_model(
                 model=model, model_type=model_type,
                 architecture=architecture, input_config=input_config,
                 classes=classes, data_path=str(data_path),
                 training_history=training_history,
-                normalization_stats=dataset_norm_stats
+                normalization_stats=dataset_norm_stats,
+                classifier_name=_cls_name
             )
             logger.info("Saved last-epoch model after cancel: %s",
                         cancel_last_model_path)
@@ -2064,7 +2083,8 @@ class TrainingService:
                     architecture=architecture, input_config=input_config,
                     classes=classes, data_path=str(data_path),
                     training_history=training_history,
-                    normalization_stats=dataset_norm_stats
+                    normalization_stats=dataset_norm_stats,
+                    classifier_name=_cls_name
                 )
                 logger.info("Saved best model (epoch %d) after cancel: %s",
                             best_epoch, cancel_best_model_path)
@@ -2137,7 +2157,8 @@ class TrainingService:
             classes=classes,
             data_path=str(data_path),
             training_history=training_history,
-            normalization_stats=dataset_norm_stats
+            normalization_stats=dataset_norm_stats,
+            classifier_name=training_params.get("classifier_name")
         )
 
         # Clean up in-progress best model (final model saved above)
@@ -2533,6 +2554,28 @@ class TrainingService:
 
         torch.save(checkpoint, str(checkpoint_path))
         logger.info(f"Checkpoint saved to {checkpoint_path}")
+
+        # Write companion metadata.json so the checkpoint is self-documenting
+        # and recoverable without parsing the .pt file
+        try:
+            meta = {
+                "type": "checkpoint",
+                "model_type": model_type,
+                "architecture": training_config.get("architecture", {}),
+                "classes": training_config.get("classes", []),
+                "input_config": training_config.get("input_config", {}),
+                "training_params": training_config.get("training_params", {}),
+                "epochs_completed": len(training_history),
+                "best_score": best_score,
+                "classifier_name": training_config.get("training_params", {}).get(
+                    "classifier_name", ""),
+            }
+            meta_path = checkpoint_path.with_suffix(".json")
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+        except Exception as meta_err:
+            logger.warning(f"Failed to write checkpoint metadata: {meta_err}")
+
         return str(checkpoint_path)
 
     def _save_best_in_progress(
@@ -2700,7 +2743,8 @@ class TrainingService:
         classes: List[str],
         data_path: str,
         training_history: Optional[List[Dict[str, Any]]] = None,
-        normalization_stats: Optional[List[Dict[str, float]]] = None
+        normalization_stats: Optional[List[Dict[str, float]]] = None,
+        classifier_name: Optional[str] = None
     ) -> str:
         """Save the trained model."""
         import time
@@ -2790,9 +2834,10 @@ class TrainingService:
             saved_norm["channel_stats"] = normalization_stats
             saved_input_config["normalization"] = saved_norm
 
+        display_name = classifier_name if classifier_name else f"{model_type.upper()} Classifier"
         metadata = {
             "id": model_id,
-            "name": f"{model_type.upper()} Classifier",
+            "name": display_name,
             "architecture": {
                 "type": model_type,
                 "use_batchrenorm": True,

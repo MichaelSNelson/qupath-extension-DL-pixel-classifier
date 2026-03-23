@@ -88,6 +88,10 @@ else:
 
 model = model.to(training_service.device)
 
+# Extract classifier name from checkpoint (survives training interruption)
+_training_params = config.get("training_params", {})
+_classifier_name = _training_params.get("classifier_name")
+
 # Save as final model
 model_path = training_service._save_model(
     model=model,
@@ -97,8 +101,26 @@ model_path = training_service._save_model(
     classes=classes,
     data_path="",  # data may no longer exist
     training_history=checkpoint.get("training_history", []),
-    normalization_stats=None
+    normalization_stats=None,
+    classifier_name=_classifier_name
 )
+
+# Merge training_settings into saved metadata so the finalized model
+# retains full training provenance (augmentation, frozen layers, scheduler, etc.)
+try:
+    from pathlib import Path as _FP
+    _meta_path = _FP(model_path) / "metadata.json"
+    if _meta_path.exists():
+        import json as _json
+        with open(_meta_path) as _f:
+            _meta = _json.load(_f)
+        if "training_settings" not in _meta and _training_params:
+            _meta["training_settings"] = _training_params
+            with open(_meta_path, "w") as _f:
+                _json.dump(_meta, _f, indent=2)
+            logger.info("Added training_settings to finalized metadata")
+except Exception as _e:
+    logger.warning("Could not add training_settings to metadata: %s", _e)
 
 # Get metrics from checkpoint
 history = checkpoint.get("training_history", [])
