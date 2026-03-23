@@ -1104,8 +1104,17 @@ class TrainingService:
             logger.info(f"Computed dataset normalization stats from "
                         f"{len(train_images)} training patches ({stats_channels} channels)")
         except Exception as e:
-            logger.warning(f"Failed to compute dataset normalization stats: {e}")
-            dataset_norm_stats = None
+            logger.warning(f"Failed to compute dataset normalization stats: {e}. "
+                           f"Using default [0, 255] range stats.")
+            # Provide default stats so metadata always has normalization_stats.
+            # Consumers need this to build the model correctly; a missing field
+            # causes silent failures in external programs.
+            num_ch = effective_channels
+            dataset_norm_stats = [
+                {"p1": 0.0, "p99": 255.0, "min": 0.0, "max": 255.0,
+                 "mean": 127.5, "std": 73.9}
+                for _ in range(num_ch)
+            ]
 
         # Create data loaders
         batch_size = training_params.get("batch_size", 8)
@@ -2761,19 +2770,40 @@ class TrainingService:
             class_list.append(entry)
 
         # Save metadata
+        # Compute effective input channels: doubled when context_scale > 1
+        # because detail + context tiles are concatenated along channel axis.
+        # Store this explicitly so any consumer can read the actual model
+        # input size without needing to know the context_scale doubling rule.
+        base_ch = int(architecture.get("input_channels",
+                                       input_config.get("num_channels", 3)))
+        ctx_scale = int(architecture.get("context_scale", 1))
+        effective_ch = base_ch * 2 if ctx_scale > 1 else base_ch
+
+        # Embed training dataset stats into input_config.normalization so
+        # the metadata is self-contained for normalization. At runtime Java
+        # rebuilds input_config from scratch (via buildInputConfig) with
+        # image-level stats, so these persisted values don't interfere.
+        saved_input_config = dict(input_config)
+        if normalization_stats:
+            saved_norm = dict(saved_input_config.get("normalization", {}))
+            saved_norm["precomputed"] = True
+            saved_norm["channel_stats"] = normalization_stats
+            saved_input_config["normalization"] = saved_norm
+
         metadata = {
             "id": model_id,
             "name": f"{model_type.upper()} Classifier",
             "architecture": {
                 "type": model_type,
                 "use_batchrenorm": True,
-                **architecture
+                **architecture,
+                "effective_input_channels": effective_ch
             },
-            "input_config": input_config,
+            "input_config": saved_input_config,
             "classes": class_list
         }
 
-        # Include dataset normalization stats for consistent inference
+        # Also store normalization_stats at top level for backward compat
         if normalization_stats:
             metadata["normalization_stats"] = normalization_stats
             logger.info(f"Saved normalization stats for {len(normalization_stats)} channels")

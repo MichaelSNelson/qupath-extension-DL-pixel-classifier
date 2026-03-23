@@ -271,6 +271,7 @@ public class ClassifierMetadata {
         architecture.put("input_width", inputWidth);
         architecture.put("input_height", inputHeight);
         architecture.put("input_channels", inputChannels);
+        architecture.put("effective_input_channels", getEffectiveInputChannels());
         architecture.put("downsample", downsample);
         architecture.put("context_scale", contextScale);
         map.put("architecture", architecture);

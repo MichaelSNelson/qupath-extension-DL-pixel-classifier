@@ -220,10 +220,15 @@ try:
 
     logger.info("Loaded manifest: %d tiles, patch_size=%d", len(patches_meta), patch_size)
 
-    # Build filename -> manifest entry lookup
+    # Build filename -> manifest entry lookup (by both full name and stem,
+    # because the global split may update val entries to .raw while the
+    # evaluate script finds .tiff files, or vice versa)
     meta_by_filename = {}
+    meta_by_stem = {}
     for entry in patches_meta:
         meta_by_filename[entry["filename"]] = entry
+        stem = entry["filename"].rsplit(".", 1)[0]
+        meta_by_stem[stem] = entry
 
     # Load model metadata to get correct architecture config
     model_dir = Path(model_path)
@@ -358,11 +363,15 @@ try:
                     break
 
                 filename = dataset.image_files[file_idx].name
-                # Strip extension to match manifest (manifest uses .tiff)
                 stem = dataset.image_files[file_idx].stem
-                manifest_filename = stem + ".tiff"
 
-                meta = meta_by_filename.get(manifest_filename, {})
+                # Try exact filename first, then stem-based fallback.
+                # The global split may change val entry filenames from .tiff
+                # to .raw (via resolveActualFilename), while train entries
+                # keep the original .tiff name.
+                meta = meta_by_filename.get(filename)
+                if meta is None:
+                    meta = meta_by_stem.get(stem, {})
 
                 mask_i = batch_masks[i]
                 pred_i = preds[i]

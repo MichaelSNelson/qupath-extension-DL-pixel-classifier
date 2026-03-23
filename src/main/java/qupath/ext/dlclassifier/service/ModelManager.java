@@ -169,6 +169,22 @@ public class ModelManager {
             int inputChannels = arch.has("input_channels") ? arch.get("input_channels").getAsInt() : 3;
             double downsample = arch.has("downsample") ? arch.get("downsample").getAsDouble() : 1.0;
             int contextScale = arch.has("context_scale") ? arch.get("context_scale").getAsInt() : 1;
+            // effective_input_channels (v0.3.8+) is the actual model input size including
+            // context channel doubling. If present, validate it matches our computation.
+            if (arch.has("effective_input_channels")) {
+                int effective = arch.get("effective_input_channels").getAsInt();
+                int computed = contextScale > 1 ? inputChannels * 2 : inputChannels;
+                if (effective != computed) {
+                    logger.warn("effective_input_channels={} in metadata doesn't match "
+                            + "computed value {} (input_channels={}, context_scale={}). "
+                            + "Using metadata value.", effective, computed, inputChannels, contextScale);
+                    // Override inputChannels so getEffectiveInputChannels() returns
+                    // the correct value: effective = inputChannels * 2 when contextScale > 1,
+                    // so inputChannels = effective / 2; when contextScale == 1,
+                    // inputChannels = effective.
+                    inputChannels = contextScale > 1 ? effective / 2 : effective;
+                }
+            }
 
             // Channel config
             JsonObject chanConfig = obj.has("channel_config") ?

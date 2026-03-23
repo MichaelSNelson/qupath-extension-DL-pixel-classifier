@@ -152,6 +152,16 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty overlayNoticeDismissed = PathPrefs.createPersistentPreference(
             "dlclassifier.overlayNoticeDismissed", false);
 
+    // ==================== Menu Appearance ====================
+
+    // Show colored dot next to extension name in the Extensions menu
+    private static final BooleanProperty showMenuDot = PathPrefs.createPersistentPreference(
+            "dlclassifier.showMenuDot", true);
+
+    // Color of the menu dot as packed ARGB integer (default: magenta = 0xFFFF00FF)
+    private static final IntegerProperty menuDotColor = PathPrefs.createPersistentPreference(
+            "dlclassifier.menuDotColor", 0xFFFF00FF);
+
     private DLClassifierPreferences() {
         // Utility class - no instantiation
     }
@@ -189,6 +199,22 @@ public final class DLClassifierPreferences {
                 .description("Directory for exporting training data patches. " +
                         "If empty, the system temporary directory is used. " +
                         "Set to a directory on a larger drive if temp space is limited.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
+                .name("Show Menu Indicator Dot")
+                .category(CATEGORY)
+                .description("Show a colored dot next to the extension name in the " +
+                        "Extensions menu for quick identification. " +
+                        "Takes effect after restarting QuPath.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(menuDotColor, Integer.class)
+                .propertyType(PropertyItemBuilder.PropertyType.COLOR)
+                .name("Menu Indicator Dot Color")
+                .category(CATEGORY)
+                .description("Color of the indicator dot shown in the Extensions menu. " +
+                        "Takes effect after restarting QuPath.")
                 .build());
     }
 
@@ -669,6 +695,32 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty createBackupProperty() {
         return createBackup;
+    }
+
+    // ==================== Menu Appearance ====================
+
+    public static boolean isShowMenuDot() {
+        return showMenuDot.get();
+    }
+
+    public static void setShowMenuDot(boolean show) {
+        showMenuDot.set(show);
+    }
+
+    public static BooleanProperty showMenuDotProperty() {
+        return showMenuDot;
+    }
+
+    public static int getMenuDotColor() {
+        return menuDotColor.get();
+    }
+
+    public static void setMenuDotColor(int argb) {
+        menuDotColor.set(argb);
+    }
+
+    public static IntegerProperty menuDotColorProperty() {
+        return menuDotColor;
     }
 
     // ==================== Overlay Notice ====================

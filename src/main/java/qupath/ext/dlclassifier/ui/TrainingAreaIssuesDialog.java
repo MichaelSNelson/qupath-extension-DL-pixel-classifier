@@ -89,6 +89,12 @@ public class TrainingAreaIssuesDialog {
         this.classColors = classColors != null ? classColors : Map.of();
         this.stage = new Stage();
         stage.initStyle(StageStyle.DECORATED);
+        // Set QuPath as owner so this dialog stays on top of the main window
+        // but not on top of other applications
+        var qupath = QuPathGUI.getInstance();
+        if (qupath != null && qupath.getStage() != null) {
+            stage.initOwner(qupath.getStage());
+        }
         stage.setTitle("Training Area Issues - " + classifierName);
         stage.setResizable(true);
 
@@ -184,6 +190,15 @@ public class TrainingAreaIssuesDialog {
             }
         });
 
+        // Re-clicking the same row should re-navigate (selection listener
+        // doesn't fire when the selection hasn't changed)
+        table.setOnMouseClicked(e -> {
+            TileRow selected = table.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                navigateToTile(selected);
+            }
+        });
+
         // Status bar
         Label statusLabel = new Label("Select a row to navigate to the tile location");
         statusLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
@@ -221,14 +236,14 @@ public class TrainingAreaIssuesDialog {
 
         legendBox = new VBox(3);
         legendBox.setPadding(new Insets(5, 0, 0, 0));
-        buildDisagreementLegend();
+        buildLossHeatmapLegend();
 
-        Label previewTitle = new Label("Disagreement Preview");
+        Label previewTitle = new Label("Loss Heatmap Preview");
         previewTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
 
         overlaySelector = new ComboBox<>();
-        overlaySelector.getItems().addAll(OVERLAY_DISAGREEMENT, OVERLAY_LOSS_HEATMAP);
-        overlaySelector.setValue(OVERLAY_DISAGREEMENT);
+        overlaySelector.getItems().addAll(OVERLAY_LOSS_HEATMAP, OVERLAY_DISAGREEMENT);
+        overlaySelector.setValue(OVERLAY_LOSS_HEATMAP);
         overlaySelector.setOnAction(e -> {
             String selected = overlaySelector.getValue();
             previewTitle.setText(selected + " Preview");

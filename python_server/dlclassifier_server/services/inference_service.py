@@ -698,14 +698,17 @@ class InferenceService:
             input_config = metadata.get("input_config", {})
             model_type = arch.get("type", "unet")
             encoder_name = arch.get("backbone", "resnet34")
-            # Prefer architecture.input_channels (from metadata.json) over
-            # input_config.num_channels (only present in live Appose calls)
-            metadata_channels = arch.get("input_channels",
-                                         input_config.get("num_channels", 3))
-            # When context_scale > 1, model has 2x channels (detail + context)
+            # Use effective_input_channels when available (written by v0.3.8+
+            # models). This is the actual model input size including context
+            # channel doubling. Fall back to manual computation for older models.
             context_scale = arch.get("context_scale", 1)
-            if context_scale > 1:
-                metadata_channels = metadata_channels * 2
+            if "effective_input_channels" in arch:
+                metadata_channels = arch["effective_input_channels"]
+            else:
+                metadata_channels = arch.get("input_channels",
+                                             input_config.get("num_channels", 3))
+                if context_scale > 1:
+                    metadata_channels = metadata_channels * 2
             num_classes = len(metadata.get("classes", [{"index": 0}, {"index": 1}]))
 
             # Load checkpoint first so we can detect actual in_channels from

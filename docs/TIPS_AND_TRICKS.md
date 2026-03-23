@@ -109,3 +109,96 @@ Enable **Context Scale** (2x-16x) when classification depends on what surrounds 
 - **Anatomical regions**: large-scale spatial patterns that a single tile can't capture
 
 Context scale adds minimal memory overhead (~5-10%) by interleaving a downsampled wide-view with the detail tile. Both the overlay and Apply Classifier handle context tiles automatically.
+
+## Feed Training Logs to an LLM for Analysis
+
+After a training run, copy the training log from the QuPath log window and paste it into an LLM (ChatGPT, Claude, Gemini, etc.) for analysis. The model can identify patterns you might miss: validation instability, class-specific bottlenecks, learning rate issues, and annotation problems.
+
+**Example prompt:**
+
+> I am training a deep learning pixel classifier for H&E histology images using the [DL Pixel Classifier extension for QuPath](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier). The training configuration and parameter documentation is here: [PARAMETERS.md](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/PARAMETERS.md) and [TRAINING_GUIDE.md](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/TRAINING_GUIDE.md).
+>
+> I currently have patches across about 10 whole slide H&E images. Please analyze the following training results and provide suggestions for what could be improved when I continue training.
+
+Then paste the full training log output (everything from "Starting training for classifier" through the final epoch).
+
+<details>
+<summary><b>Example: training log output (click to expand)</b></summary>
+
+```
+Starting training for classifier: Classifier_20260321
+Export directory: C:\Users\MICHAE~1\AppData\Local\Temp\dl-training6088532274938927794
+Context padding: 128px per side (tiles will be 768x768)
+Exporting from 12 project images...
+Exported 3638 training patches
+Connected to classification backend
+Transfer learning: 3 layer groups frozen: encoder.conv1, encoder.layer1, encoder.layer2
+Training on NVIDIA GeForce RTX 3090 (CUDA)
+--- Training Configuration ---
+  Architecture: unet (resnet50_kather100k)
+  Optimizer: AdamW (wd=0.01, betas=0.9/0.99) [discriminative LRs]
+  Scheduler: ReduceOnPlateau (factor=0.5, patience=10)
+  Loss: ce_dice + OHEM (keep 50%)
+  Batch Size: 8 (accumulation=2, effective=16)
+  Tile Size: 512x512
+  Mixed Precision: BF16
+  Classes: 3 (Gland, Ignore*, Normal)
+  Training Patches: 2910 train / 728 val
+  Normalization: percentile_99 (per_channel=False)
+  Channels: 6
+  Early Stopping: mean_iou (patience=30), focus=Gland (min IoU=0.80)
+  Augmentation: p_rotate, p_flip, p_elastic, intensity_mode
+  Progressive Resize: Off
+  Discriminative LRs: encoder=0.000010, decoder=0.000100, head=0.000100
+Epoch 1: train_loss=1.2748, val_loss=0.8495, acc=75.0%, mIoU=0.6134
+  IoU: Gland=0.340 Ignore*=0.814 Normal=0.687
+Epoch 2: train_loss=0.8013, val_loss=0.9228, acc=81.7%, mIoU=0.6820
+  IoU: Gland=0.403 Ignore*=0.863 Normal=0.780
+...
+Epoch 92: train_loss=0.2497, val_loss=0.3644, acc=96.0%, mIoU=0.8975
+  IoU: Gland=0.763 Ignore*=0.980 Normal=0.950
+...
+Epoch 96: train_loss=0.2859, val_loss=0.2190, acc=94.5%, mIoU=0.8752
+  IoU: Gland=0.719 Ignore*=0.979 Normal=0.927
+Training paused at epoch 96
+Best model: epoch 92
+Loss: 0.3644 | Accuracy: 96.04% | mIoU: 0.8975
+```
+
+</details>
+
+<details>
+<summary><b>Example: LLM analysis response (click to expand)</b></summary>
+
+**Overall Performance:**
+
+| Metric | Early (ep 1-10) | Mid (ep 30-50) | Best (ep 92) |
+|--------|----------------|----------------|--------------|
+| mIoU | 0.61 - 0.80 | 0.80 - 0.89 | **0.8975** |
+| Accuracy | 75 - 91% | 92 - 96% | **96.0%** |
+| Gland IoU | 0.34 - 0.61 | 0.64 - 0.75 | **0.763** |
+
+**Key findings:**
+
+1. **High validation variance** -- loss spikes on individual epochs (e.g., epoch 3 val_loss=4.93, epoch 49 val_loss=2.09) concentrated on the Ignore\* class, suggesting inconsistent annotation boundaries.
+
+2. **Gland is the bottleneck** -- never reached the 0.80 IoU focus target. Ranges 0.48-0.76 even in late epochs while Normal hits 0.90+ consistently.
+
+3. **No overfitting** -- train loss (~0.25) and val loss (~0.22-0.36) gap is healthy, model has capacity to learn more.
+
+**Recommendations:**
+
+- **Review Ignore\* annotations** for inconsistent boundaries (the loss spike source)
+- **Add more Gland annotations**, focusing on boundaries, small/fragmented glands, and morphological variety across slides
+- **Unfreeze layer2** when continuing (keep conv1 + layer1 frozen) to allow more encoder fine-tuning
+- **Lower decoder/head LR to ~0.00005** since you're continuing from a good checkpoint
+- **Another 50-100 epochs** should be sufficient with improved annotations
+
+</details>
+
+**Tips for getting better LLM analysis:**
+
+- Include the **full log**, not just a summary -- the per-epoch per-class breakdown is where the insights are
+- Mention how many images and what tissue type you're working with
+- Include the links to the documentation so the LLM understands the available parameters
+- Ask specifically about what to change for the **next** training run
