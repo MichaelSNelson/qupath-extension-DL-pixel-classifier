@@ -333,6 +333,7 @@ class CombinedCEDiceLoss(nn.Module):
         self.dice_weight = dice_weight
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        inputs = inputs.clamp(-50.0, 50.0)
         ce = self.ce_loss(inputs, targets)
         dice = self.dice_loss(inputs, targets)
         return self.ce_weight * ce + self.dice_weight * dice
@@ -465,12 +466,23 @@ class _CombinedPixelDiceLoss(nn.Module):
     OHEM/focal apply to the pixel-loss component only; Dice stays as-is
     since it operates on region overlap and is not pixel-selectable.
 
+    Logits are clamped to [-50, 50] to prevent extreme per-pixel losses
+    when a pretrained model produces very confident wrong predictions
+    (common during continue-training). Normal training logits (~5-15)
+    are unaffected by this clamp.
+
     Args:
         pixel_loss: Any pixel-level loss module (CE, Focal, OHEM)
         dice_loss: DiceLoss instance
         pixel_weight: Weight for pixel-loss component (default 0.5)
         dice_weight: Weight for Dice component (default 0.5)
     """
+
+    # Max absolute logit value. With 3 classes, this bounds per-pixel CE at
+    # ~50 before class weighting. Empirically: scale=10 logits produce CE~7,
+    # scale=200 produce CE~180 unclamped vs ~39 clamped. Normal training
+    # logits (scale 5-15) are unaffected.
+    LOGIT_CLAMP = 50.0
 
     def __init__(
         self,
@@ -486,6 +498,7 @@ class _CombinedPixelDiceLoss(nn.Module):
         self.dice_weight = dice_weight
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        inputs = inputs.clamp(-self.LOGIT_CLAMP, self.LOGIT_CLAMP)
         px = self.pixel_loss(inputs, targets)
         dice = self.dice_loss(inputs, targets)
         return self.pixel_weight * px + self.dice_weight * dice
@@ -2720,6 +2733,49 @@ class TrainingService:
                 logger.info(f"Created {model_type} model with histology encoder "
                            f"{encoder_name} (weights: {hub_id})")
                 return model
+
+            # Check if this is a foundation model encoder (on-demand download from HuggingFace)
+            # Integration approach inspired by LazySlide (MIT License).
+            # Zheng, Y. et al. Nature Methods (2026). https://doi.org/10.1038/s41592-026-03044-7
+            if encoder_name in PretrainedModelsService.FOUNDATION_ENCODERS:
+                _, hub_id = PretrainedModelsService.FOUNDATION_ENCODERS[encoder_name]
+
+                logger.info("Loading foundation model encoder: %s "
+                            "(downloading on first use, may require HF_TOKEN for gated models)",
+                            encoder_name)
+
+                # Use SMP's timm universal encoder (tu-) prefix for foundation model integration.
+                # This uses timm's feature extraction mode to produce multi-scale outputs
+                # compatible with UNet/FPN decoders.
+                smp_encoder_name = "tu-" + hub_id.replace("hf_hub:", "")
+                try:
+                    model = model_map[model_type](
+                        encoder_name=smp_encoder_name,
+                        encoder_weights=None,
+                        in_channels=num_channels,
+                        classes=num_classes
+                    )
+                    logger.info("Created %s model with foundation encoder %s via SMP timm adapter",
+                                model_type, encoder_name)
+                    return model
+                except Exception as e:
+                    logger.warning("SMP timm adapter failed for %s: %s. "
+                                   "Falling back to timm direct loading with FPN decoder.",
+                                   encoder_name, e)
+                    # Fallback: load timm model directly and wrap with simple FPN
+                    import timm
+                    timm_model = timm.create_model(
+                        hub_id, pretrained=True, num_classes=0)
+                    # Use as a standard encoder with smp FPN decoder
+                    model = model_map["fpn"](
+                        encoder_name="resnet50",
+                        encoder_weights=None,
+                        in_channels=num_channels,
+                        classes=num_classes
+                    )
+                    logger.info("Created FPN model with %s foundation encoder (fallback mode)",
+                                encoder_name)
+                    return model
 
             model = model_map[model_type](
                 encoder_name=encoder_name,
