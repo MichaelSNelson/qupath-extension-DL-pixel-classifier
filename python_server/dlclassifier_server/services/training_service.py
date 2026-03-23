@@ -1834,7 +1834,10 @@ class TrainingService:
                     if use_mixed_precision:
                         with torch.amp.autocast("cuda", dtype=amp_dtype):
                             outputs = model(images)
-                            loss = criterion(outputs, masks)
+                        # Compute val loss in FP32 to avoid BF16 overflow.
+                        # BF16 logits from confident pretrained models can
+                        # overflow exp() in cross-entropy, producing inf loss.
+                        loss = criterion(outputs.float(), masks)
                     else:
                         outputs = model(images)
                         loss = criterion(outputs, masks)
