@@ -49,7 +49,7 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 
 ## Installation
 
-1. **Download** the latest JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page
+1. **Download** the latest JAR from the [GitHub Releases](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/releases) page
 2. **Install** the JAR using one of these methods:
    - **Drag and drop** the JAR file directly onto the open QuPath window (easiest), or
    - **Copy** the JAR manually to your QuPath extensions directory:
@@ -143,7 +143,7 @@ The setup wizard reports which GPU backend was detected at completion. See [docs
 ## Architecture
 
 ```
-qupath-extension-DL-pixel-classifier/
+qupath-extension-dl-pixel-classifier/
 ├── src/main/java/qupath/ext/dlclassifier/
 │   ├── SetupDLClassifier.java        # Extension entry point & menu management
 │   ├── DLClassifierChecks.java       # Startup validation
@@ -207,8 +207,8 @@ qupath-extension-DL-pixel-classifier/
 ### Building from source
 
 ```bash
-git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
-cd qupath-extension-DL-pixel-classifier
+git clone https://github.com/uw-loci/qupath-extension-dl-pixel-classifier.git
+cd qupath-extension-dl-pixel-classifier
 ./gradlew build
 ```
 

@@ -40,7 +40,7 @@ Run `nvidia-smi` in a terminal to check your driver version. Update from [NVIDIA
 
 ### Download the JAR
 
-Download the latest release JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page.
+Download the latest release JAR from the [GitHub Releases](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/releases) page.
 
 ### Install the JAR
 
@@ -145,8 +145,8 @@ If issues occur, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 ### Build the extension
 
 ```bash
-git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
-cd qupath-extension-DL-pixel-classifier
+git clone https://github.com/uw-loci/qupath-extension-dl-pixel-classifier.git
+cd qupath-extension-dl-pixel-classifier
 ./gradlew build
 ```
 

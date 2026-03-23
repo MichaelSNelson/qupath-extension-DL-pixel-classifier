@@ -1483,7 +1483,7 @@ public class TrainingDialog {
                     "NOT recommended for fluorescence or multi-channel images --\n" +
                     "use ImageNet backbones (resnet34/50) for IF instead.\n" +
                     "~100MB download on first use (cached).",
-                    "https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection",
+                    "https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection",
                     backboneLabel, backboneCombo);
             grid.add(backboneLabel, 0, row);
             grid.add(backboneCombo, 1, row);

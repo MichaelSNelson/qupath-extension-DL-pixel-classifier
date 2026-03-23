@@ -716,7 +716,7 @@ public class ApposeService {
      */
     private static final String DL_SERVER_PIP_URL =
             "dlclassifier-server @ https://github.com/uw-loci/"
-                    + "qupath-extension-DL-pixel-classifier/archive/refs/heads/"
+                    + "qupath-extension-dl-pixel-classifier/archive/refs/heads/"
                     + "master.tar.gz#subdirectory=python_server";
 
     /**

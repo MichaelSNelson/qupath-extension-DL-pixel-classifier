@@ -116,7 +116,7 @@ After a training run, copy the training log from the QuPath log window and paste
 
 **Example prompt:**
 
-> I am training a deep learning pixel classifier for H&E histology images using the [DL Pixel Classifier extension for QuPath](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier). The training configuration and parameter documentation is here: [PARAMETERS.md](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/PARAMETERS.md) and [TRAINING_GUIDE.md](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/blob/main/docs/TRAINING_GUIDE.md).
+> I am training a deep learning pixel classifier for H&E histology images using the [DL Pixel Classifier extension for QuPath](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier). The training configuration and parameter documentation is here: [PARAMETERS.md](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/PARAMETERS.md) and [TRAINING_GUIDE.md](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/TRAINING_GUIDE.md).
 >
 > I currently have patches across about 10 whole slide H&E images. Please analyze the following training results and provide suggestions for what could be improved when I continue training.
 

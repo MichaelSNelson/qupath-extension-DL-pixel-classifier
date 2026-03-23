@@ -2,7 +2,7 @@
  * Export RGB Brightfield Training Tiles for DL Pixel Classifier
  *
  * Exports paired image tiles and label masks from annotated RGB brightfield
- * images, producing training data compatible with qupath-extension-DL-pixel-classifier.
+ * images, producing training data compatible with qupath-extension-dl-pixel-classifier.
  *
  * This is a standalone script that uses only QuPath's built-in APIs -- no
  * extension dependencies are required. It is intended as an intermediate step

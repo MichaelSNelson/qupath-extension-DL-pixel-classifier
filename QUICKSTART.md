@@ -21,7 +21,7 @@ Get from zero to your first trained pixel classifier in about 10 minutes.
 
 ## Step 1: Install the Extension
 
-1. Download the latest JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page
+1. Download the latest JAR from the [GitHub Releases](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/releases) page
 2. **Drag and drop** the JAR directly onto the open QuPath window (easiest), or copy it manually to your QuPath extensions directory:
 
 | OS | Typical extensions path |
@@ -194,8 +194,8 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for the full troubleshoot
 > This section is for **developers** contributing to the extension. End-users should download the pre-built JAR from GitHub Releases (see Step 1 above).
 
 ```bash
-git clone https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git
-cd qupath-extension-DL-pixel-classifier
+git clone https://github.com/uw-loci/qupath-extension-dl-pixel-classifier.git
+cd qupath-extension-dl-pixel-classifier
 ./gradlew build
 ```
 

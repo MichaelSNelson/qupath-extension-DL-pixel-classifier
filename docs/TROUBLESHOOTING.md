@@ -374,7 +374,7 @@ When filing a bug report, please include:
 4. **Steps to reproduce** -- what you did, what you expected, what happened
 5. **Image details** -- image type (brightfield/fluorescence), channel count, bit depth
 
-File issues at the [GitHub repository](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/issues).
+File issues at the [GitHub repository](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/issues).
 
 ## Diagnostic Commands
 
