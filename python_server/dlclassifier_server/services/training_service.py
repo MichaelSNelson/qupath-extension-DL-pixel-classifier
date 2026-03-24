@@ -2108,7 +2108,8 @@ class TrainingService:
                 # Best epoch IS the last epoch -- same model
                 cancel_best_model_path = cancel_last_model_path
             # Clean up in-progress best model (proper models saved above)
-            self._cleanup_best_in_progress(model_type)
+            self._cleanup_best_in_progress(
+                model_type, training_params.get("classifier_name"))
             # Free GPU memory
             model = model.cpu()
             self.gpu_manager.clear_cache()
@@ -2539,8 +2540,15 @@ class TrainingService:
         checkpoint_dir = Path(os.path.expanduser("~/.dlclassifier/checkpoints"))
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        import re
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        checkpoint_path = checkpoint_dir / f"checkpoint_{model_type}_{timestamp}.pt"
+        cls_name = training_config.get("training_params", {}).get(
+            "classifier_name", "")
+        if cls_name:
+            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", cls_name).lower()
+            checkpoint_path = checkpoint_dir / f"checkpoint_{safe_name}_{timestamp}.pt"
+        else:
+            checkpoint_path = checkpoint_dir / f"checkpoint_{model_type}_{timestamp}.pt"
 
         checkpoint = {
             "model_state_dict": model.state_dict(),
@@ -2616,10 +2624,9 @@ class TrainingService:
         used to either recover the best model (finalize_training.py) or
         resume training (same format as _save_checkpoint).
 
-        The saved format is identical to _save_checkpoint: includes model,
-        optimizer, scheduler, early stopping, and training history state.
-        At the point of saving, model_state_dict == best_model_state since
-        this is called immediately when a new best epoch is found.
+        The filename includes the classifier name (if available) so that
+        multiple concurrent or sequential training runs don't overwrite
+        each other's checkpoints.
 
         Returns:
             Path to the saved file.
@@ -2627,7 +2634,16 @@ class TrainingService:
         checkpoint_dir = Path(os.path.expanduser("~/.dlclassifier/checkpoints"))
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        save_path = checkpoint_dir / f"best_in_progress_{model_type}.pt"
+        # Use classifier_name for unique per-model checkpoint filenames.
+        # Falls back to model_type if classifier_name is not available.
+        import re
+        cls_name = training_config.get("training_params", {}).get(
+            "classifier_name", "")
+        if cls_name:
+            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", cls_name).lower()
+            save_path = checkpoint_dir / f"best_in_progress_{safe_name}.pt"
+        else:
+            save_path = checkpoint_dir / f"best_in_progress_{model_type}.pt"
 
         data = {
             "model_state_dict": model.state_dict(),
@@ -2657,13 +2673,20 @@ class TrainingService:
         logger.info(f"  Best checkpoint saved to disk (epoch {best_epoch}): {save_path}")
         return str(save_path)
 
-    def _cleanup_best_in_progress(self, model_type: str) -> None:
+    def _cleanup_best_in_progress(self, model_type: str,
+                                   classifier_name: Optional[str] = None) -> None:
         """Remove the in-progress best model file after training completes normally.
 
         Called after successful completion or cancellation, when the final model
         has been saved properly via _save_model().
         """
-        save_path = Path(os.path.expanduser("~/.dlclassifier/checkpoints")) / f"best_in_progress_{model_type}.pt"
+        import re
+        checkpoint_dir = Path(os.path.expanduser("~/.dlclassifier/checkpoints"))
+        if classifier_name:
+            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", classifier_name).lower()
+            save_path = checkpoint_dir / f"best_in_progress_{safe_name}.pt"
+        else:
+            save_path = checkpoint_dir / f"best_in_progress_{model_type}.pt"
         if save_path.exists():
             save_path.unlink()
             logger.debug(f"Cleaned up in-progress best model: {save_path}")
