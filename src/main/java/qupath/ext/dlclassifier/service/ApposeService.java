@@ -121,6 +121,50 @@ public class ApposeService {
     }
 
     /**
+     * Re-installs the dlclassifier-server pip package without rebuilding
+     * the entire environment. Used for auto-rebuild when the JAR version
+     * doesn't match the installed pip package.
+     * <p>
+     * After reinstalling, the Python worker must be restarted for the new
+     * code to take effect. This method stops the existing worker if running,
+     * reinstalls the package, and restarts.
+     *
+     * @param statusCallback optional callback for progress messages
+     * @throws IOException if pip install fails
+     */
+    public synchronized void upgradeServerPackage(Consumer<String> statusCallback) throws IOException {
+        if (environment == null) {
+            throw new IOException("Environment not initialized -- cannot upgrade");
+        }
+        report(statusCallback, "Upgrading DL classifier server package...");
+
+        // Stop existing Python worker so it releases the old module
+        if (pythonService != null) {
+            try {
+                pythonService.close();
+            } catch (Exception e) {
+                logger.debug("Error closing Python service before upgrade: {}", e.getMessage());
+            }
+            pythonService = null;
+        }
+
+        // Re-run pip install
+        installDLClassifierServer(statusCallback);
+
+        // Restart Python service
+        report(statusCallback, "Restarting Python service...");
+        pythonService = environment.python();
+        pythonService.debug(msg -> logger.info("[Appose Python] {}", msg));
+
+        // Run init script
+        String initScript = loadResource("init_services.py");
+        pythonService.init(initScript);
+
+        report(statusCallback, "Upgrade complete");
+        logger.info("dlclassifier-server package upgraded successfully");
+    }
+
+    /**
      * Builds the pixi environment and starts the Python service with
      * status reporting and optional ONNX support.
      * <p>

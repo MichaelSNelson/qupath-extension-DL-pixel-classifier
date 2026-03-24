@@ -170,18 +170,68 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
                 if (!healthy || (versionWarn != null && !versionWarn.isEmpty())) {
                     serverAvailable = false;
-                    String message = versionWarn != null && !versionWarn.isEmpty()
-                            ? versionWarn
-                            : "Python environment health check failed.";
-                    logger.error("Environment version mismatch: {}", message);
-                    Platform.runLater(() -> {
-                        environmentReady.set(false);
-                        Dialogs.showErrorNotification(
-                                EXTENSION_NAME,
-                                "Python package version mismatch.\n" +
-                                        "Go to Extensions > " + EXTENSION_NAME +
-                                        " > Utilities >\nRebuild DL Environment to update.");
-                    });
+
+                    // Auto-rebuild if preference is enabled
+                    if (DLClassifierPreferences.isAutoRebuildEnvironment()) {
+                        logger.info("Version mismatch detected -- auto-rebuilding environment");
+                        Platform.runLater(() -> {
+                            environmentReady.set(false);
+                            Dialogs.showInfoNotification(
+                                    EXTENSION_NAME,
+                                    "Updating Python environment to match extension.\n" +
+                                            "Workflow menu items will re-appear when complete.");
+                        });
+                        try {
+                            ApposeService.getInstance().upgradeServerPackage(
+                                    msg -> logger.info("[Auto-rebuild] {}", msg));
+
+                            // Re-check health after upgrade
+                            boolean healthyNow = backend.checkHealth();
+                            String warnNow = ApposeClassifierBackend.getVersionWarning();
+                            if (healthyNow && (warnNow == null || warnNow.isEmpty())) {
+                                serverAvailable = true;
+                                Platform.runLater(() -> {
+                                    environmentReady.set(true);
+                                    Dialogs.showInfoNotification(
+                                            EXTENSION_NAME,
+                                            "Python environment updated successfully.");
+                                });
+                                logger.info("Auto-rebuild completed successfully");
+                            } else {
+                                logger.error("Auto-rebuild completed but health check still fails");
+                                Platform.runLater(() -> {
+                                    environmentReady.set(false);
+                                    Dialogs.showErrorNotification(
+                                            EXTENSION_NAME,
+                                            "Auto-rebuild failed. Use Utilities >\n" +
+                                                    "Rebuild DL Environment manually.");
+                                });
+                            }
+                        } catch (Exception rebuildEx) {
+                            logger.error("Auto-rebuild failed: {}", rebuildEx.getMessage());
+                            Platform.runLater(() -> {
+                                environmentReady.set(false);
+                                Dialogs.showErrorNotification(
+                                        EXTENSION_NAME,
+                                        "Auto-rebuild failed: " + rebuildEx.getMessage() +
+                                                "\nUse Utilities > Rebuild DL Environment manually.");
+                            });
+                        }
+                    } else {
+                        // Manual rebuild required
+                        String message = versionWarn != null && !versionWarn.isEmpty()
+                                ? versionWarn
+                                : "Python environment health check failed.";
+                        logger.error("Environment version mismatch: {}", message);
+                        Platform.runLater(() -> {
+                            environmentReady.set(false);
+                            Dialogs.showErrorNotification(
+                                    EXTENSION_NAME,
+                                    "Python package version mismatch.\n" +
+                                            "Go to Extensions > " + EXTENSION_NAME +
+                                            " > Utilities >\nRebuild DL Environment to update.");
+                        });
+                    }
                 } else {
                     serverAvailable = true;
                     logger.info("Appose backend initialized successfully (background)");

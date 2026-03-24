@@ -152,6 +152,12 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty overlayNoticeDismissed = PathPrefs.createPersistentPreference(
             "dlclassifier.overlayNoticeDismissed", false);
 
+    // ==================== Environment ====================
+
+    // Automatically rebuild the Python environment when extension version changes
+    private static final BooleanProperty autoRebuildEnvironment = PathPrefs.createPersistentPreference(
+            "dlclassifier.autoRebuildEnvironment", true);
+
     // ==================== Menu Appearance ====================
 
     // Show colored dot next to extension name in the Extensions menu
@@ -199,6 +205,16 @@ public final class DLClassifierPreferences {
                 .description("Directory for exporting training data patches. " +
                         "If empty, the system temporary directory is used. " +
                         "Set to a directory on a larger drive if temp space is limited.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(autoRebuildEnvironment, Boolean.class)
+                .name("Auto-Rebuild Environment on Update")
+                .category(CATEGORY)
+                .description("Automatically rebuild the Python environment in the background " +
+                        "when the extension JAR is updated. While rebuilding, all workflow " +
+                        "menu items (Train, Apply Classifier, Overlay) are temporarily " +
+                        "disabled and re-enabled once the rebuild completes. " +
+                        "Disable this if you prefer to rebuild manually via Utilities.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
@@ -695,6 +711,20 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty createBackupProperty() {
         return createBackup;
+    }
+
+    // ==================== Environment ====================
+
+    public static boolean isAutoRebuildEnvironment() {
+        return autoRebuildEnvironment.get();
+    }
+
+    public static void setAutoRebuildEnvironment(boolean auto) {
+        autoRebuildEnvironment.set(auto);
+    }
+
+    public static BooleanProperty autoRebuildEnvironmentProperty() {
+        return autoRebuildEnvironment;
     }
 
     // ==================== Menu Appearance ====================
