@@ -529,21 +529,62 @@ public class ModelManager {
      * @return path to the model file (ONNX or PT)
      */
     public Optional<Path> getModelPath(String classifierId) {
-        // Try project
+        // Try project -- direct directory name match
         Project<?> project = QuPathGUI.getInstance().getProject();
         if (project != null) {
-            Path projectDir = project.getPath().getParent()
-                    .resolve(CLASSIFIERS_DIR)
-                    .resolve(classifierId);
+            Path classifiersDir = project.getPath().getParent()
+                    .resolve(CLASSIFIERS_DIR);
+            Path projectDir = classifiersDir.resolve(classifierId);
             Optional<Path> modelPath = findModelFile(projectDir);
             if (modelPath.isPresent()) {
                 return modelPath;
+            }
+
+            // Fallback: scan all project classifier dirs for matching metadata ID.
+            // The directory name (Java classifierId) often differs from the metadata
+            // ID (Python model_id) -- e.g. "resnet50kather_1774316832282" vs
+            // "unet_20260323_155210".
+            Optional<Path> scanned = scanForModelById(classifiersDir, classifierId);
+            if (scanned.isPresent()) {
+                return scanned;
             }
         }
 
         // Try user directory
         Path userDir = userClassifiersDir.resolve(classifierId);
-        return findModelFile(userDir);
+        Optional<Path> userModel = findModelFile(userDir);
+        if (userModel.isPresent()) {
+            return userModel;
+        }
+
+        // Fallback scan in user directory
+        return scanForModelById(userClassifiersDir, classifierId);
+    }
+
+    /**
+     * Scans classifier directories for one whose metadata.json has a matching ID.
+     */
+    private Optional<Path> scanForModelById(Path classifiersRoot, String targetId) {
+        if (!Files.isDirectory(classifiersRoot)) {
+            return Optional.empty();
+        }
+        try (var dirs = Files.list(classifiersRoot)) {
+            for (Path dir : dirs.toList()) {
+                if (!Files.isDirectory(dir)) continue;
+                Path metaPath = dir.resolve(METADATA_FILE);
+                if (!Files.exists(metaPath)) continue;
+                try {
+                    String json = Files.readString(metaPath);
+                    var obj = JsonParser.parseString(json).getAsJsonObject();
+                    if (obj.has("id") && targetId.equals(obj.get("id").getAsString())) {
+                        return findModelFile(dir);
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (IOException e) {
+            logger.debug("Failed to scan classifiers dir: {}", e.getMessage());
+        }
+        return Optional.empty();
     }
 
     /**
