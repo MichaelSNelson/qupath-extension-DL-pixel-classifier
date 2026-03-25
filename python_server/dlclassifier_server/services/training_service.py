@@ -1693,11 +1693,13 @@ class TrainingService:
         # standard BatchNorm behavior and destabilize validation.
         brenorm_rmax_target = 3.0
         brenorm_dmax_target = 5.0
-        if pretrained_model_path or checkpoint_path:
+        has_pretrained_weights = (pretrained_model_path or checkpoint_path
+                                  or (frozen_layers and len(frozen_layers) > 0))
+        if has_pretrained_weights:
             brenorm_warmup_epochs = 0
             set_batchrenorm_limits(model, rmax=brenorm_rmax_target,
                                   dmax=brenorm_dmax_target)
-            logger.info("BatchRenorm warmup skipped (continuing from pretrained model)")
+            logger.info("BatchRenorm warmup skipped (pretrained encoder weights)")
         else:
             brenorm_warmup_epochs = max(1, int(epochs * 0.2))
 
@@ -1756,6 +1758,22 @@ class TrainingService:
 
             # Train epoch
             model.train()
+
+            # Freeze BN/BatchRenorm in frozen encoder layers so they use
+            # pretrained running statistics instead of noisy batch statistics.
+            # With small batches (4-8), batch stats are too noisy and cause
+            # wild validation oscillation.
+            if frozen_layers:
+                frozen_bn_count = 0
+                for name, module in model.named_modules():
+                    if any(name.startswith(fl) for fl in frozen_layers):
+                        module.eval()
+                        frozen_bn_count += 1
+                if epoch == start_epoch and frozen_bn_count > 0:
+                    logger.info("Frozen %d modules in eval mode "
+                                "(BN uses pretrained running stats)",
+                                frozen_bn_count)
+
             train_loss = 0.0
 
             # Gradient accumulation support
