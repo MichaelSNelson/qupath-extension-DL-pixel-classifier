@@ -342,20 +342,32 @@ public class TrainingWorkflow {
                 + "  - A modern NVIDIA GPU with CUDA support is strongly recommended.\n"
                 + "    Without GPU acceleration, training can be extremely slow.\n"
                 + "  - Fast storage (SSD/NVMe) and a modern CPU also help, but training\n"
-                + "    will always take time -- minutes to hours depending on dataset size.\n"
-                + "  - Check the Tips & Tricks guide (Extensions > DL Pixel Classifier >\n"
-                + "    documentation) for ways to speed up training.\n\n"
+                + "    will always take time -- minutes to hours depending on dataset size.\n\n"
                 + "Tips for creating training annotations efficiently:\n"
                 + "  - Use QuPath's built-in Pixel Classifier to generate initial annotations,\n"
                 + "    then correct mistakes manually.\n"
                 + "  - Use the Segment Anything Model (SAM) extension for targeted regions,\n"
                 + "    then refine the results.\n"
                 + "  - Editing existing annotations is much faster than drawing from scratch.\n"
-                + "  - A small number of high-quality annotations is better than many poor ones.");
+                + "  - High-quality annotations give high-quality results, and more is better.\n"
+                + "    Beware of getting sloppy at the end of a long annotation session --\n"
+                + "    consistency in labeling is important.");
         message.setWrapText(true);
         message.setMaxWidth(520);
 
-        javafx.scene.layout.VBox content = new javafx.scene.layout.VBox(12, message, neverAgain);
+        javafx.scene.control.Hyperlink tipsLink = new javafx.scene.control.Hyperlink(
+                "Tips & Tricks Guide");
+        tipsLink.setOnAction(ev -> {
+            try {
+                java.awt.Desktop.getDesktop().browse(java.net.URI.create(
+                        "https://github.com/uw-loci/qupath-extension-dl-pixel-classifier"
+                        + "/blob/main/docs/TIPS_AND_TRICKS.md"));
+            } catch (Exception ex) {
+                logger.debug("Could not open Tips & Tricks URL: {}", ex.getMessage());
+            }
+        });
+
+        javafx.scene.layout.VBox content = new javafx.scene.layout.VBox(12, message, tipsLink, neverAgain);
         content.setPadding(new javafx.geometry.Insets(10));
 
         javafx.scene.control.Dialog<javafx.scene.control.ButtonType> dialog = new javafx.scene.control.Dialog<>();
