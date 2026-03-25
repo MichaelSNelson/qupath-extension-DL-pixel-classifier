@@ -3944,39 +3944,71 @@ public class TrainingDialog {
                     + "download 200MB-2GB on first use. Best when you have limited labeled data."));
 
             content.getChildren().add(createModelEntry(
-                    "H-optimus-0 (Bioptimus)",
+                    "H-optimus-0 (Bioptimus) -- GATED",
                     "ViT-G pathology foundation model trained on 500K+ whole slide images. "
-                    + "1.1B parameters, 1536-dim features. Apache 2.0 license.",
+                    + "1.1B parameters, 1536-dim features. Apache 2.0 license. "
+                    + "Requires HuggingFace token (see below).",
                     "Filiot et al. 2024",
                     "https://arxiv.org/abs/2309.07778"));
 
             content.getChildren().add(createModelEntry(
-                    "Virchow (Paige AI)",
+                    "Virchow (Paige AI) -- GATED",
                     "ViT-H pathology foundation model trained on 1.5M slides from "
-                    + "diverse tissue types. 632M parameters. Apache 2.0 license.",
+                    + "diverse tissue types. 632M parameters. Apache 2.0 license. "
+                    + "Requires HuggingFace token (see below).",
                     "Vorontsov et al. 2024",
                     "https://arxiv.org/abs/2309.07778"));
 
             content.getChildren().add(createModelEntry(
-                    "Hibou-B / Hibou-L (HistAI)",
+                    "Hibou-B / Hibou-L (HistAI) -- GATED",
                     "DINOv2-based pathology models. Hibou-B (86M params) is lighter, "
-                    + "Hibou-L (304M params) is more powerful. Apache 2.0 license.",
+                    + "Hibou-L (304M params) is more powerful. Apache 2.0 license. "
+                    + "Requires HuggingFace token (see below).",
                     "Nechaev et al. 2024",
                     "https://arxiv.org/abs/2406.09414"));
 
             content.getChildren().add(createModelEntry(
-                    "Midnight (Kaiko AI)",
+                    "Midnight (Kaiko AI) -- ungated",
                     "ViT-G trained on TCGA data only. 1.1B parameters. "
-                    + "MIT license (fully permissive, ungated).",
+                    + "MIT license. No authentication required.",
                     null, null));
 
             content.getChildren().add(createModelEntry(
-                    "DINOv2-Large (Meta)",
+                    "DINOv2-Large (Meta) -- ungated",
                     "General-purpose vision transformer, not histology-specific. "
                     + "Can work for non-H&E or unusual staining. 304M parameters. "
-                    + "Apache 2.0 license.",
+                    + "Apache 2.0 license. No authentication required.",
                     "Oquab et al. 2024",
                     "https://arxiv.org/abs/2304.07193"));
+
+            // --- Gated Model Access ---
+            content.getChildren().add(createSectionHeader(
+                    "Accessing Gated Models (HuggingFace Token)"));
+            Label gatedExplain = new Label(
+                    "Some foundation models (marked GATED above) require you to accept "
+                    + "a license agreement on HuggingFace before downloading. To use them:\n\n"
+                    + "1. Create a free account at huggingface.co\n"
+                    + "2. Visit the model's page (e.g. bioptimus/H-optimus-0) and click\n"
+                    + "   'Agree and access repository' to accept the license\n"
+                    + "3. Create an access token at huggingface.co/settings/tokens\n"
+                    + "4. Set the HF_TOKEN environment variable before launching QuPath:\n"
+                    + "   Windows: set HF_TOKEN=hf_your_token_here (in a command prompt)\n"
+                    + "   Mac/Linux: export HF_TOKEN=hf_your_token_here\n\n"
+                    + "Ungated models (Midnight, DINOv2) work without any setup.\n"
+                    + "Histology-pretrained encoders (Lunit, Kather) are also ungated.");
+            gatedExplain.setWrapText(true);
+            content.getChildren().add(gatedExplain);
+
+            Hyperlink hfTokenLink = new Hyperlink("HuggingFace: Create Access Token");
+            hfTokenLink.setOnAction(e -> {
+                try {
+                    java.awt.Desktop.getDesktop().browse(
+                            java.net.URI.create("https://huggingface.co/settings/tokens"));
+                } catch (Exception ex) {
+                    logger.debug("Could not open HuggingFace URL: {}", ex.getMessage());
+                }
+            });
+            content.getChildren().add(hfTokenLink);
 
             // --- Recommendation ---
             content.getChildren().add(createSectionHeader("Quick Recommendation"));
