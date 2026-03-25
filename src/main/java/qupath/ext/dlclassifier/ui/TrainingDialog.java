@@ -3583,21 +3583,16 @@ public class TrainingDialog {
          * then updates the VRAM estimate label when done.
          */
         private void cacheGpuMemory() {
-            CompletableFuture.runAsync(() -> {
-                try {
-                    ApposeService appose = ApposeService.getInstance();
-                    if (appose.isAvailable() && "cuda".equals(appose.getGpuType())) {
-                        var task = appose.runTask("health_check", java.util.Map.of());
-                        Object mem = task.outputs.get("gpu_memory_mb");
-                        if (mem instanceof Number n) {
-                            gpuTotalMb = n.intValue();
-                            Platform.runLater(this::updateVramEstimate);
-                        }
-                    }
-                } catch (Exception e) {
-                    logger.debug("Could not cache GPU memory: {}", e.getMessage());
+            try {
+                ApposeService appose = ApposeService.getInstance();
+                if (appose.isAvailable() && "cuda".equals(appose.getGpuType())) {
+                    // Use cached GPU memory from the combined verification/health
+                    // task that ran during initialize() -- no separate task needed.
+                    gpuTotalMb = appose.getLastGpuMemoryMb();
                 }
-            });
+            } catch (Exception e) {
+                logger.debug("Could not cache GPU memory: {}", e.getMessage());
+            }
         }
 
         /**

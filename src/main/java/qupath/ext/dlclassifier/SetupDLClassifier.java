@@ -158,15 +158,18 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     private void startBackgroundInitialization() {
         Thread initThread = new Thread(() -> {
             try {
-                ApposeService.getInstance().initialize();
+                Platform.runLater(() -> Dialogs.showInfoNotification(
+                        EXTENSION_NAME,
+                        "Setting up Python environment (first time may take a minute)..."));
 
-                // Verify the Python package version matches this JAR.
-                // init_services.py blocks services when versions mismatch,
-                // but Appose itself starts fine -- we must check health to
-                // detect the mismatch and disable menu items.
-                ClassifierBackend backend = BackendFactory.getBackend();
-                boolean healthy = backend.checkHealth();
-                String versionWarn = ApposeClassifierBackend.getVersionWarning();
+                ApposeService appose = ApposeService.getInstance();
+                appose.initialize();
+
+                // Use cached health/version info from the combined verification
+                // task inside initialize().  This avoids a separate health check
+                // task that can crash when the Appose worker exits between tasks.
+                boolean healthy = appose.isLastHealthy();
+                String versionWarn = appose.getLastVersionWarning();
 
                 if (!healthy || (versionWarn != null && !versionWarn.isEmpty())) {
                     serverAvailable = false;
@@ -202,8 +205,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     msg -> logger.info("[Auto-rebuild] {}", msg));
 
                             // Re-check health after upgrade
-                            boolean healthyNow = backend.checkHealth();
-                            String warnNow = ApposeClassifierBackend.getVersionWarning();
+                            boolean healthyNow = appose.isLastHealthy();
+                            String warnNow = appose.getLastVersionWarning();
                             if (healthyNow && (warnNow == null || warnNow.isEmpty())) {
                                 serverAvailable = true;
                                 Platform.runLater(() -> {

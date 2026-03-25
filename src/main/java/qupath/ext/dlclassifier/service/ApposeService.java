@@ -52,6 +52,13 @@ public class ApposeService {
     private boolean initialized;
     private boolean cudaAvailable;
     private String gpuType = "cpu";  // "cuda", "mps", or "cpu"
+
+    // Cached health check results from the combined verification task
+    private volatile boolean lastHealthy;
+    private volatile String lastServerVersion = "unknown";
+    private volatile String lastVersionWarning = "";
+    private volatile int lastGpuMemoryMb;
+    private volatile String lastGpuName = "";
     private String initError;
     private Thread shutdownHook;
 
@@ -265,6 +272,9 @@ public class ApposeService {
                 report(statusCallback, "Verifying installed packages (this may take a moment)...");
                 logger.info("Running environment verification task...");
 
+                // Combined verification + health check task.  The Appose
+                // worker may exit after this task completes, so we must get
+                // ALL needed info (packages, GPU, version, health) in one shot.
                 String verifyScript =
                         "import torch\n" +
                         "import segmentation_models_pytorch\n" +
@@ -277,7 +287,19 @@ public class ApposeService {
                         "mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()\n" +
                         "task.outputs['mps_available'] = str(mps)\n" +
                         "task.outputs['gpu_type'] = 'cuda' if torch.cuda.is_available() " +
-                        "else ('mps' if mps else 'cpu')\n";
+                        "else ('mps' if mps else 'cpu')\n" +
+                        // Health check: service status + version info
+                        "task.outputs['healthy'] = inference_service is not None\n" +
+                        "if gpu_manager is not None:\n" +
+                        "    info = gpu_manager.get_info()\n" +
+                        "    task.outputs['gpu_name'] = info.get('name', '')\n" +
+                        "    task.outputs['gpu_memory_mb'] = info.get('total_memory_mb', 0)\n" +
+                        "else:\n" +
+                        "    task.outputs['gpu_name'] = ''\n" +
+                        "    task.outputs['gpu_memory_mb'] = 0\n" +
+                        "import dlclassifier_server as _dls\n" +
+                        "task.outputs['server_version'] = getattr(_dls, '__version__', 'unknown')\n" +
+                        "task.outputs['version_warning'] = globals().get('version_warning', '') or ''\n";
 
                 Task verifyTask = pythonService.task(verifyScript);
                 verifyTask.listen(event -> {
@@ -312,6 +334,17 @@ public class ApposeService {
                     logger.warn("No GPU available -- training and inference will run on CPU (very slow). "
                             + "Rebuild the environment to install GPU-enabled PyTorch.");
                 }
+
+                // Store health check results from combined verification task
+                this.lastHealthy = Boolean.TRUE.equals(verifyTask.outputs.get("healthy"));
+                this.lastServerVersion = String.valueOf(
+                        verifyTask.outputs.getOrDefault("server_version", "unknown"));
+                this.lastVersionWarning = String.valueOf(
+                        verifyTask.outputs.getOrDefault("version_warning", ""));
+                Object gpuMem = verifyTask.outputs.get("gpu_memory_mb");
+                this.lastGpuMemoryMb = gpuMem instanceof Number n ? n.intValue() : 0;
+                this.lastGpuName = String.valueOf(
+                        verifyTask.outputs.getOrDefault("gpu_name", ""));
 
                 initialized = true;
                 initError = null;
@@ -651,6 +684,21 @@ public class ApposeService {
     public String getGpuType() {
         return gpuType;
     }
+
+    /** Cached health status from the combined verification/health check task. */
+    public boolean isLastHealthy() { return lastHealthy; }
+
+    /** Cached server version from the combined verification/health check task. */
+    public String getLastServerVersion() { return lastServerVersion; }
+
+    /** Cached version warning from the combined verification/health check task. */
+    public String getLastVersionWarning() { return lastVersionWarning; }
+
+    /** Cached GPU total memory in MB from the combined verification/health check task. */
+    public int getLastGpuMemoryMb() { return lastGpuMemoryMb; }
+
+    /** Cached GPU name from the combined verification/health check task. */
+    public String getLastGpuName() { return lastGpuName; }
 
     /**
      * Checks whether any GPU acceleration is available (CUDA or MPS).
