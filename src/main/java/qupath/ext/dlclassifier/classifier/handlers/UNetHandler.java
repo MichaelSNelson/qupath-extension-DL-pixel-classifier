@@ -45,7 +45,16 @@ public class UNetHandler implements ClassifierHandler {
             "resnet50_lunit-swav",
             "resnet50_lunit-bt",
             "resnet50_kather100k",
-            "resnet50_tcga-brca"
+            "resnet50_tcga-brca",
+            // Foundation model encoders (downloaded on-demand from HuggingFace).
+            // Only commercially-permissive licenses (Apache 2.0, MIT).
+            // Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods).
+            "h-optimus-0",
+            "virchow",
+            "hibou-l",
+            "hibou-b",
+            "midnight",
+            "dinov2-large"
     );
 
     /** Human-readable display names for backbone encoders. */
@@ -60,7 +69,14 @@ public class UNetHandler implements ClassifierHandler {
             Map.entry("resnet50_lunit-swav", "ResNet-50 Lunit SwAV (Histology)"),
             Map.entry("resnet50_lunit-bt", "ResNet-50 Lunit Barlow Twins (Histology)"),
             Map.entry("resnet50_kather100k", "ResNet-50 Kather100K (Histology)"),
-            Map.entry("resnet50_tcga-brca", "ResNet-50 TCGA-BRCA (Histology)")
+            Map.entry("resnet50_tcga-brca", "ResNet-50 TCGA-BRCA (Histology)"),
+            // Foundation models -- downloaded on-demand, not bundled
+            Map.entry("h-optimus-0", "H-optimus-0 (Apache 2.0, 1.1B params, gated)"),
+            Map.entry("virchow", "Virchow (Apache 2.0, 632M params, gated)"),
+            Map.entry("hibou-l", "Hibou-L (Apache 2.0, 300M params, gated)"),
+            Map.entry("hibou-b", "Hibou-B (Apache 2.0, 86M params, gated)"),
+            Map.entry("midnight", "Midnight (MIT, 1.1B params)"),
+            Map.entry("dinov2-large", "DINOv2-Large (Apache 2.0, general-purpose)")
     );
 
     /**

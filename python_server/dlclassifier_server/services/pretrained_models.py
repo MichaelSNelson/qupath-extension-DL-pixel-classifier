@@ -54,6 +54,25 @@ class PretrainedModelsService:
         "resnet50_tcga-brca": ("resnet50", "hf_hub:1aurent/resnet50.tcga_brca_simclr"),
     }
 
+    # Foundation model encoders: downloaded on-demand from HuggingFace.
+    # Only models with commercially-permissive licenses (Apache 2.0, MIT, CC-BY-4.0) are included.
+    # Integration approach inspired by LazySlide (MIT License).
+    # Zheng, Y. et al. Nature Methods (2026). https://doi.org/10.1038/s41592-026-03044-7
+    FOUNDATION_ENCODERS = {
+        # Apache 2.0 - Bioptimus, 1.1B params, ViT-g, 1536-dim, gated access
+        "h-optimus-0": ("timm_foundation", "hf_hub:bioptimus/H-optimus-0"),
+        # Apache 2.0 - Paige AI, 632M params, ViT-H, 2560-dim, gated access
+        "virchow": ("timm_foundation", "hf_hub:paige-ai/Virchow"),
+        # Apache 2.0 - HistAI, ~300M params, ViT-L/14, 1024-dim, gated access
+        "hibou-l": ("timm_foundation", "hf_hub:histai/hibou-L"),
+        # Apache 2.0 - HistAI, 85.7M params, ViT-B/14, 768-dim, gated access
+        "hibou-b": ("timm_foundation", "hf_hub:histai/hibou-b"),
+        # MIT - Kaiko AI, ViT-G, 1536-dim, ungated (TCGA-only training)
+        "midnight": ("timm_foundation", "hf_hub:kaiko-ai/midnight"),
+        # Apache 2.0 - Meta, ViT-L/14, 1024-dim, ungated (general-purpose, not pathology-specific)
+        "dinov2-large": ("timm_foundation", "hf_hub:facebook/dinov2-large"),
+    }
+
     def __init__(self):
         self._encoders = self._init_encoders()
         self._architectures = self._init_architectures()

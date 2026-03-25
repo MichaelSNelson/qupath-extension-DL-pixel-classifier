@@ -37,6 +37,7 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Mixed precision training** (AMP) for ~2x speedup on CUDA GPUs
 - **Configurable training strategy** via collapsed "Training Strategy" section in the training dialog (scheduler, loss function, early stopping metric/patience, mixed precision)
 - **Histology-pretrained encoders** from TCGA/Lunit/Kather100K for better tissue feature extraction
+- **Foundation model encoders** (h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large) -- large-scale pretrained vision transformers for rich tissue representations, downloaded on-demand from HuggingFace. All commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods).
 - **MuViT (Multi-scale Vision Transformer)** architecture with multi-resolution feature fusion
 - **MAE self-supervised pretraining** for MuViT encoders using unlabeled image tiles (standalone workflow via Utilities menu)
 - **Pluggable architecture** supporting UNet, MuViT, and custom ONNX models
@@ -144,62 +145,62 @@ The setup wizard reports which GPU backend was detected at completion. See [docs
 
 ```
 qupath-extension-dl-pixel-classifier/
-├── src/main/java/qupath/ext/dlclassifier/
-│   ├── SetupDLClassifier.java        # Extension entry point & menu management
-│   ├── DLClassifierChecks.java       # Startup validation
-│   ├── classifier/                    # Classifier type system
-│   │   ├── ClassifierHandler.java
-│   │   ├── ClassifierRegistry.java
-│   │   └── handlers/
-│   │       ├── UNetHandler.java
-│   │       ├── MuViTHandler.java
-│   │       └── CustomONNXHandler.java
-│   ├── controller/                    # Workflow orchestration
-│   │   ├── DLClassifierController.java
-│   │   ├── TrainingWorkflow.java
-│   │   ├── InferenceWorkflow.java
-│   │   └── ModelManagementWorkflow.java
-│   ├── service/                       # Backend services
-│   │   ├── ApposeService.java        # Appose embedded Python management
-│   │   ├── ApposeClassifierBackend.java  # Appose backend implementation
-│   │   ├── ClassifierBackend.java    # Backend interface
-│   │   ├── ClassifierClient.java     # Data records and utilities
-│   │   ├── BackendFactory.java       # Backend initialization
-│   │   ├── DLPixelClassifier.java    # QuPath PixelClassifier integration
-│   │   ├── ModelManager.java
-│   │   └── OverlayService.java
-│   ├── model/                         # Data objects
-│   │   ├── TrainingConfig.java
-│   │   ├── InferenceConfig.java
-│   │   ├── ChannelConfiguration.java
-│   │   └── ClassifierMetadata.java
-│   ├── utilities/                     # Processing utilities
-│   │   ├── AnnotationExtractor.java  # Training data export (single + multi-image)
-│   │   ├── TileProcessor.java
-│   │   ├── ChannelNormalizer.java
-│   │   ├── BitDepthConverter.java
-│   │   └── OutputGenerator.java
-│   ├── ui/                            # UI components
-│   │   ├── TrainingDialog.java
-│   │   ├── InferenceDialog.java
-│   │   ├── SetupEnvironmentDialog.java   # First-time setup wizard
-│   │   ├── ChannelSelectionPanel.java
-│   │   ├── LayerFreezePanel.java
-│   │   ├── ProgressMonitorController.java
-│   │   ├── PythonConsoleWindow.java
-│   │   ├── TrainingAreaIssuesDialog.java  # Post-training tile evaluation results
-│   │   ├── MAEPretrainingDialog.java     # Standalone MAE pretraining config
-│   │   └── TooltipHelper.java
-│   ├── scripting/
-│   │   ├── DLClassifierScripts.java   # Groovy API
-│   │   └── ScriptGenerator.java       # Dialog-to-script generation
-│   └── preferences/
-│       └── DLClassifierPreferences.java
-│
-├── python_server/                     # Python DL library (used by Appose)
-│   └── dlclassifier_server/
-│       ├── services/                  # Training/inference services
-│       └── utils/                     # Shared utilities (normalization, etc.)
+|-- src/main/java/qupath/ext/dlclassifier/
+|   |-- SetupDLClassifier.java        # Extension entry point & menu management
+|   |-- DLClassifierChecks.java       # Startup validation
+|   |-- classifier/                    # Classifier type system
+|   |   |-- ClassifierHandler.java
+|   |   |-- ClassifierRegistry.java
+|   |   `-- handlers/
+|   |       |-- UNetHandler.java
+|   |       |-- MuViTHandler.java
+|   |       `-- CustomONNXHandler.java
+|   |-- controller/                    # Workflow orchestration
+|   |   |-- DLClassifierController.java
+|   |   |-- TrainingWorkflow.java
+|   |   |-- InferenceWorkflow.java
+|   |   `-- ModelManagementWorkflow.java
+|   |-- service/                       # Backend services
+|   |   |-- ApposeService.java        # Appose embedded Python management
+|   |   |-- ApposeClassifierBackend.java  # Appose backend implementation
+|   |   |-- ClassifierBackend.java    # Backend interface
+|   |   |-- ClassifierClient.java     # Data records and utilities
+|   |   |-- BackendFactory.java       # Backend initialization
+|   |   |-- DLPixelClassifier.java    # QuPath PixelClassifier integration
+|   |   |-- ModelManager.java
+|   |   `-- OverlayService.java
+|   |-- model/                         # Data objects
+|   |   |-- TrainingConfig.java
+|   |   |-- InferenceConfig.java
+|   |   |-- ChannelConfiguration.java
+|   |   `-- ClassifierMetadata.java
+|   |-- utilities/                     # Processing utilities
+|   |   |-- AnnotationExtractor.java  # Training data export (single + multi-image)
+|   |   |-- TileProcessor.java
+|   |   |-- ChannelNormalizer.java
+|   |   |-- BitDepthConverter.java
+|   |   `-- OutputGenerator.java
+|   |-- ui/                            # UI components
+|   |   |-- TrainingDialog.java
+|   |   |-- InferenceDialog.java
+|   |   |-- SetupEnvironmentDialog.java   # First-time setup wizard
+|   |   |-- ChannelSelectionPanel.java
+|   |   |-- LayerFreezePanel.java
+|   |   |-- ProgressMonitorController.java
+|   |   |-- PythonConsoleWindow.java
+|   |   |-- TrainingAreaIssuesDialog.java  # Post-training tile evaluation results
+|   |   |-- MAEPretrainingDialog.java     # Standalone MAE pretraining config
+|   |   `-- TooltipHelper.java
+|   |-- scripting/
+|   |   |-- DLClassifierScripts.java   # Groovy API
+|   |   `-- ScriptGenerator.java       # Dialog-to-script generation
+|   `-- preferences/
+|       `-- DLClassifierPreferences.java
+|
+|-- python_server/                     # Python DL library (used by Appose)
+|   `-- dlclassifier_server/
+|       |-- services/                  # Training/inference services
+|       `-- utils/                     # Shared utilities (normalization, etc.)
 ```
 
 ## For Developers
@@ -274,6 +275,19 @@ Histology-specific encoder weights are loaded via **[timm (PyTorch Image Models)
 | ResNet-50 Lunit Barlow Twins | 19M TCGA patches | Barlow Twins self-supervised | Non-commercial | Kang et al. (2023) |
 | ResNet-50 Kather100K | Kather100K colorectal tissue | Supervised classification | CC-BY-4.0 | Kather et al., "Predicting survival from colorectal cancer histology slides using deep learning" (PLOS Medicine 2019) |
 | ResNet-50 TCGA-BRCA | TCGA breast cancer | SimCLR self-supervised | GPLv3 | Ciga et al., "Self supervised contrastive learning for digital histopathology" (Machine Learning with Applications 2022) |
+
+### Foundation Model Encoders
+
+Foundation model integration inspired by **[LazySlide](https://github.com/rendeirolab/LazySlide)** (Zheng et al. 2026, Nature Methods). All included models use commercially-permissive licenses (Apache 2.0 or MIT). Models are downloaded on-demand from HuggingFace, not bundled.
+
+| Encoder | Parameters | License | Reference |
+|---|---|---|---|
+| h-optimus-0 | 1.1B | Apache 2.0 | Bioptimus, "H-optimus-0" (2024) |
+| virchow | 632M | Apache 2.0 | Vorontsov et al., "Virchow: A Million-Slide Digital Pathology Foundation Model" (2024) |
+| hibou-l | 300M | Apache 2.0 | HistAI, "Hibou: A Family of Foundational Vision Transformers for Pathology" (2024) |
+| hibou-b | 86M | Apache 2.0 | HistAI, "Hibou" (2024) |
+| midnight | 1.1B | MIT | Vorontsov et al., "Midnight: A Family of Foundation Models" (2025) |
+| dinov2-large | 300M | Apache 2.0 | Oquab et al., "DINOv2: Learning Robust Visual Features without Supervision" (2024) |
 
 ### Data Augmentation
 

@@ -180,6 +180,7 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for the full troubleshoot
 
 - **Increase epochs** once you've verified the pipeline works (50-100 for real training)
 - **Try histology-pretrained backbones** -- select a backbone ending in "(Histology)" for weights pretrained on tissue patches instead of ImageNet. These produce better features for tissue classification and need less layer freezing. ~100MB download on first use (cached afterward).
+- **Try foundation model encoders** -- select h-optimus-0, virchow, hibou-l, hibou-b, midnight, or dinov2-large in the encoder dropdown for large-scale pretrained tissue representations. Downloaded on-demand (~100 MB to ~2 GB, cached after first use). Requires 10-16 GB VRAM for most models. Gated models need a HuggingFace token. See the [Training Guide](docs/TRAINING_GUIDE.md) for details.
 - **Try transfer learning** -- freeze early encoder layers for faster convergence on small datasets
 - **Experiment with backbones** -- try a larger backbone (resnet50) or a histology-pretrained backbone for tissue classification, or import a custom ONNX model
 - **Multi-image training** -- combine annotations from several images for a more robust classifier
