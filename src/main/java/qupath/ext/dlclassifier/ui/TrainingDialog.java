@@ -3386,10 +3386,14 @@ public class TrainingDialog {
                         double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
                         // Mixed precision roughly halves activation/gradient memory
                         if (mixedPrec) actMultiplier *= 0.6;
-                        // Context scale doubles the input channels, increasing activations
-                        if (contextScale > 1) actMultiplier *= 1.5;
+                        // Context scale enlarges tiles via padding AND doubles channels
+                        int effectiveTile = tileSize;
+                        if (contextScale > 1) {
+                            effectiveTile = tileSize + 2 * (tileSize / contextScale);
+                            actMultiplier *= 1.1;
+                        }
 
-                        double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
+                        double areaScale = (double)(effectiveTile * effectiveTile) / (256.0 * 256.0);
                         double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
                         double budgetMb = totalMb * 0.85;
 
@@ -3432,7 +3436,9 @@ public class TrainingDialog {
                             // Suggest smaller tile sizes if needed
                             for (int candidate : new int[]{512, 384, 256, 128}) {
                                 if (candidate >= tileSize) continue;
-                                double candArea = (double)(candidate * candidate) / (256.0 * 256.0);
+                                int candEffective = contextScale > 1
+                                        ? candidate + 2 * (candidate / contextScale) : candidate;
+                                double candArea = (double)(candEffective * candEffective) / (256.0 * 256.0);
                                 // Find max batch at this tile size
                                 int candMaxBatch = 0;
                                 for (int b = batchSize; b >= 1; b--) {
@@ -3621,16 +3627,27 @@ public class TrainingDialog {
                 double modelMb = estimateModelSizeMb(modelType, backbone);
                 double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
                 if (mixedPrec) actMultiplier *= 0.6;
-                if (contextScale > 1) actMultiplier *= 1.5;
 
-                double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
+                // Context scale enlarges tiles via padding AND doubles channels.
+                // Padding adds tileSize/contextScale pixels per side, so actual
+                // tile = tileSize + 2*(tileSize/contextScale).  The doubled
+                // channels add ~10% more activation memory on top of the area.
+                int effectiveTile = tileSize;
+                if (contextScale > 1) {
+                    effectiveTile = tileSize + 2 * (tileSize / contextScale);
+                    actMultiplier *= 1.1;
+                }
+
+                double areaScale = (double)(effectiveTile * effectiveTile) / (256.0 * 256.0);
                 double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
                 double budgetMb = gpuTotalMb * 0.85;
 
                 double pct = (estimatedMb / gpuTotalMb) * 100;
 
-                String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)",
-                        estimatedMb, gpuTotalMb, pct);
+                String tileNote = effectiveTile != tileSize
+                        ? String.format(" [%dpx with context padding]", effectiveTile) : "";
+                String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)%s",
+                        estimatedMb, gpuTotalMb, pct, tileNote);
 
                 if (estimatedMb > budgetMb) {
                     // Exceeds safe budget -- red warning
