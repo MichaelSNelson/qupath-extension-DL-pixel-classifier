@@ -2049,6 +2049,7 @@ public class TrainingWorkflow {
         }
         if (config.getOhemHardRatio() < 1.0) {
             settings.put("ohem_hard_ratio", config.getOhemHardRatio());
+            settings.put("ohem_schedule", config.getOhemSchedule());
         }
         settings.put("early_stopping_metric", config.getEarlyStoppingMetric());
         settings.put("early_stopping_patience", config.getEarlyStoppingPatience());

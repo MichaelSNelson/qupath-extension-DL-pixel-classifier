@@ -194,6 +194,8 @@ public class TrainingDialog {
         private Spinner<Double> focalGammaSpinner;
         private Label focalGammaLabel;
         private Spinner<Integer> ohemSpinner;
+        private ComboBox<String> ohemScheduleCombo;
+        private Label ohemScheduleLabel;
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
         private CheckBox mixedPrecisionCheck;
@@ -1099,6 +1101,11 @@ public class TrainingDialog {
                     ohemSpinner.getValueFactory().setValue(
                             (int) Math.round(((Number) ts.get("ohem_hard_ratio")).doubleValue() * 100));
                 }
+                if (ts.containsKey("ohem_schedule")) {
+                    String sched = String.valueOf(ts.get("ohem_schedule"));
+                    ohemScheduleCombo.setValue(
+                            "anneal".equals(sched) ? "Anneal (100% -> target)" : "Fixed");
+                }
 
                 // Early stopping
                 if (ts.containsKey("early_stopping_metric")) {
@@ -1592,6 +1599,7 @@ public class TrainingDialog {
                     .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
                     .focalGamma(focalGammaSpinner.getValue())
                     .ohemHardRatio(ohemSpinner.getValue() / 100.0)
+                    .ohemSchedule(mapOhemScheduleFromDisplay(ohemScheduleCombo.getValue()))
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
@@ -2230,6 +2238,38 @@ public class TrainingDialog {
                     ohemLabel, ohemSpinner);
             grid.add(ohemLabel, 0, row);
             grid.add(ohemSpinner, 1, row);
+            row++;
+
+            // OHEM schedule (visible only when OHEM is active, i.e., < 100%)
+            ohemScheduleLabel = new Label("Hard Pixel Schedule:");
+            ohemScheduleCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "Fixed", "Anneal (100% -> target)"));
+            ohemScheduleCombo.setValue(
+                    "anneal".equals(DLClassifierPreferences.getDefaultOhemSchedule())
+                            ? "Anneal (100% -> target)" : "Fixed");
+            TooltipHelper.install(
+                    "How the Hard Pixel % changes during training:\n\n" +
+                    "Fixed: Hard Pixel % stays constant throughout training.\n\n" +
+                    "Anneal: Starts at 100% (all pixels) and linearly decreases\n" +
+                    "to your target Hard Pixel % over the first 75% of epochs.\n" +
+                    "This lets the model learn basic class distributions from\n" +
+                    "all pixels early on, then gradually shifts focus to hard\n" +
+                    "cases (boundaries, confusing regions) as training progresses.",
+                    ohemScheduleLabel, ohemScheduleCombo);
+            boolean ohemActive = ohemSpinner.getValue() < 100;
+            ohemScheduleLabel.setVisible(ohemActive);
+            ohemScheduleLabel.setManaged(ohemActive);
+            ohemScheduleCombo.setVisible(ohemActive);
+            ohemScheduleCombo.setManaged(ohemActive);
+            ohemSpinner.valueProperty().addListener((obs, old, val) -> {
+                boolean active = val != null && val < 100;
+                ohemScheduleLabel.setVisible(active);
+                ohemScheduleLabel.setManaged(active);
+                ohemScheduleCombo.setVisible(active);
+                ohemScheduleCombo.setManaged(active);
+            });
+            grid.add(ohemScheduleLabel, 0, row);
+            grid.add(ohemScheduleCombo, 1, row);
             row++;
 
             // Early stopping metric
@@ -2874,6 +2914,11 @@ public class TrainingDialog {
             return display;
         }
 
+        private static String mapOhemScheduleFromDisplay(String display) {
+            if (display != null && display.startsWith("Anneal")) return "anneal";
+            return "fixed";
+        }
+
         /**
          * Updates the resolution and context info labels based on current
          * tile size, downsample, context scale, and native pixel size.
@@ -3404,6 +3449,7 @@ public class TrainingDialog {
             DLClassifierPreferences.setDefaultMixedPrecision(mixedPrecisionCheck.isSelected());
             DLClassifierPreferences.setDefaultGradientAccumulation(gradientAccumulationSpinner.getValue());
             DLClassifierPreferences.setDefaultOhemHardPixelPct(ohemSpinner.getValue());
+            DLClassifierPreferences.setDefaultOhemSchedule(mapOhemScheduleFromDisplay(ohemScheduleCombo.getValue()));
             DLClassifierPreferences.setDefaultFocalGamma(focalGammaSpinner.getValue());
             DLClassifierPreferences.setDefaultProgressiveResize(progressiveResizeCheck.isSelected());
             DLClassifierPreferences.setDefaultFocusClass(

@@ -53,6 +53,7 @@ public class TrainingConfig {
     private final String lossFunction;
     private final double focalGamma;
     private final double ohemHardRatio;
+    private final String ohemSchedule; // "fixed" or "anneal"
     private final String earlyStoppingMetric;
     private final int earlyStoppingPatience;
     private final boolean mixedPrecision;
@@ -119,6 +120,7 @@ public class TrainingConfig {
         this.lossFunction = builder.lossFunction;
         this.focalGamma = builder.focalGamma;
         this.ohemHardRatio = builder.ohemHardRatio;
+        this.ohemSchedule = builder.ohemSchedule;
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
         this.mixedPrecision = builder.mixedPrecision;
@@ -296,6 +298,13 @@ public class TrainingConfig {
      */
     public double getOhemHardRatio() {
         return ohemHardRatio;
+    }
+
+    /**
+     * Gets the OHEM schedule ("fixed" or "anneal").
+     */
+    public String getOhemSchedule() {
+        return ohemSchedule;
     }
 
     /**
@@ -652,6 +661,7 @@ public class TrainingConfig {
         private String lossFunction = "ce_dice";
         private double focalGamma = 2.0;
         private double ohemHardRatio = 1.0;
+        private String ohemSchedule = "fixed";
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
         private boolean mixedPrecision = true;
@@ -702,6 +712,7 @@ public class TrainingConfig {
             this.lossFunction = config.lossFunction;
             this.focalGamma = config.focalGamma;
             this.ohemHardRatio = config.ohemHardRatio;
+            this.ohemSchedule = config.ohemSchedule;
             this.earlyStoppingMetric = config.earlyStoppingMetric;
             this.earlyStoppingPatience = config.earlyStoppingPatience;
             this.mixedPrecision = config.mixedPrecision;
@@ -912,6 +923,14 @@ public class TrainingConfig {
          */
         public Builder ohemHardRatio(double ohemHardRatio) {
             this.ohemHardRatio = ohemHardRatio;
+            return this;
+        }
+
+        /**
+         * Sets the OHEM schedule: "fixed" or "anneal".
+         */
+        public Builder ohemSchedule(String ohemSchedule) {
+            this.ohemSchedule = ohemSchedule != null ? ohemSchedule : "fixed";
             return this;
         }
 

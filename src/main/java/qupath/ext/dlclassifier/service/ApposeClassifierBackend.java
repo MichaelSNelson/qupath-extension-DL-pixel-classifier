@@ -243,6 +243,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
         if (trainingConfig.getOhemHardRatio() < 1.0) {
             trainingParams.put("ohem_hard_ratio", trainingConfig.getOhemHardRatio());
+            trainingParams.put("ohem_schedule", trainingConfig.getOhemSchedule());
         }
         trainingParams.put("early_stopping", true);
         trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
