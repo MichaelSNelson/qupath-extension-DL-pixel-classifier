@@ -157,6 +157,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      */
     private void startBackgroundInitialization() {
         Thread initThread = new Thread(() -> {
+            // Clean up orphaned temp directories from previous sessions before
+            // doing anything else.  These accumulate when QuPath is force-killed,
+            // training is paused without cleanup, or the dialog is closed mid-run.
+            cleanupOrphanedTempDirs();
+
             try {
                 Platform.runLater(() -> Dialogs.showInfoNotification(
                         EXTENSION_NAME,
@@ -866,6 +871,99 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return (int) stream.filter(Files::isDirectory).count();
         } catch (IOException e) {
             return 0;
+        }
+    }
+
+    /**
+     * Deletes orphaned dl-training-*, dl-pause-*, dl-overlay-* directories
+     * from the system temp directory.  Only deletes directories older than
+     * 1 hour to avoid interfering with an active training run in another
+     * QuPath instance.
+     */
+    private static void cleanupOrphanedTempDirs() {
+        try {
+            Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
+
+            // Also clean the configured export directory if set
+            String exportPref = DLClassifierPreferences.getTrainingExportDir();
+            java.util.List<Path> dirsToScan = new java.util.ArrayList<>();
+            if (Files.isDirectory(tempDir)) dirsToScan.add(tempDir);
+            if (exportPref != null && !exportPref.isEmpty()) {
+                Path exportDir = Path.of(exportPref);
+                if (Files.isDirectory(exportDir) && !exportDir.equals(tempDir)) {
+                    dirsToScan.add(exportDir);
+                }
+            }
+            if (dirsToScan.isEmpty()) return;
+
+            long cutoffMs = System.currentTimeMillis() - 3_600_000; // 1 hour ago
+            long deletedCount = 0;
+            long deletedBytes = 0;
+
+            for (Path scanDir : dirsToScan)
+            try (var stream = Files.list(scanDir)) {
+                var orphans = stream
+                        .filter(p -> {
+                            String name = p.getFileName().toString();
+                            return name.startsWith("dl-training")
+                                    || name.startsWith("dl-pause")
+                                    || name.startsWith("dl-overlay")
+                                    || name.startsWith("dl-pixel-inference")
+                                    || name.startsWith("dl-rendered-overlay")
+                                    || name.startsWith("dl-classifier-import");
+                        })
+                        .filter(p -> {
+                            try {
+                                return Files.getLastModifiedTime(p).toMillis() < cutoffMs;
+                            } catch (IOException e) {
+                                return false;
+                            }
+                        })
+                        .toList();
+
+                for (Path orphan : orphans) {
+                    try {
+                        long size = 0;
+                        if (Files.isDirectory(orphan)) {
+                            try (var walk = Files.walk(orphan)) {
+                                size = walk.filter(Files::isRegularFile)
+                                        .mapToLong(p -> {
+                                            try { return Files.size(p); }
+                                            catch (IOException e) { return 0; }
+                                        })
+                                        .sum();
+                            }
+                            try (var walk = Files.walk(orphan)) {
+                                walk.sorted(java.util.Comparator.reverseOrder())
+                                        .forEach(p -> {
+                                            try { Files.deleteIfExists(p); }
+                                            catch (IOException ignored) {}
+                                        });
+                            }
+                        } else {
+                            size = Files.size(orphan);
+                            Files.deleteIfExists(orphan);
+                        }
+                        deletedCount++;
+                        deletedBytes += size;
+                    } catch (IOException e) {
+                        logger.debug("Could not delete orphan: {}", orphan, e);
+                    }
+                }
+            }
+
+            if (deletedCount > 0) {
+                double mb = deletedBytes / (1024.0 * 1024.0);
+                logger.info("Cleaned up {} orphaned temp directories ({} MB)",
+                        deletedCount, String.format("%.0f", mb));
+                double finalMb = mb;
+                Platform.runLater(() -> Dialogs.showInfoNotification(
+                        EXTENSION_NAME,
+                        String.format("Cleaned up %.0f MB of leftover training data "
+                                + "from previous sessions.", finalMb)));
+            }
+        } catch (Exception e) {
+            logger.debug("Orphan cleanup failed: {}", e.getMessage());
         }
     }
 
