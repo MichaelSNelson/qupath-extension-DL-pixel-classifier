@@ -806,14 +806,20 @@ public class ApposeService {
 
     /**
      * URL for the dlclassifier-server pip install via GitHub archive tarball.
-     * Uses an archive URL instead of git+ so that git does not need to be
-     * installed on the user's machine. The #subdirectory fragment tells pip
-     * to look for pyproject.toml in the python_server/ directory.
+     * Uses a version-tagged archive so the pip package matches the JAR release.
+     * The #subdirectory fragment tells pip to look for pyproject.toml in the
+     * python_server/ directory.
+     * <p>
+     * IMPORTANT: This URL must reference the tag matching the current version.
+     * Using "master" instead of a tag causes version mismatch loops when the
+     * main branch has moved ahead of the released JAR.
      */
+    private static final String DL_SERVER_VERSION = "0.5.0";
     private static final String DL_SERVER_PIP_URL =
             "dlclassifier-server @ https://github.com/uw-loci/"
-                    + "qupath-extension-dl-pixel-classifier/archive/refs/heads/"
-                    + "master.tar.gz#subdirectory=python_server";
+                    + "qupath-extension-dl-pixel-classifier/archive/refs/tags/"
+                    + "v" + DL_SERVER_VERSION
+                    + ".tar.gz#subdirectory=python_server";
 
     /**
      * Installs or upgrades the dlclassifier-server package via pip in the
