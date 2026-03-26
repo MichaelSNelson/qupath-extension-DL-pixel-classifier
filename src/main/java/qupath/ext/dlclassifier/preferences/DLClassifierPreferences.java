@@ -128,6 +128,24 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty defaultMixedPrecision = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultMixedPrecision", true);
 
+    private static final IntegerProperty defaultGradientAccumulation = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultGradientAccumulation", 1);
+
+    private static final IntegerProperty defaultOhemHardPixelPct = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultOhemHardPixelPct", 100);
+
+    private static final DoubleProperty defaultFocalGamma = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultFocalGamma", 2.0);
+
+    private static final BooleanProperty defaultProgressiveResize = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultProgressiveResize", false);
+
+    private static final StringProperty defaultFocusClass = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultFocusClass", "");
+
+    private static final DoubleProperty defaultFocusClassMinIoU = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultFocusClassMinIoU", 0.0);
+
     // ==================== Inference Dialog Preferences ====================
 
     private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
@@ -641,6 +659,54 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty defaultMixedPrecisionProperty() {
         return defaultMixedPrecision;
+    }
+
+    public static int getDefaultGradientAccumulation() {
+        return defaultGradientAccumulation.get();
+    }
+
+    public static void setDefaultGradientAccumulation(int steps) {
+        defaultGradientAccumulation.set(steps);
+    }
+
+    public static int getDefaultOhemHardPixelPct() {
+        return defaultOhemHardPixelPct.get();
+    }
+
+    public static void setDefaultOhemHardPixelPct(int pct) {
+        defaultOhemHardPixelPct.set(pct);
+    }
+
+    public static double getDefaultFocalGamma() {
+        return defaultFocalGamma.get();
+    }
+
+    public static void setDefaultFocalGamma(double gamma) {
+        defaultFocalGamma.set(gamma);
+    }
+
+    public static boolean isDefaultProgressiveResize() {
+        return defaultProgressiveResize.get();
+    }
+
+    public static void setDefaultProgressiveResize(boolean enabled) {
+        defaultProgressiveResize.set(enabled);
+    }
+
+    public static String getDefaultFocusClass() {
+        return defaultFocusClass.get();
+    }
+
+    public static void setDefaultFocusClass(String className) {
+        defaultFocusClass.set(className != null ? className : "");
+    }
+
+    public static double getDefaultFocusClassMinIoU() {
+        return defaultFocusClassMinIoU.get();
+    }
+
+    public static void setDefaultFocusClassMinIoU(double minIoU) {
+        defaultFocusClassMinIoU.set(minIoU);
     }
 
     // ==================== Inference Dialog Preferences ====================

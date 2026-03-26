@@ -2128,7 +2128,8 @@ public class TrainingDialog {
             // Focal gamma (visible only when focal variant selected)
             focalGammaLabel = new Label("Focal Gamma:");
             focalGammaSpinner = new Spinner<>(
-                    new SpinnerValueFactory.DoubleSpinnerValueFactory(0.5, 5.0, 2.0, 0.5));
+                    new SpinnerValueFactory.DoubleSpinnerValueFactory(
+                            0.5, 5.0, DLClassifierPreferences.getDefaultFocalGamma(), 0.5));
             focalGammaSpinner.setEditable(true);
             TooltipHelper.install(
                     "Focal loss focusing parameter (gamma). Down-weights\n" +
@@ -2161,7 +2162,8 @@ public class TrainingDialog {
 
             // OHEM hard pixel %
             ohemSpinner = new Spinner<>(
-                    new SpinnerValueFactory.IntegerSpinnerValueFactory(10, 100, 100, 5));
+                    new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                            10, 100, DLClassifierPreferences.getDefaultOhemHardPixelPct(), 5));
             ohemSpinner.setEditable(true);
             Label ohemLabel = new Label("Hard Pixel %:");
             TooltipHelper.install(
@@ -2276,7 +2278,9 @@ public class TrainingDialog {
 
             // Focus class min IoU threshold (hidden by default)
             focusClassMinIoULabel = new Label("Min Focus IoU:");
-            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0, 0.5, 0.05);
+            double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
+            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0,
+                    savedMinIoU > 0 ? savedMinIoU : 0.5, 0.05);
             focusClassMinIoUSpinner.setEditable(true);
             focusClassMinIoUSpinner.setPrefWidth(100);
             var minIoUFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) focusClassMinIoUSpinner.getValueFactory();
@@ -2331,7 +2335,8 @@ public class TrainingDialog {
             row++;
 
             // Gradient accumulation
-            gradientAccumulationSpinner = new Spinner<>(1, 8, 1, 1);
+            gradientAccumulationSpinner = new Spinner<>(1, 8,
+                    DLClassifierPreferences.getDefaultGradientAccumulation(), 1);
             gradientAccumulationSpinner.setEditable(true);
             gradientAccumulationSpinner.setPrefWidth(100);
             Label gradAccLabel = new Label("Gradient Accumulation:");
@@ -2350,7 +2355,7 @@ public class TrainingDialog {
 
             // Progressive resizing
             progressiveResizeCheck = new CheckBox("Progressive resizing");
-            progressiveResizeCheck.setSelected(false);
+            progressiveResizeCheck.setSelected(DLClassifierPreferences.isDefaultProgressiveResize());
             TooltipHelper.install(progressiveResizeCheck,
                     "Train at half tile resolution for the first 40% of epochs,\n" +
                     "then switch to full resolution.\n\n" +
@@ -2801,11 +2806,21 @@ public class TrainingDialog {
                 items.add(item.name());
             }
             focusClassCombo.setItems(FXCollections.observableArrayList(items));
-            // Restore previous selection if still valid, otherwise reset
+            // Restore previous selection if still valid, otherwise try saved preference
             if (currentSelection != null && items.contains(currentSelection)) {
                 focusClassCombo.setValue(currentSelection);
             } else {
-                focusClassCombo.setValue("None (use Mean IoU)");
+                String savedFocus = DLClassifierPreferences.getDefaultFocusClass();
+                if (savedFocus != null && !savedFocus.isEmpty()
+                        && items.contains(savedFocus)) {
+                    focusClassCombo.setValue(savedFocus);
+                    double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
+                    if (savedMinIoU > 0) {
+                        focusClassMinIoUSpinner.getValueFactory().setValue(savedMinIoU);
+                    }
+                } else {
+                    focusClassCombo.setValue("None (use Mean IoU)");
+                }
             }
         }
 
@@ -3343,6 +3358,13 @@ public class TrainingDialog {
                     mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()));
             DLClassifierPreferences.setDefaultEarlyStoppingPatience(earlyStoppingPatienceSpinner.getValue());
             DLClassifierPreferences.setDefaultMixedPrecision(mixedPrecisionCheck.isSelected());
+            DLClassifierPreferences.setDefaultGradientAccumulation(gradientAccumulationSpinner.getValue());
+            DLClassifierPreferences.setDefaultOhemHardPixelPct(ohemSpinner.getValue());
+            DLClassifierPreferences.setDefaultFocalGamma(focalGammaSpinner.getValue());
+            DLClassifierPreferences.setDefaultProgressiveResize(progressiveResizeCheck.isSelected());
+            DLClassifierPreferences.setDefaultFocusClass(
+                    mapFocusClassFromDisplay(focusClassCombo.getValue()));
+            DLClassifierPreferences.setDefaultFocusClassMinIoU(focusClassMinIoUSpinner.getValue());
 
             // Build training config from unified weight init strategy
             TrainingConfig trainingConfig = buildTrainingConfig();
