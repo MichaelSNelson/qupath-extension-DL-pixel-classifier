@@ -1411,11 +1411,12 @@ class TrainingService:
                 suggested_lr, finder_lrs, finder_losses = self.find_learning_rate(
                     model, train_loader, criterion)
                 # Guard rails: reject suggestions that are too small or too large.
-                # A max_lr above ~0.01 with discriminative LRs almost always
-                # causes divergence.  Floor avoids noise; ceiling prevents the
-                # LR finder from proposing values that blow up training.
+                # Cap at both an absolute ceiling (0.01) and a relative ceiling
+                # (10x the user's specified lr).  The relative cap prevents the
+                # finder from proposing wildly different values than what the
+                # user chose -- a 100x override causes training instability.
                 min_reasonable_lr = 1e-5
-                max_reasonable_lr = 0.01
+                max_reasonable_lr = min(0.01, learning_rate * 10)
                 if suggested_lr is not None and suggested_lr >= min_reasonable_lr:
                     if suggested_lr > max_reasonable_lr:
                         logger.warning(
