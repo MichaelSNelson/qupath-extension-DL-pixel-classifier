@@ -186,6 +186,7 @@ public class TrainingDialog {
         private CheckBox flipVerticalCheck;
         private CheckBox rotationCheck;
         private ComboBox<String> intensityAugCombo;
+        private boolean intensityAugUserModified = false;
         private CheckBox elasticCheck;
 
         // Training strategy
@@ -2591,6 +2592,8 @@ public class TrainingDialog {
                     "None", "Brightfield (color jitter)", "Fluorescence (per-channel)"));
             intensityAugCombo.setValue(mapIntensityModeToDisplay(DLClassifierPreferences.getAugIntensityMode()));
             intensityAugCombo.setPrefWidth(220);
+            // Track manual user changes so auto-detection doesn't override
+            intensityAugCombo.setOnAction(e -> intensityAugUserModified = true);
             TooltipHelper.install(
                     "Intensity augmentation mode.\n\n" +
                     "None: No intensity/color transforms.\n\n" +
@@ -2762,13 +2765,16 @@ public class TrainingDialog {
                                 channelImageData.getImageType(),
                                 channelImageData.getServer().nChannels());
 
-                        // Auto-select appropriate intensity mode based on image type
-                        if (!isBrightfield(channelImageData)) {
-                            // Fluorescence images default to per-channel mode
-                            intensityAugCombo.setValue("Fluorescence (per-channel)");
-                        } else {
-                            // Brightfield images default to color jitter
-                            intensityAugCombo.setValue("Brightfield (color jitter)");
+                        // Auto-select appropriate intensity mode based on image type,
+                        // but only if the user hasn't manually changed it
+                        if (!intensityAugUserModified) {
+                            if (!isBrightfield(channelImageData)) {
+                                intensityAugCombo.setValue("Fluorescence (per-channel)");
+                            } else {
+                                intensityAugCombo.setValue("Brightfield (color jitter)");
+                            }
+                            // Reset flag so programmatic change isn't treated as manual
+                            intensityAugUserModified = false;
                         }
                     }
 
@@ -3704,6 +3710,19 @@ public class TrainingDialog {
                     // Use cached GPU memory from the combined verification/health
                     // task that ran during initialize() -- no separate task needed.
                     gpuTotalMb = appose.getLastGpuMemoryMb();
+                } else if (appose.isAvailable() && mixedPrecisionCheck != null) {
+                    // Mixed precision only works on CUDA GPUs -- disable the
+                    // checkbox so the user doesn't configure a setting that
+                    // will be silently ignored at training time.
+                    String device = appose.getGpuType();
+                    Platform.runLater(() -> {
+                        mixedPrecisionCheck.setSelected(false);
+                        mixedPrecisionCheck.setDisable(true);
+                        TooltipHelper.install(mixedPrecisionCheck,
+                                "Mixed precision requires an NVIDIA CUDA GPU.\n" +
+                                "Current device: " + device +
+                                " -- this setting has no effect.");
+                    });
                 }
             } catch (Exception e) {
                 logger.debug("Could not cache GPU memory: {}", e.getMessage());

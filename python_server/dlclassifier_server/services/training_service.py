@@ -1704,7 +1704,25 @@ class TrainingService:
                     and scheduler_config.get("max_lr") is not None):
                 lr_val = scheduler_config["max_lr"]
                 if isinstance(lr_val, (int, float)):
-                    config_summary["LR Finder"] = f"suggested lr={lr_val:.6f}"
+                    finder_note = f"max_lr={lr_val:.6f}"
+                    if lr_val != learning_rate:
+                        finder_note += (
+                            f" (user lr={learning_rate:.6f}, "
+                            f"finder override: {lr_val/learning_rate:.0f}x)")
+                    config_summary["LR Finder"] = finder_note
+                    # Show effective peak LRs per param group so the user
+                    # sees what OneCycleLR will actually ramp to
+                    if param_groups and len(param_groups) > 1:
+                        base_lr = max(g["lr"] for g in optimizer.param_groups)
+                        if base_lr > 0:
+                            peak_parts = ", ".join(
+                                f"{g.get('group_name', '?')}="
+                                f"{lr_val * (g['lr'] / base_lr):.6f}"
+                                for g in optimizer.param_groups
+                            )
+                        else:
+                            peak_parts = f"all={lr_val:.6f}"
+                        config_summary["Peak LRs (OneCycleLR)"] = peak_parts
 
             # Class distribution: pixel % and patch presence %
             if _class_dist:
