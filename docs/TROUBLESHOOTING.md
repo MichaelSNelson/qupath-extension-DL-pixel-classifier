@@ -254,7 +254,7 @@ Quick checklist:
 
 ### One class has wildly inconsistent IoU or loss across epochs
 
-**Symptom:** A class oscillates between good IoU (e.g., 0.85) and terrible IoU (0.00 or 0.06) from one epoch to the next, while other classes are stable. The per-class loss for that class may spike to a consistent high value (e.g., always ~6.2) on bad epochs.
+**Symptom:** A class oscillates between good IoU (e.g., 0.85) and terrible IoU (0.00 or near-zero) from one epoch to the next, while other classes are stable. The per-class loss for that class may spike to a suspiciously consistent high value on bad epochs.
 
 **Cause: Rare or localized annotations landing entirely in the validation set.** The train/validation split assigns whole annotations to one side or the other. If a class has only one annotation, or one annotation that looks visually distinct from the others, all tiles from that annotation may end up in validation. The model never trains on those tiles but gets penalized for them at every epoch.
 
@@ -263,7 +263,7 @@ This is especially common with:
 - **Rare structures** that only appear on one or two slides
 - **Edge cases** where the class looks very different in one region vs. another
 
-**How to identify it:** Look for a suspiciously consistent per-class loss value appearing at roughly half the epochs. A loss that's always ~6.2 (or any specific repeating value) on "bad" epochs points to one specific validation tile or region that the model consistently misclassifies.
+**How to identify it:** Look for a suspiciously consistent per-class loss value appearing at many epochs. If the same loss value (e.g., always ~5.0, or always ~12.3) keeps appearing for one class on "bad" epochs, it points to one specific validation tile or region that the model consistently misclassifies.
 
 **Fixes:**
 
