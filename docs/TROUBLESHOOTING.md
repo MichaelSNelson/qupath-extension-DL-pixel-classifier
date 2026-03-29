@@ -138,6 +138,8 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 
 ## Training Issues
 
+> **Automated diagnostics:** The extension automatically monitors training for common problems and logs warnings when issues are detected. These appear in the training log (and saved log file) prefixed with `TRAINING DIAGNOSTIC:`. Diagnostics run every 10 epochs during training and comprehensively at pause or completion. See [Saved log files](#saved-log-files) for where to find the log after training.
+
 ### Training fails immediately
 
 | Symptom | Cause | Fix |

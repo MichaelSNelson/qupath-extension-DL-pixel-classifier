@@ -1247,11 +1247,16 @@ public class TrainingDialog {
                 loadedModelLabel.setText("No model.pt found for: " + metadata.getName());
                 loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
             } else {
-                validatePretrainedModelCompatibility();
                 // Auto-select continue training since user picked a model
                 selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
                 loadedModelLabel.setText("Loaded from: " + metadata.getName());
                 loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+                // Defer compatibility check -- backbone combo is set via
+                // Platform.runLater (line ~994) and hasn't updated yet.
+                Platform.runLater(() -> {
+                    validatePretrainedModelCompatibility();
+                    updateValidation();
+                });
             }
 
             logger.info("Settings loaded from model '{}'. {} training settings fields applied.",
