@@ -1503,10 +1503,9 @@ class TrainingService:
                             div_factor=resume_config.get("div_factor", 25.0),
                             final_div_factor=resume_config.get("final_div_factor", 1e4)
                         )
-                elif isinstance(scheduler, ReduceLROnPlateau):
-                    pass  # ReduceLROnPlateau has no state to restore
                 elif "scheduler_state_dict" in checkpoint:
                     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+                    logger.info("Restored scheduler state from checkpoint")
 
             # Restore early stopping state (handle both old and new format)
             if early_stopping is not None and "early_stopping" in checkpoint:
@@ -2270,6 +2269,7 @@ class TrainingService:
                         "classes": classes,
                     },
                     training_history=training_history,
+                    normalization_stats=dataset_norm_stats,
                 )
 
             # Log focus class status
@@ -2315,7 +2315,8 @@ class TrainingService:
                         "input_config": input_config,
                         "training_params": training_params,
                         "classes": classes,
-                    }
+                    },
+                    normalization_stats=dataset_norm_stats,
                 )
                 # Free GPU memory during pause
                 model = model.cpu()
@@ -2352,7 +2353,8 @@ class TrainingService:
                     "model_type": model_type, "architecture": architecture,
                     "input_config": input_config,
                     "training_params": training_params, "classes": classes,
-                }
+                },
+                normalization_stats=dataset_norm_stats,
             )
             # Save last-epoch model (current model state)
             _cls_name = training_params.get("classifier_name")
@@ -2427,7 +2429,8 @@ class TrainingService:
                 "model_type": model_type, "architecture": architecture,
                 "input_config": input_config, "training_params": training_params,
                 "classes": classes,
-            }
+            },
+            normalization_stats=dataset_norm_stats,
         )
 
         # Clear cache before restoring weights
@@ -2808,7 +2811,8 @@ class TrainingService:
         best_score_mode: str,
         best_model_state: Optional[Dict],
         model_type: str,
-        training_config: Dict[str, Any]
+        training_config: Dict[str, Any],
+        normalization_stats: Optional[List[Dict[str, float]]] = None
     ) -> str:
         """Save a training checkpoint for pause/resume.
 
@@ -2842,9 +2846,14 @@ class TrainingService:
         if best_model_state is not None:
             checkpoint["best_model_state"] = best_model_state
 
-        if (scheduler is not None
-                and not isinstance(scheduler, OneCycleLR)
-                and not isinstance(scheduler, ReduceLROnPlateau)):
+        if normalization_stats is not None:
+            checkpoint["normalization_stats"] = normalization_stats
+
+        if scheduler is not None and not isinstance(scheduler, OneCycleLR):
+            # Save scheduler state for all types except OneCycleLR
+            # (which must be recreated with remaining steps on resume).
+            # ReduceOnPlateau has internal state (best, num_bad_epochs,
+            # last_epoch, cooldown_counter) that should be preserved.
             checkpoint["scheduler_state_dict"] = scheduler.state_dict()
 
         if early_stopping is not None:
@@ -2894,7 +2903,8 @@ class TrainingService:
         best_score: float,
         best_score_mode: str,
         training_config: Dict[str, Any],
-        training_history: List[Dict[str, Any]]
+        training_history: List[Dict[str, Any]],
+        normalization_stats: Optional[List[Dict[str, float]]] = None
     ) -> str:
         """Save a full training checkpoint to disk for crash recovery.
 
@@ -2935,9 +2945,10 @@ class TrainingService:
             "training_history": training_history,
         }
 
-        if (scheduler is not None
-                and not isinstance(scheduler, OneCycleLR)
-                and not isinstance(scheduler, ReduceLROnPlateau)):
+        if normalization_stats is not None:
+            data["normalization_stats"] = normalization_stats
+
+        if scheduler is not None and not isinstance(scheduler, OneCycleLR):
             data["scheduler_state_dict"] = scheduler.state_dict()
 
         if early_stopping is not None:

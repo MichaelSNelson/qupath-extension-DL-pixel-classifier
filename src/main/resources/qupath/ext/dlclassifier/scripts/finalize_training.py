@@ -108,6 +108,15 @@ else:
 _training_params = config.get("training_params", {})
 _classifier_name = _training_params.get("classifier_name")
 
+# Recover normalization stats from checkpoint (added in v0.5.1+)
+_norm_stats = checkpoint.get("normalization_stats", None)
+if _norm_stats is not None:
+    logger.info("Recovered normalization stats from checkpoint (%d channels)",
+                len(_norm_stats))
+else:
+    logger.warning("No normalization_stats in checkpoint -- finalized model "
+                   "will use default normalization (inference may be degraded)")
+
 # Save as final model
 model_path = training_service._save_model(
     model=model,
@@ -117,7 +126,7 @@ model_path = training_service._save_model(
     classes=classes,
     data_path="",  # data may no longer exist
     training_history=checkpoint.get("training_history", []),
-    normalization_stats=None,
+    normalization_stats=_norm_stats,
     classifier_name=_classifier_name
 )
 
