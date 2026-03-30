@@ -300,6 +300,18 @@ This is especially common with:
 
 ## Inference Issues
 
+### Apply Classifier produces geometric diamond/triangle shapes
+
+**Symptom:** The overlay looks correct, but Apply Classifier (OBJECTS) produces large geometric diamond or triangle shapes instead of following the actual classification boundaries.
+
+**Cause:** The image has no pixel size calibration. When pixel size is unknown (NaN), the boundary smoothing tolerance becomes NaN, causing the geometry simplifier to produce degenerate shapes.
+
+**Fix:** Set the pixel size for your images in QuPath:
+- **Single image:** Go to **Image > Set image properties** and enter the pixel width/height in microns
+- **Entire project:** Run a script in the Script Editor to set pixel size across all project images
+
+This was fixed in v0.5.1+ -- uncalibrated images now default to 1.0 um/px for contour post-processing, so the shapes will be correct even without calibration (though micron-based thresholds like min object size and hole filling will be approximate).
+
 ### Inference produces blank/uniform results
 
 - The classifier may not have trained well -- check training loss curves
