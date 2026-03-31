@@ -128,6 +128,10 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty defaultMixedPrecision = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultMixedPrecision", true);
 
+    // UI mode
+    private static final BooleanProperty advancedMode = PathPrefs.createPersistentPreference(
+            "dlclassifier.advancedMode", false);
+
     private static final IntegerProperty defaultGradientAccumulation = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultGradientAccumulation", 1);
 
@@ -662,6 +666,18 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty defaultMixedPrecisionProperty() {
         return defaultMixedPrecision;
+    }
+
+    public static boolean isAdvancedMode() {
+        return advancedMode.get();
+    }
+
+    public static void setAdvancedMode(boolean enabled) {
+        advancedMode.set(enabled);
+    }
+
+    public static BooleanProperty advancedModeProperty() {
+        return advancedMode;
     }
 
     public static int getDefaultGradientAccumulation() {

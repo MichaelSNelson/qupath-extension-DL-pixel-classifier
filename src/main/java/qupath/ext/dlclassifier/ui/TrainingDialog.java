@@ -146,6 +146,11 @@ public class TrainingDialog {
         private boolean resultDelivered;
         private final Map<String, String> validationErrors = new LinkedHashMap<>();
 
+        /** Controls basic/advanced mode visibility. Persisted across sessions. */
+        private final javafx.beans.property.BooleanProperty advancedMode =
+                new javafx.beans.property.SimpleBooleanProperty(
+                        DLClassifierPreferences.isAdvancedMode());
+
         // Basic info fields
         private TextField classifierNameField;
         private TextArea descriptionField;
@@ -371,14 +376,32 @@ public class TrainingDialog {
                     buttonBar
             );
 
+            // Advanced-only sections: hidden in basic mode
+            for (TitledPane advSection : List.of(
+                    modelSection, weightInitSection, trainingSection,
+                    strategySection, channelSection, augmentationSection)) {
+                advSection.visibleProperty().bind(advancedMode);
+                advSection.managedProperty().bind(advancedMode);
+            }
+
             // Disable gated sections until classes are loaded
             setGatedSectionsEnabled(false);
 
             ScrollPane scrollPane = new ScrollPane(content);
             scrollPane.setFitToWidth(true);
             scrollPane.setMaxHeight(Double.MAX_VALUE);
-            scrollPane.setPrefHeight(600);
+            scrollPane.setPrefHeight(advancedMode.get() ? 600 : 500);
             scrollPane.setPrefWidth(550);
+
+            // Resize dialog when toggling modes
+            advancedMode.addListener((obs, wasAdvanced, isAdvanced) -> {
+                if (isAdvanced) {
+                    double maxH = javafx.stage.Screen.getPrimary().getVisualBounds().getHeight() - 100;
+                    dialog.setHeight(Math.min(800, maxH));
+                } else {
+                    dialog.setHeight(550);
+                }
+            });
 
             dialog.setScene(new Scene(scrollPane));
 
@@ -412,10 +435,44 @@ public class TrainingDialog {
             Label titleLabel = new Label("Configure Classifier Training");
             titleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
 
+            // Toggle button for basic/advanced mode
+            javafx.scene.control.ToggleButton advancedToggle = new javafx.scene.control.ToggleButton();
+            advancedToggle.selectedProperty().bindBidirectional(advancedMode);
+            advancedToggle.textProperty().bind(
+                    javafx.beans.binding.Bindings.when(advancedMode)
+                            .then("Show Basic View")
+                            .otherwise("Show All Settings"));
+            advancedToggle.setStyle("-fx-font-size: 11px;");
+            TooltipHelper.install(advancedToggle,
+                    "Toggle between a simplified view for quick training\n" +
+                    "and the full settings for fine-tuning all parameters.\n\n" +
+                    "Basic: Select images, classes, name, then train.\n" +
+                    "Advanced: All architecture, training, and augmentation options.");
+
+            Region headerSpacer = new Region();
+            javafx.scene.layout.HBox.setHgrow(headerSpacer, Priority.ALWAYS);
+            javafx.scene.layout.HBox titleRow = new javafx.scene.layout.HBox(10,
+                    titleLabel, headerSpacer, advancedToggle);
+            titleRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
             Label subtitleLabel = new Label("Train a deep learning model to classify pixels in your images");
             subtitleLabel.setStyle("-fx-text-fill: #666;");
 
-            headerBox.getChildren().addAll(titleLabel, subtitleLabel, new Separator());
+            // Basic mode hint (hidden in advanced)
+            Label basicHint = new Label(
+                    "Select images, load classes, pick your annotation classes, " +
+                    "name your classifier, and click Start Training. " +
+                    "Default settings (UNet + ResNet34, pretrained, 50 epochs) work well for most tasks.");
+            basicHint.setWrapText(true);
+            basicHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            basicHint.visibleProperty().bind(advancedMode.not());
+            basicHint.managedProperty().bind(advancedMode.not());
+
+            // Persist mode preference
+            advancedMode.addListener((obs, old, newVal) ->
+                    DLClassifierPreferences.setAdvancedMode(newVal));
+
+            headerBox.getChildren().addAll(titleRow, subtitleLabel, basicHint, new Separator());
             return headerBox;
         }
 
@@ -1344,6 +1401,12 @@ public class TrainingDialog {
                     "Stored in classifier metadata for documentation.\n" +
                     "Example: 'Collagen vs. epithelium in H&E stained liver sections'",
                     descLabel, descriptionField);
+
+            // Description: advanced-only
+            descLabel.visibleProperty().bind(advancedMode);
+            descLabel.managedProperty().bind(advancedMode);
+            descriptionField.visibleProperty().bind(advancedMode);
+            descriptionField.managedProperty().bind(advancedMode);
 
             grid.add(descLabel, 0, row);
             grid.add(descriptionField, 1, row);
@@ -2554,7 +2617,7 @@ public class TrainingDialog {
             classDistributionChart.setManaged(false);
 
             classListView = new ListView<>();
-            classListView.setCellFactory(lv -> new ClassListCell());
+            classListView.setCellFactory(lv -> new ClassListCell(advancedMode));
             classListView.setPrefHeight(120);
             TooltipHelper.install(classListView,
                     "Annotation classes found in the selected images.\n" +
@@ -2598,6 +2661,15 @@ public class TrainingDialog {
                     "When checked, class weights are auto-set each time you load\n" +
                     "classes, so underrepresented classes receive higher weights.\n" +
                     "You can still manually adjust weights after loading.");
+
+            // Rebalance controls: advanced-only
+            rebalanceBtn.visibleProperty().bind(advancedMode);
+            rebalanceBtn.managedProperty().bind(advancedMode);
+            rebalanceByDefaultCheck.visibleProperty().bind(advancedMode);
+            rebalanceByDefaultCheck.managedProperty().bind(advancedMode);
+
+            // Refresh chart visibility when toggling modes
+            advancedMode.addListener((obs, old, newVal) -> refreshPieChart());
 
             HBox buttonBox = new HBox(10, selectAllBtn, selectNoneBtn, rebalanceBtn);
 
@@ -3365,7 +3437,7 @@ public class TrainingDialog {
                 }
             }
 
-            if (totalArea == 0 || selectedItems.isEmpty()) {
+            if (totalArea == 0 || selectedItems.isEmpty() || !advancedMode.get()) {
                 classDistributionChart.setVisible(false);
                 classDistributionChart.setManaged(false);
                 return;
@@ -4388,7 +4460,7 @@ public class TrainingDialog {
         private javafx.beans.value.ChangeListener<Double> spinnerToWeightListener;
         private javafx.beans.property.DoubleProperty boundWeightProperty;
 
-        public ClassListCell() {
+        public ClassListCell(javafx.beans.property.BooleanProperty advancedMode) {
             checkBox = new CheckBox();
             colorBox = new javafx.scene.shape.Rectangle(16, 16);
             colorBox.setStroke(javafx.scene.paint.Color.BLACK);
@@ -4412,6 +4484,14 @@ public class TrainingDialog {
 
             content = new HBox(8, checkBox, colorBox, spacer, weightLabel, weightSpinner);
             content.setAlignment(Pos.CENTER_LEFT);
+
+            // Hide weight controls in basic mode
+            if (advancedMode != null) {
+                weightLabel.visibleProperty().bind(advancedMode);
+                weightLabel.managedProperty().bind(advancedMode);
+                weightSpinner.visibleProperty().bind(advancedMode);
+                weightSpinner.managedProperty().bind(advancedMode);
+            }
         }
 
         @Override
