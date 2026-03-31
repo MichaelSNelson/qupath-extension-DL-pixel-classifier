@@ -1302,9 +1302,23 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return b.getCreatedAt().compareTo(a.getCreatedAt());
         });
 
-        // Show a choice dialog, pre-select current model if one is selected
+        // Show a choice dialog with informative labels:
+        // Name | architecture/backbone | classes | date
         List<String> names = classifiers.stream()
-                .map(c -> c.getName() + " (" + c.getId() + ")")
+                .map(c -> {
+                    String arch = c.getModelType() != null ? c.getModelType() : "?";
+                    String backbone = c.getBackbone() != null ? c.getBackbone() : "";
+                    String classCount = c.getClasses() != null
+                            ? c.getClasses().size() + " classes" : "";
+                    String date = c.getCreatedAt() != null
+                            ? c.getCreatedAt().toLocalDate().toString() : "";
+                    return String.format("%s  [%s%s, %s]  %s",
+                            c.getName(),
+                            arch,
+                            backbone.isEmpty() ? "" : "/" + backbone,
+                            classCount,
+                            date);
+                })
                 .toList();
         String defaultChoice = names.get(0);
         if (overlayService.getSelectedMetadata() != null) {
