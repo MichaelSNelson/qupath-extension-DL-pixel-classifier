@@ -825,8 +825,13 @@ public class TrainingDialog {
         }
 
         private void setRadioAvailable(RadioButton radio, boolean available) {
-            radio.setVisible(available);
-            radio.setManaged(available);
+            // Skip nodes whose visibility is already bound (e.g., to advancedMode)
+            if (!radio.visibleProperty().isBound()) {
+                radio.setVisible(available);
+            }
+            if (!radio.managedProperty().isBound()) {
+                radio.setManaged(available);
+            }
             if (!available && radio.isSelected()) {
                 radio.setSelected(false);
             }

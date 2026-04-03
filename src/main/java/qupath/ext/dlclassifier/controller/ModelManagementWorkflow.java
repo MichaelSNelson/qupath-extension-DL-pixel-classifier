@@ -161,7 +161,7 @@ public class ModelManagementWorkflow {
         });
         createdCol.setPrefWidth(120);
 
-        classifierTable.getColumns().addAll(nameCol, typeCol, classesCol, createdCol);
+        classifierTable.getColumns().addAll(List.of(nameCol, typeCol, classesCol, createdCol));
 
         // Selection listener
         classifierTable.getSelectionModel().selectedItemProperty().addListener(
