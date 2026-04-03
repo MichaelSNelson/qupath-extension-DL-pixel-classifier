@@ -731,22 +731,24 @@ public class TrainingDialog {
         /**
          * Shows/hides sub-content panels based on the selected weight initialization radio.
          */
+        /**
+         * Sets visible/managed on a node only if the property is not already bound.
+         */
+        private void setVisibleIfUnbound(javafx.scene.Node node, boolean visible) {
+            if (!node.visibleProperty().isBound()) node.setVisible(visible);
+            if (!node.managedProperty().isBound()) node.setManaged(visible);
+        }
+
         private void updateWeightInitSubContent() {
             ClassifierHandler.WeightInitStrategy selected = getSelectedWeightInitStrategy();
 
-            backbonePretrainedContent.setVisible(
-                    selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
-            backbonePretrainedContent.setManaged(
+            setVisibleIfUnbound(backbonePretrainedContent,
                     selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
 
-            maeEncoderContent.setVisible(
-                    selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
-            maeEncoderContent.setManaged(
+            setVisibleIfUnbound(maeEncoderContent,
                     selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
 
-            continueTrainingContent.setVisible(
-                    selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
-            continueTrainingContent.setManaged(
+            setVisibleIfUnbound(continueTrainingContent,
                     selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
 
             // Refresh layer freeze panel when backbone pretrained is selected
@@ -1788,19 +1790,14 @@ public class TrainingDialog {
                         "-fx-text-fill: #856404; -fx-font-size: 0.85em; " +
                         "-fx-background-color: #FFF3CD; -fx-padding: 4 6; " +
                         "-fx-background-radius: 3;");
-                lrInfoLabel.setVisible(true);
-                lrInfoLabel.setManaged(true);
             } else if ("None".equals(sched)) {
                 lrInfoLabel.setText("Constant lr throughout training.");
                 lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
-                lrInfoLabel.setVisible(true);
-                lrInfoLabel.setManaged(true);
             } else {
                 lrInfoLabel.setText("Starting lr -- scheduler adjusts during training.");
                 lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
-                lrInfoLabel.setVisible(true);
-                lrInfoLabel.setManaged(true);
             }
+            // Visibility controlled by advancedMode binding -- do not set here
         }
 
         private void updateLayerFreezePanel() {
