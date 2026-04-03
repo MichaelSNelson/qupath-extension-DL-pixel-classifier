@@ -91,6 +91,7 @@ The histology-pretrained encoders were all trained on **3-channel H&E-stained br
 - **Fluorescence / IF images**: Histology backbones learned H&E-specific color features (pink eosin, blue hematoxylin). These do not transfer to fluorescence intensity patterns. ImageNet backbones provide better generic edge and texture features.
 - **Multi-channel images (>3 channels)**: When the model has more than 3 input channels, the first convolutional layer must be adapted regardless of pretraining. ImageNet weights for the first conv are replicated across the extra channels. Histology first-conv weights encode H&E color responses that would be meaningless for IF channel combinations.
 - **Non-tissue images**: Bright-field stains other than H&E where color patterns differ significantly.
+- **Training instability with histology backbones**: If you see erratic loss curves, oscillating class IoU, or slow convergence with a histology-pretrained encoder, try switching to a standard ResNet (e.g., resnet50 with ImageNet weights) with limited frozen layers. ImageNet's generic edge and texture features sometimes provide a more stable training starting point, especially for non-H&E or multi-channel images.
 
 ### Foundation model encoders
 

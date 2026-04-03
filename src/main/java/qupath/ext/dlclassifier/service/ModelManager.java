@@ -151,13 +151,22 @@ public class ModelManager {
             String name = obj.get("name").getAsString();
             String description = obj.has("description") ? obj.get("description").getAsString() : "";
 
-            // Parse creation timestamp
+            // Parse creation timestamp (fall back to file modification time for older models)
             LocalDateTime createdAt = null;
             if (obj.has("createdAt") && !obj.get("createdAt").isJsonNull()) {
                 try {
                     createdAt = LocalDateTime.parse(obj.get("createdAt").getAsString());
                 } catch (Exception e) {
                     logger.warn("Could not parse createdAt: {}", e.getMessage());
+                }
+            }
+            if (createdAt == null) {
+                try {
+                    createdAt = LocalDateTime.ofInstant(
+                            Files.getLastModifiedTime(metadataPath).toInstant(),
+                            java.time.ZoneId.systemDefault());
+                } catch (Exception e) {
+                    logger.debug("Could not read file modification time: {}", e.getMessage());
                 }
             }
 

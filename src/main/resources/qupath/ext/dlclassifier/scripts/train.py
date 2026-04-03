@@ -276,10 +276,23 @@ def setup_callback(phase, data=None):
     )
 
 
+# Track best epoch metrics as fallback for stale pip packages that may
+# not populate these fields in the result dict.
+_epoch_tracker = {"best_epoch": 0, "best_mean_iou": 0.0, "last_epoch": 0,
+                  "last_loss": 0.0, "last_acc": 0.0}
+
+
 def progress_callback(epoch, train_loss, val_loss, accuracy,
                        per_class_iou, per_class_loss, mean_iou):
     """Forward training progress to Appose task events."""
     import math
+    # Update fallback tracker
+    _epoch_tracker["last_epoch"] = epoch
+    _epoch_tracker["last_loss"] = val_loss if isinstance(val_loss, (int, float)) else 0.0
+    _epoch_tracker["last_acc"] = accuracy if isinstance(accuracy, (int, float)) else 0.0
+    if isinstance(mean_iou, (int, float)) and mean_iou > _epoch_tracker["best_mean_iou"]:
+        _epoch_tracker["best_epoch"] = epoch
+        _epoch_tracker["best_mean_iou"] = mean_iou
     # Guard against NaN/Inf: Python json.dumps serializes float('nan') as bare
     # NaN token which is NOT valid JSON. Gson's JsonParser rejects it, silently
     # dropping ALL progress updates. See docs/APPOSE_DEV_GUIDE.md.
@@ -482,14 +495,16 @@ status = result.get("status", "completed")
 task.outputs["status"] = status
 task.outputs["model_path"] = result.get("model_path", "")
 task.outputs["last_model_path"] = result.get("last_model_path", "")
-task.outputs["final_loss"] = result.get("final_loss", 0.0)
-task.outputs["final_accuracy"] = result.get("final_accuracy", 0.0)
-task.outputs["best_epoch"] = result.get("best_epoch", 0)
-task.outputs["best_mean_iou"] = result.get("best_mean_iou", 0.0)
-task.outputs["epochs_trained"] = result.get("epochs_trained", 0)
 task.outputs["checkpoint_path"] = result.get("checkpoint_path", "")
-task.outputs["last_epoch"] = result.get("epoch", 0)
 task.outputs["total_epochs"] = result.get("total_epochs", total_epochs)
+
+# Use result values, falling back to progress_callback tracker for stale pip packages
+task.outputs["best_epoch"] = result.get("best_epoch", 0) or _epoch_tracker["best_epoch"]
+task.outputs["best_mean_iou"] = result.get("best_mean_iou", 0.0) or _epoch_tracker["best_mean_iou"]
+task.outputs["last_epoch"] = result.get("epoch", 0) or _epoch_tracker["last_epoch"]
+task.outputs["final_loss"] = result.get("final_loss", 0.0) or _epoch_tracker["last_loss"]
+task.outputs["final_accuracy"] = result.get("final_accuracy", 0.0) or _epoch_tracker["last_acc"]
+task.outputs["epochs_trained"] = result.get("epochs_trained", 0) or _epoch_tracker["last_epoch"]
 
 # Forward focus class info if present (from pause, cancel, or completion)
 if "focus_class_name" in result:

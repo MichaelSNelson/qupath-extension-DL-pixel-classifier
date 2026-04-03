@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.scene.control.Alert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.BuildInfo;
 import qupath.ext.dlclassifier.DLClassifierChecks;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
@@ -978,7 +979,10 @@ public class TrainingWorkflow {
                 progress.setCurrentProgress(-1);
             }
             logger.info("Starting training for classifier: {}", classifierName);
-            if (progress != null) progress.log("Starting training for classifier: " + classifierName);
+            if (progress != null) {
+                progress.log("DL Pixel Classifier " + BuildInfo.getSummary());
+                progress.log("Starting training for classifier: " + classifierName);
+            }
 
             // Export training data (use configured export directory if set)
             String exportDirPref = DLClassifierPreferences.getTrainingExportDir();
@@ -1219,6 +1223,7 @@ public class TrainingWorkflow {
                             if (lastLoggedEpoch.getAndSet(currentEpoch) < currentEpoch) {
                                 progress.updateTrainingMetrics(
                                         trainingProgress.epoch(),
+                                        trainingProgress.totalEpochs(),
                                         trainingProgress.loss(),
                                         trainingProgress.valLoss(),
                                         trainingProgress.perClassIoU(),
@@ -1615,6 +1620,46 @@ public class TrainingWorkflow {
                     trainingProgress -> {
                         if (progress.isCancelled()) return;
 
+                        // Handle setup phase updates (same filter as initial training)
+                        if (trainingProgress.isSetupPhase()) {
+                            if ("initializing".equals(trainingProgress.status())) {
+                                String deviceMsg = formatDeviceMessage(
+                                        trainingProgress.device(), trainingProgress.deviceInfo());
+                                progress.log(deviceMsg);
+                            } else if ("training_config".equals(trainingProgress.setupPhase())) {
+                                progress.log("--- Resumed Training Configuration ---");
+                                var config = trainingProgress.configSummary();
+                                if (config != null) {
+                                    for (var entry : config.entrySet()) {
+                                        progress.log("  " + entry.getKey() + ": " + entry.getValue());
+                                    }
+                                }
+                            } else if ("training_batch".equals(trainingProgress.setupPhase())) {
+                                var cfg = trainingProgress.configSummary();
+                                if (cfg != null) {
+                                    String batch = cfg.getOrDefault("batch", "?");
+                                    String totalBatches = cfg.getOrDefault("total_batches", "?");
+                                    String batchEpoch = cfg.getOrDefault("epoch", "?");
+                                    String totalEp = cfg.getOrDefault("total_epochs",
+                                            String.valueOf(trainingProgress.totalEpochs()));
+                                    String elapsed = cfg.getOrDefault("elapsed_seconds", "");
+                                    String elapsedStr = elapsed.isEmpty() ? "" : " (" + elapsed + "s)";
+                                    progress.setStatus(String.format("Epoch %s/%s - batch %s/%s%s",
+                                            batchEpoch, totalEp, batch, totalBatches, elapsedStr));
+                                    progress.setDetail(String.format("Batch %s/%s - loss: %s",
+                                            batch, totalBatches, cfg.getOrDefault("batch_loss", "?")));
+                                }
+                            } else {
+                                progress.setStatus(formatSetupPhase(trainingProgress.setupPhase()));
+                            }
+                            return;
+                        }
+
+                        // Update status on first real epoch
+                        if (lastLoggedEpochResume.get() < 0) {
+                            progress.setStatus("Training (" + trainingProgress.totalEpochs() + " epochs)...");
+                        }
+
                         // Always update progress bar and detail text (lightweight, keeps UI responsive)
                         double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                         progress.setOverallProgress(progressValue);
@@ -1627,6 +1672,7 @@ public class TrainingWorkflow {
                         if (lastLoggedEpochResume.getAndSet(currentEpoch) < currentEpoch) {
                             progress.updateTrainingMetrics(
                                     trainingProgress.epoch(),
+                                    trainingProgress.totalEpochs(),
                                     trainingProgress.loss(),
                                     trainingProgress.valLoss(),
                                     trainingProgress.perClassIoU(),

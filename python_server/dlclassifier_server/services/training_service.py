@@ -1799,10 +1799,17 @@ class TrainingService:
         # Training loop
         _report_setup("starting_training")
         num_classes = len(classes)
-        best_epoch = 0
+
+        # Initialize best-tracking variables. When resuming from a checkpoint,
+        # restore from early_stopping state so pause/completion reports are accurate.
+        if checkpoint_path and early_stopping is not None:
+            best_epoch = early_stopping.best_epoch
+            best_mean_iou = best_score if best_score_mode == "max" else 0.0
+        else:
+            best_epoch = 0
+            best_mean_iou = 0.0
         best_loss = 0.0
         best_accuracy = 0.0
-        best_mean_iou = 0.0
 
         # Auto-detect encoder prefix for BN freezing.  SMP models use
         # "encoder.", but future architectures might use "backbone." or

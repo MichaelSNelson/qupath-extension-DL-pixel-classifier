@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.time.LocalDateTime
+
 plugins {
     // Support writing the extension in Groovy (for scripting API)
     groovy
@@ -62,6 +65,50 @@ dependencies {
 
 tasks.shadowJar {
     mergeServiceFiles()
+}
+
+// Generate build-info.properties with git hash and build timestamp
+// so the extension can log exactly which code version is running.
+tasks.register("generateBuildInfo") {
+    val outputDir = layout.buildDirectory.dir("generated/resources/build-info")
+    val propsFile = outputDir.map { it.file("qupath/ext/dlclassifier/build-info.properties") }
+    outputs.dir(outputDir)
+
+    doLast {
+        val hash = try {
+            providers.exec {
+                commandLine("git", "rev-parse", "--short", "HEAD")
+            }.standardOutput.asText.get().trim()
+        } catch (_: Exception) { "unknown" }
+
+        val dirty = try {
+            val st = providers.exec {
+                commandLine("git", "status", "--porcelain")
+            }.standardOutput.asText.get().trim()
+            if (st.isNotEmpty()) "-dirty" else ""
+        } catch (_: Exception) { "" }
+
+        val props = Properties()
+        props.setProperty("version", project.version.toString())
+        props.setProperty("git.hash", hash + dirty)
+        props.setProperty("build.timestamp", LocalDateTime.now().toString())
+
+        val outFile = propsFile.get().asFile
+        outFile.parentFile.mkdirs()
+        outFile.outputStream().use { props.store(it, "DL Pixel Classifier Build Info") }
+    }
+}
+
+tasks.named("processResources") {
+    dependsOn("generateBuildInfo")
+}
+
+tasks.named("sourcesJar") {
+    dependsOn("generateBuildInfo")
+}
+
+sourceSets.main {
+    resources.srcDir(layout.buildDirectory.dir("generated/resources/build-info"))
 }
 
 tasks.withType<JavaCompile> {

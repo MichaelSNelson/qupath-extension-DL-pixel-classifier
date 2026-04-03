@@ -26,6 +26,9 @@ import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.hierarchy.PathObjectHierarchy;
+import qupath.lib.objects.hierarchy.events.PathObjectHierarchyEvent;
+import qupath.lib.objects.hierarchy.events.PathObjectHierarchyListener;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.roi.ROIs;
 
@@ -39,8 +42,9 @@ import java.util.Map;
  * <p>
  * Displays tiles sorted by loss (descending) to help users identify annotation
  * errors, hard cases, and model failures. Selecting a row navigates the
- * QuPath viewer to the tile location and shows a highlight rectangle.
- * A preview pane shows the disagreement map overlay.
+ * QuPath viewer to the tile location and shows a temporary highlight rectangle
+ * that auto-clears when the user starts drawing.
+ * A preview pane shows the loss heatmap or disagreement map overlay with zoom.
  *
  * @author UW-LOCI
  * @since 0.3.0
@@ -58,11 +62,12 @@ public class TrainingAreaIssuesDialog {
     private final int patchSize;
     private final Map<String, Integer> classColors;
 
-    // Feature 1: tile highlight tracking
+    // Tile highlight tracking -- auto-removed when user interacts with hierarchy
     private PathObject currentHighlight;
     private qupath.lib.images.ImageData<?> highlightImageData;
+    private PathObjectHierarchyListener hierarchyListener;
 
-    // Feature 3: preview pane components
+    // Preview pane components
     private final ImageView tileImageView;
     private final ImageView disagreeImageView;
     private final VBox legendBox;
@@ -89,8 +94,6 @@ public class TrainingAreaIssuesDialog {
         this.classColors = classColors != null ? classColors : Map.of();
         this.stage = new Stage();
         stage.initStyle(StageStyle.DECORATED);
-        // Set QuPath as owner so this dialog stays on top of the main window
-        // but not on top of other applications
         var qupath = QuPathGUI.getInstance();
         if (qupath != null && qupath.getStage() != null) {
             stage.initOwner(qupath.getStage());
@@ -111,11 +114,19 @@ public class TrainingAreaIssuesDialog {
         summaryLabel = new Label(String.format(
                 "%d tiles evaluated | %d with loss > 1.0", results.size(), highLoss));
         summaryLabel.setStyle("-fx-font-weight: bold;");
+        summaryLabel.setTooltip(TooltipHelper.create(
+                "Total tiles evaluated and count of tiles with high loss.\n"
+                + "Tiles are sorted by loss (worst first) to help find\n"
+                + "annotation errors and hard cases."));
 
         // Filter controls
         ComboBox<String> splitFilter = new ComboBox<>();
         splitFilter.getItems().addAll("All", "Train", "Val");
         splitFilter.setValue("All");
+        splitFilter.setTooltip(TooltipHelper.create(
+                "Filter tiles by dataset split.\n"
+                + "Val tiles are more diagnostic -- high loss there\n"
+                + "suggests annotation problems, not just overfitting."));
 
         Slider thresholdSlider = new Slider(0, 10, 0);
         thresholdSlider.setShowTickLabels(true);
@@ -123,6 +134,9 @@ public class TrainingAreaIssuesDialog {
         thresholdSlider.setMajorTickUnit(2);
         thresholdSlider.setMinorTickCount(1);
         thresholdSlider.setPrefWidth(200);
+        thresholdSlider.setTooltip(TooltipHelper.create(
+                "Show only tiles with loss above this threshold.\n"
+                + "Increase to focus on the most problematic tiles."));
 
         Label thresholdLabel = new Label("Min Loss: 0.00");
         thresholdSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
@@ -142,6 +156,11 @@ public class TrainingAreaIssuesDialog {
         table = new TableView<>();
         sortedRows.comparatorProperty().bind(table.comparatorProperty());
         table.setItems(sortedRows);
+        table.setTooltip(TooltipHelper.create(
+                "Click a row to navigate to that tile in the viewer\n"
+                + "and see the loss heatmap preview.\n"
+                + "A temporary highlight rectangle marks the tile boundary\n"
+                + "and clears automatically when you start drawing."));
 
         TableColumn<TileRow, String> imageCol = new TableColumn<>("Image");
         imageCol.setCellValueFactory(new PropertyValueFactory<>("sourceImage"));
@@ -167,20 +186,23 @@ public class TrainingAreaIssuesDialog {
         iouCol.setPrefWidth(65);
         iouCol.setCellFactory(col -> new FormattedDoubleCell<>("%.3f"));
 
-        // Feature 2: Worst Class column
         TableColumn<TileRow, String> worstClassCol = new TableColumn<>("Worst Class");
         worstClassCol.setCellValueFactory(new PropertyValueFactory<>("worstClass"));
-        worstClassCol.setPrefWidth(120);
+        worstClassCol.setPrefWidth(130);
 
-        TableColumn<TileRow, String> classesCol = new TableColumn<>("Classes");
-        classesCol.setCellValueFactory(new PropertyValueFactory<>("classesPresent"));
-        classesCol.setPrefWidth(150);
+        // Add column tooltips via graphic labels
+        setColumnTooltip(imageCol, "Source image this tile was extracted from.");
+        setColumnTooltip(splitCol, "Train or Val split. High-loss Val tiles\nare the best candidates for annotation review.");
+        setColumnTooltip(lossCol, "Per-tile loss value. Higher = model struggled more.\nSort by this column to find the worst tiles.");
+        setColumnTooltip(disagreeCol, "Percentage of pixels where the model's\nprediction differs from the ground truth annotation.");
+        setColumnTooltip(iouCol, "Mean Intersection-over-Union across all\nclasses present in this tile (higher is better).");
+        setColumnTooltip(worstClassCol, "Class with the lowest IoU in this tile.\nShows which class the model is struggling with\nand how poorly it performed (IoU score).");
 
         table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol,
-                iouCol, worstClassCol, classesCol));
+                iouCol, worstClassCol));
         table.getSortOrder().add(lossCol);
 
-        // Feature 1: Single-click selection navigates to tile
+        // Single-click navigates to tile and updates preview
         table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> {
             if (newRow != null) {
                 navigateToTile(newRow);
@@ -190,8 +212,7 @@ public class TrainingAreaIssuesDialog {
             }
         });
 
-        // Re-clicking the same row should re-navigate (selection listener
-        // doesn't fire when the selection hasn't changed)
+        // Re-clicking the same row should re-navigate
         table.setOnMouseClicked(e -> {
             TileRow selected = table.getSelectionModel().getSelectedItem();
             if (selected != null) {
@@ -200,34 +221,72 @@ public class TrainingAreaIssuesDialog {
         });
 
         // Status bar
-        Label statusLabel = new Label("Select a row to navigate to the tile location");
+        Label statusLabel = new Label("Click a row to navigate to the tile location");
         statusLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
 
-        // Feature 3: Preview pane
+        // Preview pane with zoom support
         tileImageView = new ImageView();
-        tileImageView.setFitWidth(256);
-        tileImageView.setFitHeight(256);
         tileImageView.setPreserveRatio(true);
-        tileImageView.setSmooth(false); // nearest-neighbor for sharp pixel view
+        tileImageView.setSmooth(false);
 
         disagreeImageView = new ImageView();
-        disagreeImageView.setFitWidth(256);
-        disagreeImageView.setFitHeight(256);
         disagreeImageView.setPreserveRatio(true);
         disagreeImageView.setSmooth(false);
         disagreeImageView.setOpacity(0.6);
 
-        StackPane previewStack = new StackPane(tileImageView, disagreeImageView);
-        previewStack.setStyle("-fx-background-color: #222; -fx-border-color: #666; -fx-border-width: 1;");
-        previewStack.setPrefSize(260, 260);
-        previewStack.setMaxSize(260, 260);
-        previewStack.setMinSize(260, 260);
+        // Zoomable preview: images in a Group scaled by zoom, inside a ScrollPane
+        StackPane imageStack = new StackPane(tileImageView, disagreeImageView);
+
+        ScrollPane previewScroll = new ScrollPane(imageStack);
+        previewScroll.setPannable(true);
+        previewScroll.setStyle("-fx-background-color: #222;");
+        previewScroll.setPrefSize(280, 280);
+        previewScroll.setMinSize(280, 280);
+        previewScroll.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        previewScroll.setFitToWidth(true);
+        previewScroll.setFitToHeight(true);
+
+        // Zoom slider
+        Label zoomLabel = new Label("Zoom: 1x");
+        Slider zoomSlider = new Slider(1, 8, 1);
+        zoomSlider.setShowTickLabels(true);
+        zoomSlider.setShowTickMarks(true);
+        zoomSlider.setMajorTickUnit(1);
+        zoomSlider.setMinorTickCount(0);
+        zoomSlider.setSnapToTicks(true);
+        zoomSlider.setPrefWidth(200);
+        zoomSlider.setTooltip(TooltipHelper.create(
+                "Zoom into the preview to see loss details at higher resolution.\n"
+                + "Use the scrollbars or drag to pan when zoomed in.\n"
+                + "Helps identify which specific pixels have high loss."));
+        zoomSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            double zoom = newVal.doubleValue();
+            zoomLabel.setText(String.format("Zoom: %dx", Math.round(zoom)));
+            double size = 256 * zoom;
+            tileImageView.setFitWidth(size);
+            tileImageView.setFitHeight(size);
+            disagreeImageView.setFitWidth(size);
+            disagreeImageView.setFitHeight(size);
+            // Disable fit-to-viewport when zoomed so scrollbars appear
+            previewScroll.setFitToWidth(zoom <= 1);
+            previewScroll.setFitToHeight(zoom <= 1);
+        });
+
+        // Initialize image sizes at 1x
+        tileImageView.setFitWidth(256);
+        tileImageView.setFitHeight(256);
+        disagreeImageView.setFitWidth(256);
+        disagreeImageView.setFitHeight(256);
 
         Label opacityLabel = new Label("Overlay: 60%");
         Slider opacitySlider = new Slider(0, 100, 60);
         opacitySlider.setPrefWidth(200);
         opacitySlider.setShowTickLabels(true);
         opacitySlider.setMajorTickUnit(25);
+        opacitySlider.setTooltip(TooltipHelper.create(
+                "Adjust the overlay transparency.\n"
+                + "Lower values show more of the original tile;\n"
+                + "higher values show more of the loss/disagreement overlay."));
         opacitySlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             double opacity = newVal.doubleValue() / 100.0;
             disagreeImageView.setOpacity(opacity);
@@ -244,6 +303,10 @@ public class TrainingAreaIssuesDialog {
         overlaySelector = new ComboBox<>();
         overlaySelector.getItems().addAll(OVERLAY_LOSS_HEATMAP, OVERLAY_DISAGREEMENT);
         overlaySelector.setValue(OVERLAY_LOSS_HEATMAP);
+        overlaySelector.setTooltip(TooltipHelper.create(
+                "Loss Heatmap: per-pixel loss intensity (blue=low, red=high).\n"
+                + "Disagreement: colored pixels where model prediction\n"
+                + "differs from the ground truth annotation."));
         overlaySelector.setOnAction(e -> {
             String selected = overlaySelector.getValue();
             previewTitle.setText(selected + " Preview");
@@ -252,7 +315,6 @@ public class TrainingAreaIssuesDialog {
             } else {
                 buildDisagreementLegend();
             }
-            // Reload overlay for current selection
             TileRow currentRow = table.getSelectionModel().getSelectedItem();
             if (currentRow != null) {
                 updateOverlayImage(currentRow);
@@ -262,12 +324,14 @@ public class TrainingAreaIssuesDialog {
         HBox titleBar = new HBox(8, previewTitle, overlaySelector);
         titleBar.setAlignment(Pos.CENTER_LEFT);
 
-        VBox previewPane = new VBox(8, titleBar, previewStack, opacityLabel, opacitySlider, legendBox);
-        previewPane.setPadding(new Insets(0, 0, 0, 10));
+        VBox previewPane = new VBox(8, titleBar, previewScroll,
+                zoomLabel, zoomSlider,
+                opacityLabel, opacitySlider, legendBox);
+        previewPane.setPadding(new Insets(10, 0, 0, 10));
         previewPane.setAlignment(Pos.TOP_CENTER);
-        previewPane.setMinWidth(280);
-        previewPane.setPrefWidth(280);
-        previewPane.setMaxWidth(280);
+        previewPane.setMinWidth(300);
+        previewPane.setPrefWidth(300);
+        previewPane.setMaxWidth(300);
 
         // Layout: table on left, preview on right
         VBox tablePane = new VBox(10, summaryLabel, filterBox, table, statusLabel);
@@ -279,7 +343,7 @@ public class TrainingAreaIssuesDialog {
         mainLayout.setPadding(new Insets(0, 10, 10, 0));
         HBox.setHgrow(tablePane, Priority.ALWAYS);
 
-        Scene scene = new Scene(mainLayout, 960, 550);
+        Scene scene = new Scene(mainLayout, 900, 600);
         stage.setScene(scene);
 
         // Clean up highlight on close
@@ -291,6 +355,16 @@ public class TrainingAreaIssuesDialog {
      */
     public void show() {
         Platform.runLater(() -> stage.show());
+    }
+
+    /**
+     * Sets a tooltip on a table column header via a Label graphic.
+     */
+    private static <S, T> void setColumnTooltip(TableColumn<S, T> column, String text) {
+        Label label = new Label(column.getText());
+        label.setTooltip(TooltipHelper.create(text));
+        column.setGraphic(label);
+        column.setText("");
     }
 
     private void updateFilter(String splitValue, double minLoss) {
@@ -314,20 +388,17 @@ public class TrainingAreaIssuesDialog {
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) return;
 
-        // Try to switch to the correct image if needed
         String targetImageId = row.getSourceImageId();
         String targetImageName = row.getSourceImage();
         var project = qupath.getProject();
 
         if (project != null && targetImageName != null && !targetImageName.isEmpty()) {
-            // Check if we're already on the correct image
             var currentImageData = qupath.getImageData();
             String currentImageName = currentImageData != null
                     ? currentImageData.getServer().getMetadata().getName() : null;
             boolean needsSwitch = !targetImageName.equals(currentImageName);
 
             if (needsSwitch) {
-                // Find the target entry
                 for (var entry : project.getImageList()) {
                     boolean match = targetImageId != null && !targetImageId.isEmpty()
                             ? targetImageId.equals(entry.getID())
@@ -336,7 +407,6 @@ public class TrainingAreaIssuesDialog {
                         Platform.runLater(() -> {
                             try {
                                 qupath.openImageEntry(entry);
-                                // Navigate after image loads
                                 Platform.runLater(() -> centerViewerOnTile(qupath, row));
                             } catch (Exception e) {
                                 logger.warn("Failed to open image: {}", e.getMessage());
@@ -349,7 +419,6 @@ public class TrainingAreaIssuesDialog {
             }
         }
 
-        // Already on the right image, just navigate
         Platform.runLater(() -> centerViewerOnTile(qupath, row));
     }
 
@@ -367,15 +436,17 @@ public class TrainingAreaIssuesDialog {
         viewer.setCenterPixelLocation(centerX, centerY);
         viewer.setDownsampleFactor(downsample);
 
-        // Feature 1: Add highlight rectangle
-        addTileHighlight(imageData, row.getX(), row.getY(), regionSize);
+        // Add temporary highlight rectangle that auto-clears on user interaction
+        addTemporaryHighlight(imageData, row.getX(), row.getY(), regionSize);
     }
 
     /**
-     * Adds a temporary Region* rectangle annotation at the tile boundary.
+     * Adds a temporary highlight rectangle that auto-clears when the user
+     * modifies the hierarchy (e.g., starts drawing a new annotation).
+     * This prevents the highlight from interfering with drawing tools.
      */
-    private void addTileHighlight(qupath.lib.images.ImageData<?> imageData,
-                                  int tileX, int tileY, double regionSize) {
+    private void addTemporaryHighlight(qupath.lib.images.ImageData<?> imageData,
+                                       int tileX, int tileY, double regionSize) {
         removeCurrentHighlight();
 
         try {
@@ -391,15 +462,40 @@ public class TrainingAreaIssuesDialog {
 
             currentHighlight = highlight;
             highlightImageData = imageData;
+
+            // Listen for hierarchy changes -- remove highlight when user
+            // adds/removes/modifies any other object (i.e., starts drawing)
+            hierarchyListener = new PathObjectHierarchyListener() {
+                @Override
+                public void hierarchyChanged(PathObjectHierarchyEvent event) {
+                    // Ignore events caused by our own highlight management
+                    if (event.getChangedObjects().size() == 1
+                            && event.getChangedObjects().contains(currentHighlight)) {
+                        return;
+                    }
+                    // User did something else -- clear our highlight
+                    Platform.runLater(() -> removeCurrentHighlight());
+                }
+            };
+            hierarchy.addListener(hierarchyListener);
+
         } catch (Exception e) {
             logger.debug("Failed to create tile highlight: {}", e.getMessage());
         }
     }
 
     /**
-     * Removes the current highlight rectangle from the hierarchy.
+     * Removes the current highlight rectangle and hierarchy listener.
      */
     private void removeCurrentHighlight() {
+        if (hierarchyListener != null && highlightImageData != null) {
+            try {
+                highlightImageData.getHierarchy().removeListener(hierarchyListener);
+            } catch (Exception e) {
+                // Ignore
+            }
+            hierarchyListener = null;
+        }
         if (currentHighlight != null && highlightImageData != null) {
             try {
                 highlightImageData.getHierarchy().removeObject(currentHighlight, false);
@@ -411,11 +507,8 @@ public class TrainingAreaIssuesDialog {
         }
     }
 
-    // ==================== Feature 3: Preview ====================
+    // ==================== Preview Pane ====================
 
-    /**
-     * Updates the preview pane with tile image and the currently selected overlay.
-     */
     private void updatePreview(TileRow row) {
         String tilePath = row.getTileImagePath();
 
@@ -439,9 +532,6 @@ public class TrainingAreaIssuesDialog {
         updateOverlayImage(row);
     }
 
-    /**
-     * Loads the overlay image (disagreement or loss heatmap) based on the current selector.
-     */
     private void updateOverlayImage(TileRow row) {
         String overlayPath;
         if (OVERLAY_LOSS_HEATMAP.equals(overlaySelector.getValue())) {
@@ -473,9 +563,6 @@ public class TrainingAreaIssuesDialog {
         disagreeImageView.setImage(null);
     }
 
-    /**
-     * Builds the class color legend for disagreement mode.
-     */
     private void buildDisagreementLegend() {
         legendBox.getChildren().clear();
         if (classColors.isEmpty()) return;
@@ -504,9 +591,6 @@ public class TrainingAreaIssuesDialog {
         }
     }
 
-    /**
-     * Builds a gradient color bar legend for loss heatmap mode.
-     */
     private void buildLossHeatmapLegend() {
         legendBox.getChildren().clear();
 
@@ -514,7 +598,6 @@ public class TrainingAreaIssuesDialog {
         legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
         legendBox.getChildren().add(legendTitle);
 
-        // Gradient bar: blue -> yellow -> red
         Region gradientBar = new Region();
         gradientBar.setPrefHeight(14);
         gradientBar.setPrefWidth(200);
@@ -576,7 +659,6 @@ public class TrainingAreaIssuesDialog {
         private final DoubleProperty loss;
         private final DoubleProperty disagreementPct;
         private final DoubleProperty meanIoU;
-        private final StringProperty classesPresent;
         private final StringProperty worstClass;
         private final IntegerProperty x;
         private final IntegerProperty y;
@@ -599,25 +681,22 @@ public class TrainingAreaIssuesDialog {
             this.lossHeatmapPath = new SimpleStringProperty(result.lossHeatmapPath());
             this.tileImagePath = new SimpleStringProperty(result.tileImagePath());
 
-            // Build classes present string from per-class IoU
-            StringBuilder classes = new StringBuilder();
+            // Compute worst class: lowest IoU among classes actually present in the tile.
+            // Null IoU values indicate the class has no ground truth pixels in this tile
+            // and are excluded. Only consider classes with real IoU measurements.
             String worst = "";
             double worstIoU = Double.MAX_VALUE;
             if (result.perClassIoU() != null) {
                 for (Map.Entry<String, Double> entry : result.perClassIoU().entrySet()) {
-                    if (entry.getValue() != null) {
-                        if (classes.length() > 0) classes.append(", ");
-                        classes.append(entry.getKey());
-                        if (entry.getValue() < worstIoU) {
-                            worstIoU = entry.getValue();
-                            worst = entry.getKey();
-                        }
+                    Double iou = entry.getValue();
+                    if (iou != null && iou < worstIoU) {
+                        worstIoU = iou;
+                        worst = entry.getKey();
                     }
                 }
             }
-            this.classesPresent = new SimpleStringProperty(classes.toString());
             this.worstClass = new SimpleStringProperty(
-                    worst.isEmpty() ? "" : String.format("%s (%.2f)", worst, worstIoU));
+                    worst.isEmpty() ? "" : String.format("%s (IoU %.3f)", worst, worstIoU));
         }
 
         public String getSourceImage() { return sourceImage.get(); }
@@ -636,9 +715,6 @@ public class TrainingAreaIssuesDialog {
 
         public double getMeanIoU() { return meanIoU.get(); }
         public DoubleProperty meanIoUProperty() { return meanIoU; }
-
-        public String getClassesPresent() { return classesPresent.get(); }
-        public StringProperty classesPresentProperty() { return classesPresent; }
 
         public String getWorstClass() { return worstClass.get(); }
         public StringProperty worstClassProperty() { return worstClass; }

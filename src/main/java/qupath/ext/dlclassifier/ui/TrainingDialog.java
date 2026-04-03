@@ -178,6 +178,7 @@ public class TrainingDialog {
         private ComboBox<String> downsampleCombo;
         private ComboBox<String> contextScaleCombo;
         private Spinner<Integer> lineStrokeWidthSpinner;
+        private Label lineStrokeLabel;
 
         // Channel selection
         private ChannelSelectionPanel channelPanel;
@@ -234,6 +235,7 @@ public class TrainingDialog {
         private ListView<ImageSelectionItem> imageSelectionList;
         private List<TitledPane> gatedSections = new ArrayList<>();
         private boolean classesLoaded = false;
+        private boolean hasLineAnnotations = false;
         private Button loadClassesButton;
 
         // Architecture-dependent sections
@@ -259,6 +261,13 @@ public class TrainingDialog {
         // Context scale preview (shows what the context view sees)
         private MiniViewers.MiniViewerManager contextPreviewManager;
         private Stage contextPreviewStage;
+
+        // Preview window linking: when both are open, they move together
+        private boolean syncingPreviews = false;
+        private javafx.beans.value.ChangeListener<Number> resPosXListener;
+        private javafx.beans.value.ChangeListener<Number> resPosYListener;
+        private javafx.beans.value.ChangeListener<Number> ctxPosXListener;
+        private javafx.beans.value.ChangeListener<Number> ctxPosYListener;
 
         // Live VRAM estimation
         private Label vramEstimateLabel;
@@ -376,10 +385,10 @@ public class TrainingDialog {
                     buttonBar
             );
 
-            // Advanced-only sections: hidden in basic mode
-            for (TitledPane advSection : List.of(
-                    modelSection, weightInitSection, trainingSection,
-                    strategySection, channelSection, augmentationSection)) {
+            // Advanced-only sections: fully hidden in basic mode
+            // (Model, weight init, training params, and channel sections are now
+            //  visible in basic mode with per-control visibility bindings instead)
+            for (TitledPane advSection : List.of(strategySection, augmentationSection)) {
                 advSection.visibleProperty().bind(advancedMode);
                 advSection.managedProperty().bind(advancedMode);
             }
@@ -390,16 +399,16 @@ public class TrainingDialog {
             ScrollPane scrollPane = new ScrollPane(content);
             scrollPane.setFitToWidth(true);
             scrollPane.setMaxHeight(Double.MAX_VALUE);
-            scrollPane.setPrefHeight(advancedMode.get() ? 600 : 500);
+            scrollPane.setPrefHeight(advancedMode.get() ? 700 : 650);
             scrollPane.setPrefWidth(550);
 
             // Resize dialog when toggling modes
             advancedMode.addListener((obs, wasAdvanced, isAdvanced) -> {
                 if (isAdvanced) {
                     double maxH = javafx.stage.Screen.getPrimary().getVisualBounds().getHeight() - 100;
-                    dialog.setHeight(Math.min(800, maxH));
+                    dialog.setHeight(Math.min(900, maxH));
                 } else {
-                    dialog.setHeight(550);
+                    dialog.setHeight(700);
                 }
             });
 
@@ -460,17 +469,19 @@ public class TrainingDialog {
 
             // Basic mode hint (hidden in advanced)
             Label basicHint = new Label(
-                    "Select images, load classes, pick your annotation classes, " +
+                    "Select images, load classes, choose an encoder, pick classes, " +
                     "name your classifier, and click Start Training. " +
-                    "Default settings (UNet + ResNet34, pretrained, 50 epochs) work well for most tasks.");
+                    "Start with ResNet18 or ResNet34 -- larger models need more data and time.");
             basicHint.setWrapText(true);
             basicHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
             basicHint.visibleProperty().bind(advancedMode.not());
             basicHint.managedProperty().bind(advancedMode.not());
 
-            // Persist mode preference
-            advancedMode.addListener((obs, old, newVal) ->
-                    DLClassifierPreferences.setAdvancedMode(newVal));
+            // Persist mode preference and refresh conditional visibility
+            advancedMode.addListener((obs, old, newVal) -> {
+                    DLClassifierPreferences.setAdvancedMode(newVal);
+                    updateLineStrokeVisibility();
+            });
 
             headerBox.getChildren().addAll(titleRow, subtitleLabel, basicHint, new Separator());
             return headerBox;
@@ -681,6 +692,19 @@ public class TrainingDialog {
                     updateValidation();
             });
 
+            // Basic mode: hide scratch and MAE options, hide layer freeze panel
+            scratchRadio.visibleProperty().bind(advancedMode);
+            scratchRadio.managedProperty().bind(advancedMode);
+            scratchInfo.visibleProperty().bind(advancedMode);
+            scratchInfo.managedProperty().bind(advancedMode);
+            maeEncoderRadio.visibleProperty().bind(advancedMode);
+            maeEncoderRadio.managedProperty().bind(advancedMode);
+            maeEncoderContent.visibleProperty().bind(advancedMode);
+            maeEncoderContent.managedProperty().bind(advancedMode);
+            // In basic mode, hide the layer freeze panel within backbone content
+            layerFreezePanel.visibleProperty().bind(advancedMode);
+            layerFreezePanel.managedProperty().bind(advancedMode);
+
             // Assemble all options
             content.getChildren().addAll(
                     scratchRadio, scratchInfo,
@@ -697,8 +721,10 @@ public class TrainingDialog {
             TitledPane pane = new TitledPane("WEIGHT INITIALIZATION", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create(
-                    "Choose how model weights are initialized before training"));
+            TooltipHelper.install(pane,
+                    "Choose how to initialize model weights.\n" +
+                    "Pretrained weights (default) transfer learned features and train faster.\n" +
+                    "Continue training picks up from a previously saved model.");
             return pane;
         }
 
@@ -1555,6 +1581,13 @@ public class TrainingDialog {
             archHelpBtn.setTooltip(new Tooltip("Model architecture guide"));
             archHelpBtn.setOnAction(e -> showArchitectureGuide());
 
+            // Architecture row: hidden in basic mode (fixed to unet)
+            archLabel.visibleProperty().bind(advancedMode);
+            archLabel.managedProperty().bind(advancedMode);
+            architectureCombo.visibleProperty().bind(advancedMode);
+            architectureCombo.managedProperty().bind(advancedMode);
+            archHelpBtn.visibleProperty().bind(advancedMode);
+            archHelpBtn.managedProperty().bind(advancedMode);
             grid.add(archLabel, 0, row);
             grid.add(architectureCombo, 1, row);
             grid.add(archHelpBtn, 2, row);
@@ -1582,7 +1615,10 @@ public class TrainingDialog {
                     "efficientnet-b0: Lightweight, fast inference, low VRAM.\n\n" +
                     "--- Histology-pretrained ---\n" +
                     "Lunit, Kather100K, TCGA-BRCA: Trained on millions of H&E tissue\n" +
-                    "patches at 20x. Best for H&E brightfield. ~100MB download.\n\n" +
+                    "patches at 20x. Best for H&E brightfield. ~100MB download.\n" +
+                    "Tip: If results are unstable, try a standard ResNet (resnet50)\n" +
+                    "with limited frozen layers -- ImageNet features can generalize\n" +
+                    "better for non-H&E or multi-channel images.\n\n" +
                     "--- Foundation Models (downloaded on-demand) ---\n" +
                     "H-optimus-0, Virchow, Hibou-B/L, Midnight, DINOv2:\n" +
                     "Large-scale vision models (86M-1.1B params). Permissive licenses\n" +
@@ -1593,20 +1629,47 @@ public class TrainingDialog {
                     backboneLabel, backboneCombo);
             grid.add(backboneLabel, 0, row);
             grid.add(backboneCombo, 1, row);
+            row++;
+
+            // Basic mode guidance (hidden in advanced)
+            Label basicModelHint = new Label(
+                    "ResNet18: Fastest, least VRAM. Good starting point.\n" +
+                    "ResNet34: Best balance of speed and accuracy (recommended).\n" +
+                    "ResNet50: Most capacity, needs more data and VRAM.");
+            basicModelHint.setWrapText(true);
+            basicModelHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            basicModelHint.visibleProperty().bind(advancedMode.not());
+            basicModelHint.managedProperty().bind(advancedMode.not());
+            grid.add(basicModelHint, 0, row, 2, 1);
 
             // Dynamic handler-specific UI (e.g., MuViT transformer parameters)
             handlerUIContainer = new javafx.scene.layout.VBox();
+            handlerUIContainer.visibleProperty().bind(advancedMode);
+            handlerUIContainer.managedProperty().bind(advancedMode);
             architectureCombo.valueProperty().addListener((obs, old, newVal) -> {
                 updateHandlerUI(newVal);
                 updateSectionsForArchitecture(newVal);
             });
             updateHandlerUI(architectureCombo.getValue());
 
+            // In basic mode, force unet architecture and re-filter backbone options
+            advancedMode.addListener((obs, old, isAdv) -> {
+                if (!isAdv && !"unet".equals(architectureCombo.getValue())) {
+                    // Setting the value triggers the combo's listener which calls updateBackboneOptions
+                    architectureCombo.setValue("unet");
+                } else {
+                    updateBackboneOptions(architectureCombo.getValue());
+                }
+            });
+
             javafx.scene.layout.VBox modelContent = new javafx.scene.layout.VBox(5, grid, handlerUIContainer);
             TitledPane pane = new TitledPane("MODEL ARCHITECTURE", modelContent);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create("Select the neural network architecture and encoder"));
+            TooltipHelper.install(pane,
+                    "Select the neural network encoder.\n" +
+                    "In basic mode, only ResNet encoders are shown.\n" +
+                    "Switch to advanced mode for all architectures and encoders.");
             return pane;
         }
 
@@ -1829,7 +1892,7 @@ public class TrainingDialog {
             grid.add(vramEstimateLabel, 0, row, 3, 1);
             row++;
 
-            // Learning rate
+            // Learning rate (advanced only)
             learningRateSpinner = new Spinner<>(0.00001, 1.0, DLClassifierPreferences.getDefaultLearningRate(), 0.0001);
             learningRateSpinner.setEditable(true);
             learningRateSpinner.setPrefWidth(100);
@@ -1860,20 +1923,26 @@ public class TrainingDialog {
                     "are using OneCycleLR (which auto-finds the optimal max LR).\n\n" +
                     "The LR scheduler will further adjust the rate during training.",
                     lrLabel, learningRateSpinner);
+            lrLabel.visibleProperty().bind(advancedMode);
+            lrLabel.managedProperty().bind(advancedMode);
+            learningRateSpinner.visibleProperty().bind(advancedMode);
+            learningRateSpinner.managedProperty().bind(advancedMode);
 
             grid.add(lrLabel, 0, row);
             grid.add(learningRateSpinner, 1, row);
             row++;
 
-            // LR info label -- updates based on scheduler selection
+            // LR info label -- updates based on scheduler selection (advanced only)
             lrInfoLabel = new Label();
             lrInfoLabel.setWrapText(true);
             lrInfoLabel.setMaxWidth(Double.MAX_VALUE);
             lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
+            lrInfoLabel.visibleProperty().bind(advancedMode);
+            lrInfoLabel.managedProperty().bind(advancedMode);
             grid.add(lrInfoLabel, 0, row, 2, 1);
             row++;
 
-            // Validation split
+            // Validation split (advanced only)
             validationSplitSpinner = new Spinner<>(5, 50, DLClassifierPreferences.getValidationSplit(), 5);
             validationSplitSpinner.setEditable(true);
             validationSplitSpinner.setPrefWidth(100);
@@ -1891,6 +1960,10 @@ public class TrainingDialog {
                     "split. A focus class with 0 validation samples will\n" +
                     "always show 0.0 IoU, preventing meaningful model selection.",
                     valSplitLabel, validationSplitSpinner);
+            valSplitLabel.visibleProperty().bind(advancedMode);
+            valSplitLabel.managedProperty().bind(advancedMode);
+            validationSplitSpinner.visibleProperty().bind(advancedMode);
+            validationSplitSpinner.managedProperty().bind(advancedMode);
 
             grid.add(valSplitLabel, 0, row);
             grid.add(validationSplitSpinner, 1, row);
@@ -1951,6 +2024,10 @@ public class TrainingDialog {
             wholeImageInfoLabel.setVisible(false);
             wholeImageInfoLabel.setManaged(false);
 
+            // Whole image checkbox: advanced only
+            wholeImageCheck.visibleProperty().bind(advancedMode);
+            wholeImageCheck.managedProperty().bind(advancedMode);
+
             grid.add(tileSizeLabel, 0, row);
             grid.add(tileSizeSpinner, 1, row);
             grid.add(wholeImageCheck, 2, row);
@@ -2006,10 +2083,17 @@ public class TrainingDialog {
                 Scene scene = new Scene(previewManager.getPane(), 400, 400);
                 previewStage.setScene(scene);
                 previewStage.setOnHiding(ev -> {
+                    unlinkPreviewStages();
                     previewManager = null;
                     this.previewStage = null;
                 });
                 previewStage.show();
+                // Position next to context preview if it's already open
+                if (contextPreviewStage != null && contextPreviewStage.isShowing()) {
+                    previewStage.setX(contextPreviewStage.getX() - previewStage.getWidth() - 5);
+                    previewStage.setY(contextPreviewStage.getY());
+                }
+                linkPreviewStages();
             });
             TooltipHelper.install(previewBtn,
                     "Open a preview window showing the image at the\n" +
@@ -2081,13 +2165,20 @@ public class TrainingDialog {
                 contextPreviewStage.setAlwaysOnTop(true);
                 contextPreviewStage.setTitle(String.format(
                         "Context Preview (%dx context at %.0fx downsample)", ctxScale, ds));
-                Scene scene = new Scene(contextPreviewManager.getPane(), 400, 400);
-                contextPreviewStage.setScene(scene);
+                Scene ctxScene = new Scene(contextPreviewManager.getPane(), 400, 400);
+                contextPreviewStage.setScene(ctxScene);
                 contextPreviewStage.setOnHiding(ev -> {
+                    unlinkPreviewStages();
                     contextPreviewManager = null;
                     contextPreviewStage = null;
                 });
                 contextPreviewStage.show();
+                // Position next to resolution preview if it's already open
+                if (previewStage != null && previewStage.isShowing()) {
+                    contextPreviewStage.setX(previewStage.getX() + previewStage.getWidth() + 5);
+                    contextPreviewStage.setY(previewStage.getY());
+                }
+                linkPreviewStages();
             });
             TooltipHelper.install(contextPreviewBtn,
                     "Open a preview window showing what the context\n" +
@@ -2138,7 +2229,7 @@ public class TrainingDialog {
             architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
 
-            // Overlap
+            // Overlap (advanced only)
             overlapSpinner = new Spinner<>(0, 50, DLClassifierPreferences.getTileOverlap(), 5);
             overlapSpinner.setEditable(true);
             overlapSpinner.setPrefWidth(100);
@@ -2151,12 +2242,18 @@ public class TrainingDialog {
                     "10-25%: Typical range -- good balance of diversity and speed.\n" +
                     "Higher overlap is most beneficial with limited annotations.",
                     overlapLabel, overlapSpinner);
+            overlapLabel.visibleProperty().bind(advancedMode);
+            overlapLabel.managedProperty().bind(advancedMode);
+            overlapSpinner.visibleProperty().bind(advancedMode);
+            overlapSpinner.managedProperty().bind(advancedMode);
 
             grid.add(overlapLabel, 0, row);
             grid.add(overlapSpinner, 1, row);
             row++;
 
             // Line stroke width - restore from preferences, or fall back to QuPath's stroke thickness
+            // In basic mode: only shown when line annotations are detected in selected images.
+            // In advanced mode: always shown.
             int savedStroke = DLClassifierPreferences.getLastLineStrokeWidth();
             if (savedStroke <= 0) {
                 try {
@@ -2169,7 +2266,7 @@ public class TrainingDialog {
             lineStrokeWidthSpinner = new Spinner<>(1, 50, savedStroke, 1);
             lineStrokeWidthSpinner.setEditable(true);
             lineStrokeWidthSpinner.setPrefWidth(100);
-            Label strokeLabel = new Label("Line Stroke Width:");
+            lineStrokeLabel = new Label("Line Stroke Width:");
             TooltipHelper.install(
                     "Width in pixels for rendering line/polyline annotations as training masks.\n" +
                     "Pre-filled from QuPath's annotation stroke thickness.\n\n" +
@@ -2177,9 +2274,9 @@ public class TrainingDialog {
                     "annotations -- consider increasing for better training.\n" +
                     "Only affects line/polyline annotations; area annotations are\n" +
                     "filled completely regardless of this setting.",
-                    strokeLabel, lineStrokeWidthSpinner);
+                    lineStrokeLabel, lineStrokeWidthSpinner);
 
-            grid.add(strokeLabel, 0, row);
+            grid.add(lineStrokeLabel, 0, row);
             grid.add(lineStrokeWidthSpinner, 1, row);
 
             TitledPane pane = new TitledPane("TRAINING PARAMETERS", grid);
@@ -2805,6 +2902,7 @@ public class TrainingDialog {
                 Map<String, PathClass> classMap = new TreeMap<>();
                 Map<String, Double> classAreas = new LinkedHashMap<>();
                 ImageData<BufferedImage> firstImageData = null;
+                boolean foundLineAnnotations = false;
 
                 // Collect pixel sizes from all selected images for spatial info display
                 Set<Double> pixelSizes = new LinkedHashSet<>();
@@ -2845,6 +2943,7 @@ public class TrainingDialog {
                                 double coverage;
                                 if (roi.isLine()) {
                                     coverage = roi.getLength() * strokeWidth;
+                                    foundLineAnnotations = true;
                                 } else {
                                     coverage = roi.getArea();
                                 }
@@ -2871,8 +2970,14 @@ public class TrainingDialog {
                 final Map<String, PathClass> finalClassMap = classMap;
                 final Map<String, Double> finalClassAreas = classAreas;
                 final Set<Double> finalPixelSizes = new LinkedHashSet<>(pixelSizes);
+                final boolean finalHasLineAnnotations = foundLineAnnotations;
 
                 Platform.runLater(() -> {
+                    // Track whether selected images contain line annotations
+                    // (used to conditionally show line stroke width in basic mode)
+                    hasLineAnnotations = finalHasLineAnnotations;
+                    updateLineStrokeVisibility();
+
                     // Update native pixel size for spatial info labels
                     if (finalPixelSizes.size() == 1) {
                         nativePixelSizeMicrons = finalPixelSizes.iterator().next();
@@ -3061,6 +3166,22 @@ public class TrainingDialog {
          * - Mixed pixel sizes across images -> warn user, show pixels only
          * - No pixel calibration -> note unavailability, show pixels only
          */
+        /**
+         * Shows/hides line stroke width controls based on mode and annotation type.
+         * In advanced mode: always visible. In basic mode: only when line annotations detected.
+         */
+        private void updateLineStrokeVisibility() {
+            boolean show = advancedMode.get() || hasLineAnnotations;
+            if (lineStrokeLabel != null) {
+                lineStrokeLabel.setVisible(show);
+                lineStrokeLabel.setManaged(show);
+            }
+            if (lineStrokeWidthSpinner != null) {
+                lineStrokeWidthSpinner.setVisible(show);
+                lineStrokeWidthSpinner.setManaged(show);
+            }
+        }
+
         private void updateSpatialInfoLabels() {
             int tileSize = tileSizeSpinner.getValue();
             double downsample = parseDownsample(downsampleCombo.getValue());
@@ -3125,6 +3246,80 @@ public class TrainingDialog {
                             ctxScale, ds));
                 }
             }
+        }
+
+        /**
+         * Links the resolution and context preview stages so they move together.
+         * Called after either preview is shown when both are open.
+         */
+        private void linkPreviewStages() {
+            // Only link when both stages exist and are showing
+            if (previewStage == null || contextPreviewStage == null
+                    || !previewStage.isShowing() || !contextPreviewStage.isShowing()) {
+                return;
+            }
+
+            // Remove any existing listeners first
+            unlinkPreviewStages();
+
+            // Compute the initial offset (context relative to resolution)
+            final double[] offsetX = { contextPreviewStage.getX() - previewStage.getX() };
+            final double[] offsetY = { contextPreviewStage.getY() - previewStage.getY() };
+
+            // Resolution stage drives context stage
+            resPosXListener = (obs, old, newX) -> {
+                if (!syncingPreviews && contextPreviewStage != null) {
+                    syncingPreviews = true;
+                    contextPreviewStage.setX(newX.doubleValue() + offsetX[0]);
+                    syncingPreviews = false;
+                }
+            };
+            resPosYListener = (obs, old, newY) -> {
+                if (!syncingPreviews && contextPreviewStage != null) {
+                    syncingPreviews = true;
+                    contextPreviewStage.setY(newY.doubleValue() + offsetY[0]);
+                    syncingPreviews = false;
+                }
+            };
+
+            // Context stage drives resolution stage
+            ctxPosXListener = (obs, old, newX) -> {
+                if (!syncingPreviews && previewStage != null) {
+                    syncingPreviews = true;
+                    previewStage.setX(newX.doubleValue() - offsetX[0]);
+                    syncingPreviews = false;
+                }
+            };
+            ctxPosYListener = (obs, old, newY) -> {
+                if (!syncingPreviews && previewStage != null) {
+                    syncingPreviews = true;
+                    previewStage.setY(newY.doubleValue() - offsetY[0]);
+                    syncingPreviews = false;
+                }
+            };
+
+            previewStage.xProperty().addListener(resPosXListener);
+            previewStage.yProperty().addListener(resPosYListener);
+            contextPreviewStage.xProperty().addListener(ctxPosXListener);
+            contextPreviewStage.yProperty().addListener(ctxPosYListener);
+        }
+
+        /**
+         * Removes position-sync listeners from preview stages.
+         */
+        private void unlinkPreviewStages() {
+            if (previewStage != null && resPosXListener != null) {
+                previewStage.xProperty().removeListener(resPosXListener);
+                previewStage.yProperty().removeListener(resPosYListener);
+            }
+            if (contextPreviewStage != null && ctxPosXListener != null) {
+                contextPreviewStage.xProperty().removeListener(ctxPosXListener);
+                contextPreviewStage.yProperty().removeListener(ctxPosYListener);
+            }
+            resPosXListener = null;
+            resPosYListener = null;
+            ctxPosXListener = null;
+            ctxPosYListener = null;
         }
 
         private boolean isBrightfield(ImageData<BufferedImage> imageData) {
@@ -3284,6 +3479,10 @@ public class TrainingDialog {
             wholeImageInfoLabel.setManaged(true);
         }
 
+        /** Backbones shown in basic mode (simple ResNets only). */
+        private static final List<String> BASIC_BACKBONES =
+                List.of("resnet18", "resnet34", "resnet50");
+
         private void updateBackboneOptions(String architecture) {
             ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
                     .orElse(ClassifierRegistry.getDefaultHandler());
@@ -3298,6 +3497,15 @@ public class TrainingDialog {
                 }
             } else {
                 backboneList.addAll(List.of("resnet34", "resnet50", "efficientnet-b0"));
+            }
+
+            // In basic mode, show only the simple ResNets
+            if (!advancedMode.get()) {
+                backboneList.retainAll(BASIC_BACKBONES);
+                if (backboneList.isEmpty()) {
+                    // Fallback if handler has none of the basic backbones
+                    backboneList.addAll(BASIC_BACKBONES);
+                }
             }
 
             backboneCombo.setItems(FXCollections.observableArrayList(backboneList));

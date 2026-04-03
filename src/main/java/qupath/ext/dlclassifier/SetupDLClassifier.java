@@ -1369,6 +1369,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             // Update loss chart
                             progress.updateTrainingMetrics(
                                     maeProgress.epoch(),
+                                    maeProgress.totalEpochs(),
                                     maeProgress.loss(),
                                     Double.NaN,
                                     null, null);
@@ -1493,8 +1494,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     String backbone = c.getBackbone() != null ? c.getBackbone() : "";
                     String classCount = c.getClasses() != null
                             ? c.getClasses().size() + " classes" : "";
-                    String date = c.getCreatedAt() != null
-                            ? c.getCreatedAt().toLocalDate().toString() : "";
+                    String date = "";
+                    if (c.getCreatedAt() != null) {
+                        var dt = c.getCreatedAt();
+                        date = String.format("%d-%02d-%02d %02d:%02d",
+                                dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(),
+                                dt.getHour(), dt.getMinute());
+                    }
                     return String.format("%s  [%s%s, %s]  %s",
                             c.getName(),
                             arch,

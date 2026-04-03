@@ -16,10 +16,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.gui.QuPathGUI;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -72,6 +77,13 @@ public class ProgressMonitorController {
     private final AtomicLong startTime = new AtomicLong(0);
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
+    // Epoch timing tracking for time estimates
+    private final AtomicLong firstEpochTimestamp = new AtomicLong(0);
+    private final AtomicLong latestEpochTimestamp = new AtomicLong(0);
+    private final AtomicInteger epochCompletedCount = new AtomicInteger(0);
+    private final AtomicInteger latestEpochNumber = new AtomicInteger(0);
+    private final AtomicInteger trainingTotalEpochs = new AtomicInteger(0);
+
     /** The user's choice for what to save when cancelling training. */
     public enum CancelSaveMode { BEST_EPOCH, LAST_EPOCH, DO_NOT_SAVE }
 
@@ -83,6 +95,7 @@ public class ProgressMonitorController {
     private Consumer<Void> onCompleteEarlyCallback;
     private Consumer<Void> onContinueTrainingCallback;
     private Consumer<Void> onReviewTrainingAreasCallback;
+    private final Label estimateLabel;
     private final Button continueTrainingButton;
     private final Button reviewButton;
     private final Label reviewWarningLabel;
@@ -162,6 +175,11 @@ public class ProgressMonitorController {
             }
         });
 
+        estimateLabel = new Label();
+        estimateLabel.setStyle("-fx-text-fill: #336699; -fx-font-size: 12px; -fx-font-weight: bold;");
+        estimateLabel.setVisible(false);
+        estimateLabel.setManaged(false);
+
         reviewWarningLabel = new Label("Training tiles are cleaned up when this dialog closes.");
         reviewWarningLabel.setStyle("-fx-text-fill: #CC8800; -fx-font-size: 11px;");
         reviewWarningLabel.setWrapText(true);
@@ -234,7 +252,8 @@ public class ProgressMonitorController {
                 statusLabel,
                 new HBox(10, overallLabel, overallProgressBar),
                 currentRow,
-                new HBox(20, timeLabel, detailLabel)
+                new HBox(20, timeLabel, detailLabel),
+                estimateLabel
         );
         // Current progress is only meaningful for inference (tiles within annotation).
         // Training has a single progress level (epochs) shown in Overall.
@@ -409,14 +428,18 @@ public class ProgressMonitorController {
      * Updates training metrics including per-class IoU and loss.
      *
      * @param epoch current epoch
+     * @param totalEpochs total number of planned epochs
      * @param trainLoss training loss
      * @param valLoss validation loss (or NaN if not available)
      * @param perClassIoU per-class IoU values (class name -> IoU)
      * @param perClassLoss per-class loss values (class name -> loss)
      */
-    public void updateTrainingMetrics(int epoch, double trainLoss, double valLoss,
+    public void updateTrainingMetrics(int epoch, int totalEpochs, double trainLoss, double valLoss,
                                        Map<String, Double> perClassIoU,
                                        Map<String, Double> perClassLoss) {
+        // Track epoch timing (called from background thread, before Platform.runLater)
+        recordEpochCompletion(epoch, totalEpochs);
+
         Platform.runLater(() -> {
             if (!Double.isNaN(trainLoss)) {
                 var trainPoint = new XYChart.Data<Number, Number>(epoch, trainLoss);
@@ -590,6 +613,8 @@ public class ProgressMonitorController {
     public void complete(boolean success, String message) {
         Platform.runLater(() -> {
             isRunning.set(false);
+            estimateLabel.setVisible(false);
+            estimateLabel.setManaged(false);
             pauseButton.setDisable(true);
             completeTrainingButton.setVisible(false);
             completeTrainingButton.setManaged(false);
@@ -642,6 +667,8 @@ public class ProgressMonitorController {
         Platform.runLater(() -> {
             paused.set(true);
             isRunning.set(false);
+            estimateLabel.setVisible(false);
+            estimateLabel.setManaged(false);
             status.set(String.format("Paused at epoch %d/%d", epoch, totalEpochs));
             statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #CC8800;");
 
@@ -670,10 +697,13 @@ public class ProgressMonitorController {
      * Transitions the UI back to the training state after resume.
      */
     public void showResumedState() {
+        resetEpochTiming();
         Platform.runLater(() -> {
             paused.set(false);
             isRunning.set(true);
             startTime.set(System.currentTimeMillis());
+            estimateLabel.setVisible(false);
+            estimateLabel.setManaged(false);
             status.set("Training model...");
             statusLabel.setStyle("-fx-font-weight: bold;");
             pauseButton.setText("Pause");
@@ -841,13 +871,84 @@ public class ProgressMonitorController {
         }
     }
 
+    /**
+     * Records the completion of an epoch for time estimation.
+     * Called from the Appose event thread (thread-safe via atomics).
+     */
+    private void recordEpochCompletion(int epoch, int totalEpochs) {
+        long now = System.currentTimeMillis();
+        trainingTotalEpochs.set(totalEpochs);
+        latestEpochNumber.set(epoch);
+        latestEpochTimestamp.set(now);
+        if (epochCompletedCount.incrementAndGet() == 1) {
+            firstEpochTimestamp.set(now);
+        }
+    }
+
+    /**
+     * Resets epoch timing tracking. Called when training resumes after a pause
+     * so that paused time does not skew the per-epoch estimate.
+     */
+    private void resetEpochTiming() {
+        firstEpochTimestamp.set(0);
+        latestEpochTimestamp.set(0);
+        epochCompletedCount.set(0);
+        latestEpochNumber.set(0);
+        // Keep trainingTotalEpochs -- it may increase on resume
+    }
+
     private void startTimeUpdater() {
         Thread updater = new Thread(() -> {
             while (!Thread.interrupted()) {
                 if (isRunning.get() && startTime.get() > 0) {
-                    long elapsed = System.currentTimeMillis() - startTime.get();
+                    long now = System.currentTimeMillis();
+                    long elapsed = now - startTime.get();
                     String timeStr = formatDuration(elapsed);
-                    Platform.runLater(() -> timeLabel.setText("Elapsed: " + timeStr));
+
+                    int completed = epochCompletedCount.get();
+                    long avgPerEpochMs = 0;
+                    boolean hasEstimate = false;
+
+                    if (completed >= 2) {
+                        // Average over multiple completed epochs (most accurate)
+                        long firstTs = firstEpochTimestamp.get();
+                        long latestTs = latestEpochTimestamp.get();
+                        avgPerEpochMs = (latestTs - firstTs) / (completed - 1);
+                        hasEstimate = true;
+                    } else if (completed == 1) {
+                        // After first epoch, use elapsed time as rough per-epoch estimate
+                        long firstTs = firstEpochTimestamp.get();
+                        if (firstTs > 0 && startTime.get() > 0) {
+                            avgPerEpochMs = firstTs - startTime.get();
+                            // Guard: first epoch includes setup overhead, so this is
+                            // a rough upper bound. Mark it as preliminary.
+                            hasEstimate = avgPerEpochMs > 0;
+                        }
+                    }
+
+                    if (hasEstimate && avgPerEpochMs > 0) {
+                        int latestEpoch = latestEpochNumber.get();
+                        int total = trainingTotalEpochs.get();
+                        int remainingEpochs = total - latestEpoch;
+                        long estRemainingMs = avgPerEpochMs * remainingEpochs;
+                        long etaMs = now + estRemainingMs;
+
+                        String perEpoch = formatShortDuration(avgPerEpochMs);
+                        String remaining = formatDuration(estRemainingMs);
+                        String eta = formatTimeOfDay(etaMs);
+                        String prefix = completed == 1 ? "~" : "";
+
+                        Platform.runLater(() -> {
+                            timeLabel.setText("Elapsed: " + timeStr);
+                            estimateLabel.setText(String.format(
+                                    "%s%s/epoch  |  Est. remaining: %s  |  Done ~%s",
+                                    prefix, perEpoch, remaining, eta));
+                            estimateLabel.setVisible(true);
+                            estimateLabel.setManaged(true);
+                        });
+                    } else {
+                        Platform.runLater(() -> timeLabel.setText("Elapsed: " + timeStr));
+                    }
                 }
 
                 try {
@@ -863,12 +964,52 @@ public class ProgressMonitorController {
         updater.start();
     }
 
+    /**
+     * Formats a duration as HH:MM:SS.
+     */
     private String formatDuration(long millis) {
         long seconds = millis / 1000;
         long hours = seconds / 3600;
         long minutes = (seconds % 3600) / 60;
         long secs = seconds % 60;
         return String.format("%02d:%02d:%02d", hours, minutes, secs);
+    }
+
+    /**
+     * Formats a duration in a compact human-readable form (e.g., "1m 32s", "45s", "1h 5m").
+     */
+    private String formatShortDuration(long millis) {
+        long totalSeconds = millis / 1000;
+        if (totalSeconds < 60) {
+            return totalSeconds + "s";
+        }
+        long minutes = totalSeconds / 60;
+        long secs = totalSeconds % 60;
+        if (minutes < 60) {
+            return secs > 0 ? String.format("%dm %ds", minutes, secs) : minutes + "m";
+        }
+        long hours = minutes / 60;
+        long mins = minutes % 60;
+        return mins > 0 ? String.format("%dh %dm", hours, mins) : hours + "h";
+    }
+
+    /**
+     * Formats a timestamp as a time of day string, including the date if it is
+     * not today (e.g., "2:35 PM" or "2:35 PM (Apr 1)").
+     */
+    private String formatTimeOfDay(long epochMillis) {
+        LocalDateTime etaDt = LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault());
+        LocalDateTime nowDt = LocalDateTime.now();
+
+        DateTimeFormatter timeFmt = DateTimeFormatter.ofPattern("h:mm a");
+        String timeStr = etaDt.format(timeFmt);
+
+        if (!etaDt.toLocalDate().equals(nowDt.toLocalDate())) {
+            DateTimeFormatter dateFmt = DateTimeFormatter.ofPattern("MMM d");
+            timeStr += " (" + etaDt.format(dateFmt) + ")";
+        }
+        return timeStr;
     }
 
     /**
