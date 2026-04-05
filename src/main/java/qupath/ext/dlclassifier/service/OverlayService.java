@@ -397,11 +397,33 @@ public class OverlayService {
      * (Appose "thread death" race) and frees GPU memory for the training job.
      */
     public void suspendForTraining() {
-        Platform.runLater(() -> {
+        if (Platform.isFxApplicationThread()) {
             removeOverlay();
             trainingActive.set(true);
             logger.info("Overlay suspended for training");
-        });
+        } else {
+            // Must run on FX thread (removeOverlay manipulates scene graph).
+            // Block the calling thread until the FX thread completes so that
+            // training/resume does not start while overlay inference is in-flight.
+            java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            Platform.runLater(() -> {
+                try {
+                    removeOverlay();
+                    trainingActive.set(true);
+                    logger.info("Overlay suspended for training");
+                } finally {
+                    latch.countDown();
+                }
+            });
+            try {
+                if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    logger.warn("Timed out waiting for overlay suspension -- proceeding anyway");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.debug("Interrupted while waiting for overlay suspension");
+            }
+        }
     }
 
     /**
