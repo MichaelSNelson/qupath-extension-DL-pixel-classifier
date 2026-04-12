@@ -271,6 +271,7 @@ public class TrainingDialog {
 
         // Live VRAM estimation
         private Label vramEstimateLabel;
+        private Label earlyStoppingStatusLabel;
         private int gpuTotalMb = 0;  // cached GPU memory (0 = unknown/CPU)
 
         // Error display
@@ -289,7 +290,11 @@ public class TrainingDialog {
             dialog.setAlwaysOnTop(true);
 
             // Create buttons
-            Button copyScriptButton = new Button("Copy as Script");
+            Button copyScriptButton = new Button("Copy as QuPath Script");
+            TooltipHelper.install(copyScriptButton,
+                    "Copy current settings as a Groovy script for QuPath's script editor.\n" +
+                    "The script captures all training parameters so you can\n" +
+                    "reproduce or share the configuration.");
             copyScriptButton.setOnAction(e -> copyTrainingScript(copyScriptButton));
 
             okButton = new Button("Start Training");
@@ -524,29 +529,12 @@ public class TrainingDialog {
             backboneInfo.setWrapText(true);
             backboneInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
 
-            // Update info text when backbone changes (ImageNet vs histology vs foundation)
+            // Update info text when backbone or mode changes (ImageNet vs histology vs foundation)
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> {
-                if (newVal != null && isFoundationModel(newVal)) {
-                    backboneInfo.setText(
-                            "Foundation model encoder (downloaded on-demand from HuggingFace). " +
-                            "Large-scale vision model with rich feature representations. " +
-                            "Gated models need HF_TOKEN env var. " +
-                            "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).");
-                    backbonePretrainedRadio.setText("Use foundation model pretrained weights");
-                } else if (newVal != null && newVal.contains("_")) {
-                    backboneInfo.setText(
-                            "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
-                            "Best for H&E brightfield. Less freezing needed. " +
-                            "For fluorescence or multi-channel images, use an ImageNet backbone instead. " +
-                            "~100MB download on first use (cached).");
-                    backbonePretrainedRadio.setText("Use histology pretrained weights");
-                } else {
-                    backboneInfo.setText(
-                            "ImageNet-pretrained weights provide general edge/texture features " +
-                            "that transfer to most image types including fluorescence and multi-channel. " +
-                            "Freeze early layers to preserve these features.");
-                    backbonePretrainedRadio.setText("Use pretrained backbone weights");
-                }
+                updateBackboneInfoText(newVal, backboneInfo);
+            });
+            advancedMode.addListener((obs, old, isAdv) -> {
+                updateBackboneInfoText(backboneCombo.getValue(), backboneInfo);
             });
 
             layerFreezePanel = new LayerFreezePanel();
@@ -1662,8 +1650,11 @@ public class TrainingDialog {
             // In basic mode, force unet architecture and re-filter backbone options
             advancedMode.addListener((obs, old, isAdv) -> {
                 if (!isAdv && !"unet".equals(architectureCombo.getValue())) {
+                    String oldArch = architectureCombo.getValue();
                     // Setting the value triggers the combo's listener which calls updateBackboneOptions
                     architectureCombo.setValue("unet");
+                    showTemporaryNotification(String.format(
+                            "Architecture changed from %s to UNet (basic mode only supports UNet).", oldArch));
                 } else {
                     updateBackboneOptions(architectureCombo.getValue());
                 }
@@ -1801,6 +1792,55 @@ public class TrainingDialog {
             // Visibility controlled by advancedMode binding -- do not set here
         }
 
+        private void updateBackboneInfoText(String backbone, Label backboneInfo) {
+            if (backbone == null || backboneInfo == null) return;
+
+            // Basic mode: simplified language for non-ML users
+            if (!advancedMode.get()) {
+                backbonePretrainedRadio.setText("Start from a pre-trained model (recommended)");
+                backboneInfo.setText(
+                        "The model begins with knowledge learned from millions of images, " +
+                        "so it needs less of your data to learn well.");
+                return;
+            }
+
+            // Advanced mode: full technical detail
+            if (isFoundationModel(backbone)) {
+                backboneInfo.setText(
+                        "Foundation model encoder (downloaded on-demand from HuggingFace). " +
+                        "Large-scale vision model with rich feature representations. " +
+                        "Gated models need HF_TOKEN env var. " +
+                        "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).");
+                backbonePretrainedRadio.setText("Use foundation model pretrained weights");
+            } else if (backbone.contains("_")) {
+                backboneInfo.setText(
+                        "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
+                        "Best for H&E brightfield. Less freezing needed. " +
+                        "For fluorescence or multi-channel images, use an ImageNet backbone instead. " +
+                        "~100MB download on first use (cached).");
+                backbonePretrainedRadio.setText("Use histology pretrained weights");
+            } else {
+                backboneInfo.setText(
+                        "ImageNet-pretrained weights provide general edge/texture features " +
+                        "that transfer to most image types including fluorescence and multi-channel. " +
+                        "Freeze early layers to preserve these features.");
+                backbonePretrainedRadio.setText("Use pretrained backbone weights");
+            }
+        }
+
+        private void updateEarlyStoppingStatusLabel() {
+            if (earlyStoppingStatusLabel == null) return;
+            String metric = earlyStoppingMetricCombo != null
+                    ? mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue())
+                    : "mean_iou";
+            int patience = earlyStoppingPatienceSpinner != null
+                    ? earlyStoppingPatienceSpinner.getValue() : 15;
+            // Capitalize metric for display
+            String metricDisplay = "mean_iou".equals(metric) ? "Mean IoU" : "Validation Loss";
+            earlyStoppingStatusLabel.setText(String.format(
+                    "Early stopping enabled (patience: %d, metric: %s)", patience, metricDisplay));
+        }
+
         private void updateLayerFreezePanel() {
             if (layerFreezePanel == null
                     || getSelectedWeightInitStrategy() != ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
@@ -1869,6 +1909,24 @@ public class TrainingDialog {
             grid.add(epochsSpinner, 1, row);
             row++;
 
+            // Epochs hint (basic mode only)
+            Label epochsHint = new Label("Training passes over all data. Early stopping halts if no improvement.");
+            epochsHint.setWrapText(true);
+            epochsHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            epochsHint.visibleProperty().bind(advancedMode.not());
+            epochsHint.managedProperty().bind(advancedMode.not());
+            grid.add(epochsHint, 0, row, 2, 1);
+            row++;
+
+            // Early stopping status (basic mode only)
+            earlyStoppingStatusLabel = new Label("Early stopping enabled (patience: 15, metric: Mean IoU)");
+            earlyStoppingStatusLabel.setWrapText(true);
+            earlyStoppingStatusLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+            earlyStoppingStatusLabel.visibleProperty().bind(advancedMode.not());
+            earlyStoppingStatusLabel.managedProperty().bind(advancedMode.not());
+            grid.add(earlyStoppingStatusLabel, 0, row, 2, 1);
+            row++;
+
             // Batch size
             batchSizeSpinner = new Spinner<>(1, 128, DLClassifierPreferences.getDefaultBatchSize(), 4);
             batchSizeSpinner.setEditable(true);
@@ -1886,6 +1944,15 @@ public class TrainingDialog {
 
             grid.add(batchLabel, 0, row);
             grid.add(batchSizeSpinner, 1, row);
+            row++;
+
+            // Batch size hint (basic mode only)
+            Label batchHint = new Label("Images processed at once. Larger = faster but more GPU memory.");
+            batchHint.setWrapText(true);
+            batchHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            batchHint.visibleProperty().bind(advancedMode.not());
+            batchHint.managedProperty().bind(advancedMode.not());
+            grid.add(batchHint, 0, row, 2, 1);
             row++;
 
             // Live VRAM estimate (updated when architecture/batch/tile/etc. change)
@@ -2038,6 +2105,15 @@ public class TrainingDialog {
             grid.add(wholeImageInfoLabel, 0, row, 3, 1);
             row++;
 
+            // Tile size hint (basic mode only)
+            Label tileHint = new Label("Pixel size of patches the model learns from.");
+            tileHint.setWrapText(true);
+            tileHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            tileHint.visibleProperty().bind(advancedMode.not());
+            tileHint.managedProperty().bind(advancedMode.not());
+            grid.add(tileHint, 0, row, 2, 1);
+            row++;
+
             // Downsample
             downsampleCombo = new ComboBox<>(FXCollections.observableArrayList(
                     "1x (Full resolution)",
@@ -2125,8 +2201,10 @@ public class TrainingDialog {
                     "16x context"
             ));
             contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
-            contextScaleLabel = new Label("Context Scale:");
+            contextScaleLabel = new Label("Surrounding context:");
             TooltipHelper.install(
+                    "Not sure? Leave at 1x for your first run. Try 4x if classification\n" +
+                    "depends on surrounding tissue structure (e.g., tumor vs. stroma).\n\n" +
                     "Multi-scale context feeds the model two views of each location:\n" +
                     "the full-resolution tile for detail, plus a larger surrounding\n" +
                     "region (downsampled to the same pixel size) for spatial context.\n\n" +
@@ -2673,6 +2751,12 @@ public class TrainingDialog {
                     "plenty of annotated data.");
 
             grid.add(progressiveResizeCheck, 0, row, 2, 1);
+
+            // Update the basic-mode early stopping status label when these controls change
+            earlyStoppingMetricCombo.valueProperty().addListener(
+                    (obs, o, n) -> updateEarlyStoppingStatusLabel());
+            earlyStoppingPatienceSpinner.valueProperty().addListener(
+                    (obs, o, n) -> updateEarlyStoppingStatusLabel());
 
             TitledPane pane = new TitledPane("TRAINING STRATEGY", grid);
             pane.setExpanded(false); // Collapsed by default - advanced settings
@@ -3506,6 +3590,16 @@ public class TrainingDialog {
         private static final List<String> BASIC_BACKBONES =
                 List.of("resnet18", "resnet34", "resnet50");
 
+        /** User-friendly labels for basic mode backbone selection. */
+        private static String getBasicModeBackboneLabel(String backbone) {
+            return switch (backbone) {
+                case "resnet18" -> "Small -- ResNet18 (fast, good starting point)";
+                case "resnet34" -> "Medium -- ResNet34 (recommended)";
+                case "resnet50" -> "Large -- ResNet50 (best accuracy, needs more data)";
+                default -> backbone;
+            };
+        }
+
         private void updateBackboneOptions(String architecture) {
             ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
                     .orElse(ClassifierRegistry.getDefaultHandler());
@@ -3533,13 +3627,16 @@ public class TrainingDialog {
 
             backboneCombo.setItems(FXCollections.observableArrayList(backboneList));
 
-            // Show display names via custom cell factory (handler-specific lookup)
+            // Show display names via custom cell factory (handler-specific lookup).
+            // In basic mode, show user-friendly size labels instead of raw model names.
             backboneCombo.setCellFactory(lv -> new ListCell<>() {
                 @Override
                 protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
                     if (empty || item == null) {
                         setText(null);
+                    } else if (!advancedMode.get()) {
+                        setText(getBasicModeBackboneLabel(item));
                     } else {
                         setText(handler.getBackboneDisplayName(item));
                     }
@@ -3551,6 +3648,8 @@ public class TrainingDialog {
                     super.updateItem(item, empty);
                     if (empty || item == null) {
                         setText(null);
+                    } else if (!advancedMode.get()) {
+                        setText(getBasicModeBackboneLabel(item));
                     } else {
                         setText(handler.getBackboneDisplayName(item));
                     }
@@ -3564,6 +3663,29 @@ public class TrainingDialog {
             } else if (!backboneList.isEmpty()) {
                 backboneCombo.setValue(backboneList.get(0));
             }
+        }
+
+        /** Shows a temporary amber notification that auto-dismisses after 5 seconds. */
+        private void showTemporaryNotification(String message) {
+            Label note = new Label(message);
+            note.setWrapText(true);
+            note.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; " +
+                    "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            // Insert before the error summary panel (which is near the bottom)
+            VBox dialogContent = (VBox) errorSummaryPanel.getParent();
+            if (dialogContent != null) {
+                int idx = dialogContent.getChildren().indexOf(errorSummaryPanel);
+                if (idx >= 0) {
+                    dialogContent.getChildren().add(idx, note);
+                }
+            }
+            PauseTransition pause = new PauseTransition(Duration.seconds(5));
+            pause.setOnFinished(e -> {
+                if (dialogContent != null) {
+                    dialogContent.getChildren().remove(note);
+                }
+            });
+            pause.play();
         }
 
         private void validateClassifierName(String name) {
