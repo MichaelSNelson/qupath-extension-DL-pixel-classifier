@@ -281,6 +281,12 @@ public class TrainingDialog {
         private boolean lastImageIsBrightfield = true;
         private int gpuTotalMb = 0;  // cached GPU memory (0 = unknown/CPU)
 
+        // Pre-training tile/time estimate
+        private Label tileEstimateLabel;
+        private double cachedTotalAnnotationArea = 0;
+        private int lastLoadedClassCount = 0;
+        private int lastLoadedImageCount = 0;
+
         // Error display
         private VBox errorSummaryPanel;
         private VBox errorListBox;
@@ -1549,7 +1555,14 @@ public class TrainingDialog {
 
             HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn);
 
-            content.getChildren().addAll(info, imageSelectionList, imageButtonBox, loadClassesButton);
+            tileEstimateLabel = new Label();
+            tileEstimateLabel.setWrapText(true);
+            tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+            tileEstimateLabel.setVisible(false);
+            tileEstimateLabel.setManaged(false);
+
+            content.getChildren().addAll(info, imageSelectionList, imageButtonBox,
+                    loadClassesButton, tileEstimateLabel);
 
             // Show a message if no annotated images found
             if (imageSelectionList.getItems().isEmpty()) {
@@ -2477,6 +2490,23 @@ public class TrainingDialog {
             architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
 
+            // Wire tile/time estimate listeners -- refresh when relevant parameters change
+            tileSizeSpinner.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+            downsampleCombo.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+            epochsSpinner.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+            batchSizeSpinner.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+            backboneCombo.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+
             // Overlap (advanced only)
             overlapSpinner = new Spinner<>(0, 50, DLClassifierPreferences.getTileOverlap(), 5);
             overlapSpinner.setEditable(true);
@@ -3298,6 +3328,14 @@ public class TrainingDialog {
                         classListView.getItems().add(classItem);
                     }
 
+                    // Compute tile estimate from annotation areas
+                    double totalArea = finalClassAreas.values().stream()
+                            .mapToDouble(d -> d).sum();
+                    cachedTotalAnnotationArea = totalArea;
+                    lastLoadedClassCount = finalClassMap.size();
+                    lastLoadedImageCount = selectedItems.size();
+                    updateTileEstimateLabel(finalClassMap.size(), selectedItems.size());
+
                     refreshPieChart();
 
                     // Populate focus class combo with loaded class names
@@ -3333,6 +3371,69 @@ public class TrainingDialog {
             boolean anySelected = imageSelectionList.getItems().stream()
                     .anyMatch(item -> item.selected.get());
             loadClassesButton.setDisable(!anySelected);
+        }
+
+        /** Updates the tile/time estimate label shown after classes are loaded. */
+        private void updateTileEstimateLabel(int classCount, int imageCount) {
+            if (tileEstimateLabel == null || cachedTotalAnnotationArea <= 0) return;
+            int est = estimateTileCount();
+            String text = String.format(
+                    "Loaded %d classes from %d images. Estimated ~%,d training tiles.",
+                    classCount, imageCount, est);
+
+            // Rough time estimate
+            String timeEst = estimateTrainingTime(est);
+            if (!timeEst.isEmpty()) {
+                text += " " + timeEst;
+            }
+
+            tileEstimateLabel.setText(text);
+            tileEstimateLabel.setVisible(true);
+            tileEstimateLabel.setManaged(true);
+        }
+
+        /** Estimates tile count from cached annotation area and current settings. */
+        private int estimateTileCount() {
+            if (cachedTotalAnnotationArea <= 0) return 0;
+            double tileSize = tileSizeSpinner.getValue();
+            double downsample = parseDownsample(downsampleCombo.getValue());
+            double coveragePerTile = tileSize * downsample;
+            // PatchSampler uses ~50% overlap between patches
+            double stepSize = coveragePerTile * 0.75;
+            return Math.max(1, (int) (cachedTotalAnnotationArea / (stepSize * stepSize)));
+        }
+
+        /** Estimates training time as a human-readable range string. */
+        private String estimateTrainingTime(int tileCount) {
+            if (tileCount <= 0) return "";
+            int batchSize = batchSizeSpinner.getValue();
+            int epochs = epochsSpinner.getValue();
+            String backbone = backboneCombo.getValue();
+            if (backbone == null) return "";
+
+            // Rough ms-per-batch on a mid-range GPU (RTX 3060-3080 class)
+            double msPerBatch;
+            if (backbone.contains("resnet18") || backbone.equals("resnet18")) msPerBatch = 50;
+            else if (backbone.contains("resnet34") || backbone.equals("resnet34")) msPerBatch = 80;
+            else if (backbone.contains("resnet50") || backbone.equals("resnet50")) msPerBatch = 120;
+            else if (backbone.contains("efficientnet")) msPerBatch = 100;
+            else msPerBatch = 80;
+
+            int batchesPerEpoch = Math.max(1, tileCount / batchSize);
+            double totalMs = batchesPerEpoch * epochs * msPerBatch;
+
+            // Show range (0.5x - 2x) to account for GPU variation
+            long minSec = (long) (totalMs * 0.5 / 1000);
+            long maxSec = (long) (totalMs * 2.0 / 1000);
+
+            return String.format("Estimated time: ~%s - %s",
+                    formatDuration(minSec), formatDuration(maxSec));
+        }
+
+        private static String formatDuration(long seconds) {
+            if (seconds < 60) return seconds + " sec";
+            if (seconds < 3600) return (seconds / 60) + " min";
+            return String.format("%dh %dm", seconds / 3600, (seconds % 3600) / 60);
         }
 
         /** Visual indicator when images change after classes were already loaded. */

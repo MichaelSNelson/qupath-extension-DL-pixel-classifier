@@ -62,6 +62,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Workflow for training a new deep learning pixel classifier.
@@ -782,6 +783,13 @@ public class TrainingWorkflow {
                                 sb.append(" [TARGET NOT MET]");
                             }
                         }
+                        // Append diagnostic hints from trainCore if present
+                        if (result.message() != null && result.message().contains("Diagnostic hints:")) {
+                            int idx = result.message().indexOf("\n\nDiagnostic hints:");
+                            if (idx >= 0) {
+                                sb.append(result.message().substring(idx));
+                            }
+                        }
                         completionMsg = sb.toString();
                     }
                     // Warn with a dialog if focus class target was not met
@@ -1155,6 +1163,9 @@ public class TrainingWorkflow {
             }
 
             final AtomicInteger lastLoggedEpoch = new AtomicInteger(-1);
+            final AtomicReference<Map<String, Double>> lastPerClassIoU = new AtomicReference<>(Map.of());
+            final AtomicReference<Double> lastTrainLoss = new AtomicReference<>(0.0);
+            final AtomicReference<Double> lastValLoss = new AtomicReference<>(0.0);
 
             ClassifierClient.TrainingResult serverResult = backend.startTraining(
                     trainingConfig,
@@ -1229,6 +1240,13 @@ public class TrainingWorkflow {
                                         trainingProgress.perClassIoU(),
                                         trainingProgress.perClassLoss()
                                 );
+
+                                // Store latest metrics for post-training diagnostic hints
+                                if (trainingProgress.perClassIoU() != null) {
+                                    lastPerClassIoU.set(trainingProgress.perClassIoU());
+                                }
+                                lastTrainLoss.set(trainingProgress.loss());
+                                lastValLoss.set(trainingProgress.valLoss());
 
                                 // Log with per-class breakdown
                                 // Use scientific notation for very small train_loss
@@ -1388,6 +1406,33 @@ public class TrainingWorkflow {
                     true, filesInPlace);
             if (progress != null) progress.log("Classifier saved: " + metadata.getId());
 
+            // Build diagnostic hints from final training metrics
+            String completionMessage = "Training completed successfully";
+            List<String> hints = new ArrayList<>();
+            if (serverResult.bestMeanIoU() < 0.5) {
+                hints.add("Low accuracy. Try: more annotations, different downsample, longer training.");
+            }
+            double tl = lastTrainLoss.get(), vl = lastValLoss.get();
+            if (tl > 0 && vl > 0 && vl > tl * 2.0) {
+                hints.add("Possible overfitting. Try: more augmentation, smaller model, more data.");
+            }
+            for (var iouEntry : lastPerClassIoU.get().entrySet()) {
+                if (iouEntry.getValue() != null && iouEntry.getValue() == 0.0) {
+                    hints.add(String.format(
+                            "Class '%s' was never learned. Check annotation quality/quantity.",
+                            iouEntry.getKey()));
+                }
+            }
+            if (!hints.isEmpty()) {
+                completionMessage += "\n\nDiagnostic hints:\n- " + String.join("\n- ", hints);
+                if (progress != null) {
+                    progress.log("--- Diagnostic hints ---");
+                    for (String hint : hints) {
+                        progress.log("  - " + hint);
+                    }
+                }
+            }
+
             return new TrainingResult(
                     effectiveId,
                     classifierName,
@@ -1397,7 +1442,7 @@ public class TrainingWorkflow {
                     serverResult.bestMeanIoU(),
                     trainingConfig.getEpochs(),
                     true,
-                    "Training completed successfully",
+                    completionMessage,
                     serverResult.focusClassName(),
                     serverResult.focusClassIoU(),
                     serverResult.focusClassTargetMet()
