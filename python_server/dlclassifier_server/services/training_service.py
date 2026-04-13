@@ -2558,7 +2558,8 @@ class TrainingService:
         )
 
         # Clean up in-progress best model (final model saved above)
-        self._cleanup_best_in_progress(model_type)
+        self._cleanup_best_in_progress(
+            model_type, training_params.get("classifier_name"))
 
         # Report focus class IoU so Java can warn when target not met
         result = {

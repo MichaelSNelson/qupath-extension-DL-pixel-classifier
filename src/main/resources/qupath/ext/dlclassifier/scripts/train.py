@@ -200,12 +200,11 @@ if model_output_dir:
         src = _Path(orig_path)
         dst = dst_dir / src.name
         _shutil.copy2(str(src), str(dst))
-        # Remove source to avoid accumulation in ~/.dlclassifier/checkpoints/
-        try:
-            src.unlink(missing_ok=True)
-        except Exception:
-            pass
-        logger.info("Moved best-in-progress to project: %s", dst)
+        # Keep the source in ~/.dlclassifier/checkpoints/ as well. That is the
+        # central registry the Java side scans for crash-recovery discovery
+        # (CheckpointScanner + "Recover from Checkpoint..." menu). Both copies
+        # are cleaned up on normal completion/cancel via _cleanup_best_in_progress.
+        logger.info("Best-in-progress saved to project and central registry: %s", dst)
         return str(dst)
 
     training_service._save_best_in_progress = _redirected_save_best

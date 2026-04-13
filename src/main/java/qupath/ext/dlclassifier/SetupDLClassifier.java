@@ -31,6 +31,8 @@ import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.utilities.CheckpointScanner;
+import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
 import qupath.ext.dlclassifier.ui.MAEPretrainingDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
@@ -132,6 +134,57 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         if (environmentReady.get()) {
             startBackgroundInitialization();
         }
+
+        // Surface orphaned training checkpoints after project open, so users
+        // notice they can recover from an interrupted run without having to
+        // remember the Utilities menu.
+        installCheckpointRecoveryWatcher(qupath);
+    }
+
+    /**
+     * Session-scoped record of orphaned checkpoints we have already toasted
+     * about, so the user is not re-notified every time they switch projects.
+     */
+    private final java.util.Set<Path> toastedCheckpointsThisSession =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Installs a listener on the project property that scans the central
+     * checkpoint registry for orphaned best-in-progress files whenever a
+     * project is opened. If any are found (that we haven't already toasted
+     * about this session), shows a non-modal info notification.
+     */
+    private void installCheckpointRecoveryWatcher(QuPathGUI qupath) {
+        qupath.projectProperty().addListener((obs, oldProj, newProj) -> {
+            if (newProj == null) return;
+            Thread scanThread = new Thread(() -> {
+                List<OrphanedCheckpoint> orphans =
+                        CheckpointScanner.scanCentralRegistry(
+                                java.util.Collections.emptySet());
+                orphans.removeIf(o -> toastedCheckpointsThisSession.contains(o.file()));
+                if (orphans.isEmpty()) return;
+                orphans.forEach(o -> toastedCheckpointsThisSession.add(o.file()));
+
+                int count = orphans.size();
+                String first = orphans.get(0).classifierName();
+                String detail;
+                if (count == 1) {
+                    detail = String.format(
+                            "Unfinished training checkpoint found: %s.\n"
+                            + "Open Extensions > DL Pixel Classifier to recover.",
+                            first);
+                } else {
+                    detail = String.format(
+                            "%d unfinished training checkpoints found (including %s).\n"
+                            + "Open Extensions > DL Pixel Classifier to recover.",
+                            count, first);
+                }
+                Platform.runLater(() ->
+                        Dialogs.showInfoNotification(EXTENSION_NAME, detail));
+            }, "DLClassifier-CheckpointScan");
+            scanThread.setDaemon(true);
+            scanThread.start();
+        });
     }
 
     /**
@@ -548,9 +601,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      * in a copyable text dialog.
      */
     /**
-     * Recovers a trained model from a checkpoint (.pt) file.
-     * Opens a file chooser, then runs finalize_training.py on the selected file.
-     * The finalized model is saved to the project's classifiers directory.
+     * Menu entry point: prompts the user to choose a checkpoint file, then
+     * runs {@link #recoverFromCheckpoint(QuPathGUI, Path)} on the selection.
      */
     private void recoverFromCheckpoint(QuPathGUI qupath) {
         FileChooser fileChooser = new FileChooser();
@@ -559,25 +611,56 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 new FileChooser.ExtensionFilter("PyTorch Checkpoint", "*.pt"),
                 new FileChooser.ExtensionFilter("All Files", "*.*"));
 
-        // Default to checkpoints directory if it exists
-        Path defaultDir = Path.of(System.getProperty("user.home"), ".dlclassifier", "checkpoints");
+        Path defaultDir = CheckpointScanner.getRegistryDir();
         if (Files.isDirectory(defaultDir)) {
             fileChooser.setInitialDirectory(defaultDir.toFile());
         }
 
         File selected = fileChooser.showOpenDialog(qupath.getStage());
         if (selected == null) return;
+        recoverFromCheckpoint(qupath, selected.toPath());
+    }
 
-        String checkpointPath = selected.getAbsolutePath();
-        logger.info("Recovering model from checkpoint: {}", checkpointPath);
+    /**
+     * Recovers a trained model from a specific checkpoint {@code .pt} file.
+     * Runs {@code finalize_training.py} in the background and reports the
+     * finalized model via an info notification. If no project is open, the
+     * user is asked to confirm saving to the default fallback location.
+     * <p>
+     * This is the single recovery code path used by the menu entry point,
+     * the project-open toast, and the TrainingDialog banner.
+     */
+    public static void recoverFromCheckpoint(QuPathGUI qupath, Path checkpointPath) {
+        if (checkpointPath == null || !Files.isRegularFile(checkpointPath)) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Checkpoint file not found: " + checkpointPath);
+            return;
+        }
+
+        // If no project is open, confirm with the user that recovery will
+        // still proceed (finalize_training.py saves to its default location).
+        if (qupath.getProject() == null) {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("Recover Without Project");
+            confirm.setHeaderText("No project is currently open");
+            confirm.setContentText(
+                    "The recovered model will be saved to the Python server's\n"
+                    + "default model directory instead of a project folder.\n\n"
+                    + "Continue?");
+            if (confirm.showAndWait().orElse(null) != javafx.scene.control.ButtonType.OK) {
+                return;
+            }
+        }
+
+        String checkpointPathStr = checkpointPath.toAbsolutePath().toString();
+        logger.info("Recovering model from checkpoint: {}", checkpointPathStr);
 
         // Determine output directory: project classifiers dir if available
         String modelOutputDir = null;
         if (qupath.getProject() != null) {
             Path classifiersDir = qupath.getProject().getPath().getParent()
                     .resolve("classifiers").resolve("dl");
-            // Use a subdirectory named after the checkpoint file
-            String baseName = selected.getName().replace(".pt", "");
+            String baseName = checkpointPath.getFileName().toString().replace(".pt", "");
             Path outputDir = classifiersDir.resolve("recovered_" + baseName);
             try {
                 Files.createDirectories(outputDir);
@@ -595,7 +678,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             try {
                 ClassifierBackend backend = BackendFactory.getBackend();
                 ClassifierClient.TrainingResult result =
-                        backend.finalizeTraining(checkpointPath, finalOutputDir);
+                        backend.finalizeTraining(checkpointPathStr, finalOutputDir);
                 Platform.runLater(() -> {
                     String msg = String.format(
                             "Model recovered successfully!\n\n" +
@@ -604,6 +687,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     Dialogs.showInfoNotification(EXTENSION_NAME, msg);
                     logger.info("Model recovered: {} (best epoch {}, mIoU {})",
                             result.modelPath(), result.bestEpoch(), result.bestMeanIoU());
+                    // Remove the source checkpoint from the central registry
+                    // now that we've finalized it to a proper model. Leave
+                    // any project-dir copy alone -- TrainingWorkflow cleans
+                    // those up after its own runs.
+                    try {
+                        Path registry = CheckpointScanner.getRegistryDir();
+                        if (checkpointPath.startsWith(registry)) {
+                            Files.deleteIfExists(checkpointPath);
+                        }
+                    } catch (IOException ignored) {}
                 });
             } catch (Exception ex) {
                 logger.error("Failed to recover from checkpoint", ex);

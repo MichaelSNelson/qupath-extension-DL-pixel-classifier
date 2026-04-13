@@ -31,6 +31,9 @@ import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
+import qupath.ext.dlclassifier.SetupDLClassifier;
+import qupath.ext.dlclassifier.utilities.CheckpointScanner;
+import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.commands.MiniViewers;
 import qupath.lib.gui.viewer.QuPathViewer;
@@ -148,6 +151,7 @@ public class TrainingDialog {
         private Stage dialog;
         private Consumer<TrainingDialogResult> onResult;
         private boolean resultDelivered;
+        private VBox checkpointRecoveryBanner;
         private final Map<String, String> validationErrors = new LinkedHashMap<>();
 
         /** Controls basic/advanced mode visibility. Persisted across sessions. */
@@ -360,6 +364,14 @@ public class TrainingDialog {
             VBox content = new VBox(10);
             content.setPadding(new Insets(10));
 
+            // Checkpoint recovery banner -- populated asynchronously below.
+            // Lives at the very top of the dialog so users cannot miss it
+            // after an interrupted training run.
+            VBox checkpointRecoveryBanner = new VBox(6);
+            checkpointRecoveryBanner.setVisible(false);
+            checkpointRecoveryBanner.setManaged(false);
+            this.checkpointRecoveryBanner = checkpointRecoveryBanner;
+
             // Initialize backend for server communication
             try {
                 backend = BackendFactory.getBackend();
@@ -393,6 +405,7 @@ public class TrainingDialog {
             // Classifier info (naming) comes after model/training params so the user
             // can choose a name informed by those settings.
             content.getChildren().addAll(
+                    checkpointRecoveryBanner,
                     createHeaderBox(),
                     imageSourceSection,
                     modelSection,
@@ -456,7 +469,138 @@ public class TrainingDialog {
             updateValidation();
             updateVramEstimate();
 
+            // Scan for orphaned best-in-progress checkpoints so we can offer
+            // one-click recovery for any interrupted training.
+            refreshCheckpointRecoveryBanner();
+
             dialog.show();
+        }
+
+        /**
+         * Scans the central checkpoint registry on a background thread and
+         * populates the banner with any orphaned best-in-progress files.
+         * Called once when the dialog opens and again after the user clicks
+         * Delete/Recover on a row, to remove handled entries.
+         */
+        private void refreshCheckpointRecoveryBanner() {
+            Thread scanThread = new Thread(() -> {
+                List<OrphanedCheckpoint> orphans =
+                        CheckpointScanner.scanCentralRegistry(Collections.emptySet());
+                Platform.runLater(() -> populateCheckpointBanner(orphans));
+            }, "DLClassifier-DialogCheckpointScan");
+            scanThread.setDaemon(true);
+            scanThread.start();
+        }
+
+        private void populateCheckpointBanner(List<OrphanedCheckpoint> orphans) {
+            checkpointRecoveryBanner.getChildren().clear();
+            if (orphans.isEmpty()) {
+                checkpointRecoveryBanner.setVisible(false);
+                checkpointRecoveryBanner.setManaged(false);
+                return;
+            }
+
+            Label header = new Label("Unfinished training detected");
+            header.setStyle("-fx-font-weight: bold; -fx-text-fill: #8a5a00;");
+
+            Label subtitle = new Label(
+                    "These runs were interrupted before they could finish. "
+                    + "Click Recover to finalize the best model so far.");
+            subtitle.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            subtitle.setWrapText(true);
+
+            VBox rows = new VBox(4);
+            for (OrphanedCheckpoint orphan : orphans) {
+                rows.getChildren().add(createCheckpointRow(orphan));
+            }
+
+            VBox bannerContent = new VBox(4, header, subtitle, rows);
+            bannerContent.setPadding(new Insets(8, 10, 8, 10));
+            bannerContent.setStyle(
+                    "-fx-background-color: #fff7d6; "
+                    + "-fx-border-color: #e0b84a; "
+                    + "-fx-border-width: 1; "
+                    + "-fx-background-radius: 4; "
+                    + "-fx-border-radius: 4;");
+
+            checkpointRecoveryBanner.getChildren().add(bannerContent);
+            checkpointRecoveryBanner.setVisible(true);
+            checkpointRecoveryBanner.setManaged(true);
+        }
+
+        private HBox createCheckpointRow(OrphanedCheckpoint orphan) {
+            double sizeMb = orphan.sizeBytes() / (1024.0 * 1024.0);
+            long ageSeconds = java.time.Duration.between(
+                    orphan.modified(), java.time.Instant.now()).getSeconds();
+            String ageLabel = formatAge(ageSeconds);
+
+            Label info = new Label(String.format(
+                    "%s  -  %.0f MB, last saved %s ago",
+                    orphan.classifierName(), sizeMb, ageLabel));
+            info.setStyle("-fx-font-size: 11px;");
+            HBox.setHgrow(info, Priority.ALWAYS);
+            info.setMaxWidth(Double.MAX_VALUE);
+
+            Button recoverButton = new Button("Recover");
+            TooltipHelper.install(recoverButton,
+                    "Run finalize_training.py on this checkpoint and save the\n"
+                    + "best model as a usable classifier in this project.");
+            recoverButton.setOnAction(e -> {
+                SetupDLClassifier.recoverFromCheckpoint(
+                        QuPathGUI.getInstance(), orphan.file());
+                // Recovery runs on a background thread; optimistically remove
+                // the row so the user sees feedback. The file itself is deleted
+                // by the recovery code once it succeeds.
+                refreshCheckpointRecoveryBanner();
+            });
+
+            Button deleteButton = new Button("Delete");
+            TooltipHelper.install(deleteButton,
+                    "Permanently delete this checkpoint file without recovering.");
+            deleteButton.setOnAction(e -> {
+                Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                        "Delete checkpoint for '" + orphan.classifierName() + "'?\n\n"
+                        + "This cannot be undone.",
+                        ButtonType.OK, ButtonType.CANCEL);
+                confirm.setHeaderText("Delete Checkpoint");
+                if (confirm.showAndWait().orElse(null) == ButtonType.OK) {
+                    try {
+                        java.nio.file.Files.deleteIfExists(orphan.file());
+                    } catch (java.io.IOException ex) {
+                        Dialogs.showErrorNotification("DL Pixel Classifier",
+                                "Could not delete checkpoint: " + ex.getMessage());
+                    }
+                    refreshCheckpointRecoveryBanner();
+                }
+            });
+
+            Button dismissButton = new Button("Dismiss");
+            TooltipHelper.install(dismissButton,
+                    "Hide this row for the current session. The checkpoint\n"
+                    + "file is preserved and will reappear next time.");
+            dismissButton.setOnAction(e -> {
+                HBox row = (HBox) ((Button) e.getSource()).getParent();
+                VBox parent = (VBox) row.getParent();
+                parent.getChildren().remove(row);
+                if (parent.getChildren().isEmpty()) {
+                    checkpointRecoveryBanner.setVisible(false);
+                    checkpointRecoveryBanner.setManaged(false);
+                }
+            });
+
+            HBox row = new HBox(6, info, recoverButton, deleteButton, dismissButton);
+            row.setAlignment(Pos.CENTER_LEFT);
+            return row;
+        }
+
+        private static String formatAge(long seconds) {
+            if (seconds < 60) return seconds + "s";
+            long minutes = seconds / 60;
+            if (minutes < 60) return minutes + "m";
+            long hours = minutes / 60;
+            if (hours < 24) return hours + "h";
+            long days = hours / 24;
+            return days + "d";
         }
 
         private VBox createHeaderBox() {
