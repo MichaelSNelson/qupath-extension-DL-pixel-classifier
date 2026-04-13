@@ -763,8 +763,56 @@ public class AnnotationExtractor {
             double downsample,
             int contextScale,
             int contextPadding) throws IOException {
+        return exportFromProject(entries, patchSize, channelConfig, classNames,
+                outputDir, validationSplit, lineStrokeWidth, classWeightMultipliers,
+                downsample, contextScale, contextPadding,
+                Collections.emptySet(), Collections.emptySet());
+    }
+
+    /**
+     * Exports training data from multiple project images with image-level split roles.
+     * <p>
+     * Images in {@code trainOnlyImages} have all their tiles placed directly into the
+     * training set. Images in {@code valOnlyImages} have all their tiles placed directly
+     * into the validation set. Images in neither set (the default "Both" role) participate
+     * in the normal stratified split.
+     *
+     * @param entries                project image entries to export from
+     * @param patchSize              the patch size to extract
+     * @param channelConfig          channel configuration
+     * @param classNames             list of class names to export
+     * @param outputDir              output directory for combined training data
+     * @param validationSplit        fraction of data for validation (0.0-1.0)
+     * @param lineStrokeWidth        stroke width for rendering line annotations (pixels)
+     * @param classWeightMultipliers user multipliers on auto-computed weights (empty = no modification)
+     * @param downsample             downsample factor (1.0 = full resolution)
+     * @param contextScale           context scale factor (1 = disabled, 2/4/8 = context)
+     * @param contextPadding         pixels of real-data border around each tile (0 = disabled)
+     * @param trainOnlyImages        image names whose tiles go exclusively to training (may be empty)
+     * @param valOnlyImages          image names whose tiles go exclusively to validation (may be empty)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth,
+            Map<String, Double> classWeightMultipliers,
+            double downsample,
+            int contextScale,
+            int contextPadding,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages) throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
+        if (!trainOnlyImages.isEmpty() || !valOnlyImages.isEmpty()) {
+            logger.info("Image-level split roles: {} train-only, {} val-only",
+                    trainOnlyImages.size(), valOnlyImages.size());
+        }
 
         // Create shared directories
         Path trainImages = outputDir.resolve("train/images");
@@ -793,18 +841,29 @@ public class AnnotationExtractor {
         List<String> sourceImages = new ArrayList<>();
         List<TileManifestEntry> allManifestEntries = new ArrayList<>();
 
+        // Track which manifest entries came from "Both" images (need stratified split)
+        // vs train-only/val-only images (already assigned).
+        // We store the starting index in allManifestEntries for each "Both" image's patches.
+        int bothStartIndex = 0;
+        List<int[]> bothRanges = new ArrayList<>();  // [startIdx, count] pairs
+
         // Phase 1: Export all patches to training set (no per-image split).
         // The validation split is computed globally after all images are processed
         // so that stratification works correctly with few patches per image.
         for (ProjectImageEntry<BufferedImage> entry : entries) {
-            logger.info("Processing image: {}", entry.getImageName());
+            String imageName = entry.getImageName();
+            boolean isTrainOnly = trainOnlyImages.contains(imageName);
+            boolean isValOnly = valOnlyImages.contains(imageName);
+
+            logger.info("Processing image: {} (role: {})", imageName,
+                    isTrainOnly ? "train-only" : isValOnly ? "val-only" : "both");
             try {
                 ImageData<BufferedImage> imageData = entry.readImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale, contextPadding);
 
-                String imageName = entry.getImageName();
                 String imageId = entry.getID();
 
+                int patchesBefore = totalPatchIndex;
                 ExportResult result = extractor.exportTrainingDataWithOffset(
                         outputDir, classNames, 0.0, totalPatchIndex,
                         imageName, imageId);
@@ -824,6 +883,48 @@ public class AnnotationExtractor {
                         .count();
                 sourceImages.add(imageName);
 
+                // For val-only images, immediately move their patches to validation/
+                if (isValOnly && result.totalPatches() > 0) {
+                    Path valContext = contextScale > 1 ? outputDir.resolve("validation/context") : null;
+                    for (int mi = patchesBefore; mi < totalPatchIndex; mi++) {
+                        int idx = mi - (totalPatchIndex - result.totalPatches()) + (allManifestEntries.size() - result.totalPatches());
+                        // Compute manifest index: the entries we just added start at allManifestEntries.size() - result.totalPatches()
+                        int manifestIdx = allManifestEntries.size() - result.totalPatches() + (mi - patchesBefore);
+                        TileManifestEntry me = allManifestEntries.get(manifestIdx);
+                        String imgFile = me.filename();
+
+                        String actualImgFile = resolveActualFilename(outputDir.resolve("train/images"), imgFile);
+                        String maskFile = imgFile.replace(".tiff", ".png");
+
+                        Files.move(outputDir.resolve("train/images/" + actualImgFile),
+                                valImages.resolve(actualImgFile));
+                        Files.move(outputDir.resolve("train/masks/" + maskFile),
+                                valMasks.resolve(maskFile));
+                        if (valContext != null) {
+                            String actualCtxFile = resolveActualFilename(
+                                    outputDir.resolve("train/context"), imgFile);
+                            Path ctxSrc = outputDir.resolve("train/context/" + actualCtxFile);
+                            if (Files.exists(ctxSrc)) {
+                                Files.move(ctxSrc, valContext.resolve(actualCtxFile));
+                            }
+                        }
+
+                        allManifestEntries.set(manifestIdx, new TileManifestEntry(
+                                actualImgFile, me.x(), me.y(), "val",
+                                me.sourceImage(), me.sourceImageId()));
+                        totalValCount++;
+                    }
+                    logger.info("  {} patches -> validation (val-only image)", result.totalPatches());
+                } else if (isTrainOnly && result.totalPatches() > 0) {
+                    // Train-only: patches already in train/, just count them
+                    totalTrainCount += result.totalPatches();
+                    logger.info("  {} patches -> training (train-only image)", result.totalPatches());
+                } else if (!isTrainOnly && !isValOnly && result.totalPatches() > 0) {
+                    // "Both" image: record range for stratified split later
+                    int startIdx = allManifestEntries.size() - result.totalPatches();
+                    bothRanges.add(new int[]{startIdx, result.totalPatches()});
+                }
+
                 imageData.getServer().close();
             } catch (Exception e) {
                 logger.warn("Failed to export from image '{}': {}",
@@ -840,71 +941,72 @@ public class AnnotationExtractor {
                     + "(3) adding annotations to more images.");
         }
 
-        // Phase 2: Global stratified split across all patches from all images.
-        // Build class presence sets from manifest entries for stratification.
-        Map<String, Integer> classIndex = new LinkedHashMap<>();
-        for (int i = 0; i < classNames.size(); i++) {
-            classIndex.put(classNames.get(i), i);
-        }
-        List<Set<Integer>> globalClassPresence = new ArrayList<>();
-        for (TileManifestEntry me : allManifestEntries) {
-            // Each manifest entry was exported to train; derive class presence
-            // from the mask file by reading which classes have nonzero pixels.
-            // Since masks are already written, read them to determine class presence.
-            Path maskPath = outputDir.resolve("train/masks/" + me.filename().replace(".tiff", ".png"));
-            Set<Integer> present = new HashSet<>();
-            if (Files.exists(maskPath)) {
-                BufferedImage mask = javax.imageio.ImageIO.read(maskPath.toFile());
-                int w = mask.getWidth(), h = mask.getHeight();
-                for (int y = 0; y < h; y += Math.max(1, h / 20)) {
-                    for (int x = 0; x < w; x += Math.max(1, w / 20)) {
-                        int px = mask.getRaster().getSample(x, y, 0);
-                        if (px < classNames.size()) present.add(px);
+        // Phase 2: Global stratified split -- only for "Both" images' patches.
+        // Train-only and val-only images have already been assigned above.
+        if (!bothRanges.isEmpty()) {
+            // Collect class presence for "Both" patches only
+            List<Integer> bothIndices = new ArrayList<>();
+            for (int[] range : bothRanges) {
+                for (int i = range[0]; i < range[0] + range[1]; i++) {
+                    bothIndices.add(i);
+                }
+            }
+
+            List<Set<Integer>> bothClassPresence = new ArrayList<>();
+            for (int idx : bothIndices) {
+                TileManifestEntry me = allManifestEntries.get(idx);
+                Path maskPath = outputDir.resolve("train/masks/" + me.filename().replace(".tiff", ".png"));
+                Set<Integer> present = new HashSet<>();
+                if (Files.exists(maskPath)) {
+                    BufferedImage mask = javax.imageio.ImageIO.read(maskPath.toFile());
+                    int w = mask.getWidth(), h = mask.getHeight();
+                    for (int y = 0; y < h; y += Math.max(1, h / 20)) {
+                        for (int x = 0; x < w; x += Math.max(1, w / 20)) {
+                            int px = mask.getRaster().getSample(x, y, 0);
+                            if (px < classNames.size()) present.add(px);
+                        }
                     }
                 }
+                if (present.isEmpty()) present.add(0); // fallback
+                bothClassPresence.add(present);
             }
-            if (present.isEmpty()) present.add(0); // fallback
-            globalClassPresence.add(present);
-        }
 
-        boolean[] isValidation = StratifiedSplitter.computeStratifiedSplit(
-                globalClassPresence, validationSplit, classNames.size());
-        StratifiedSplitter.logSplitStatistics(globalClassPresence, isValidation, classNames);
+            boolean[] isValidation = StratifiedSplitter.computeStratifiedSplit(
+                    bothClassPresence, validationSplit, classNames.size());
+            StratifiedSplitter.logSplitStatistics(bothClassPresence, isValidation, classNames);
 
-        // Move validation patches from train/ to validation/.
-        // savePatch may write as .raw instead of .tiff for non-byte or >4-band images,
-        // so resolve the actual filename on disk before moving.
-        Path valContext = contextScale > 1 ? outputDir.resolve("validation/context") : null;
-        for (int i = 0; i < allManifestEntries.size(); i++) {
-            if (!isValidation[i]) {
-                totalTrainCount++;
-                continue;
-            }
-            totalValCount++;
-            TileManifestEntry me = allManifestEntries.get(i);
-            String imgFile = me.filename();
-
-            // Resolve actual image file (may be .raw instead of .tiff)
-            String actualImgFile = resolveActualFilename(outputDir.resolve("train/images"), imgFile);
-            String maskFile = imgFile.replace(".tiff", ".png");
-
-            Files.move(outputDir.resolve("train/images/" + actualImgFile),
-                    valImages.resolve(actualImgFile));
-            Files.move(outputDir.resolve("train/masks/" + maskFile),
-                    valMasks.resolve(maskFile));
-            if (valContext != null) {
-                String actualCtxFile = resolveActualFilename(
-                        outputDir.resolve("train/context"), imgFile);
-                Path ctxSrc = outputDir.resolve("train/context/" + actualCtxFile);
-                if (Files.exists(ctxSrc)) {
-                    Files.move(ctxSrc, valContext.resolve(actualCtxFile));
+            // Move validation patches from train/ to validation/.
+            Path valContext = contextScale > 1 ? outputDir.resolve("validation/context") : null;
+            for (int bi = 0; bi < bothIndices.size(); bi++) {
+                int manifestIdx = bothIndices.get(bi);
+                if (!isValidation[bi]) {
+                    totalTrainCount++;
+                    continue;
                 }
-            }
+                totalValCount++;
+                TileManifestEntry me = allManifestEntries.get(manifestIdx);
+                String imgFile = me.filename();
 
-            // Update manifest entry split designation (keep actual filename)
-            allManifestEntries.set(i, new TileManifestEntry(
-                    actualImgFile, me.x(), me.y(), "val",
-                    me.sourceImage(), me.sourceImageId()));
+                String actualImgFile = resolveActualFilename(outputDir.resolve("train/images"), imgFile);
+                String maskFile = imgFile.replace(".tiff", ".png");
+
+                Files.move(outputDir.resolve("train/images/" + actualImgFile),
+                        valImages.resolve(actualImgFile));
+                Files.move(outputDir.resolve("train/masks/" + maskFile),
+                        valMasks.resolve(maskFile));
+                if (valContext != null) {
+                    String actualCtxFile = resolveActualFilename(
+                            outputDir.resolve("train/context"), imgFile);
+                    Path ctxSrc = outputDir.resolve("train/context/" + actualCtxFile);
+                    if (Files.exists(ctxSrc)) {
+                        Files.move(ctxSrc, valContext.resolve(actualCtxFile));
+                    }
+                }
+
+                allManifestEntries.set(manifestIdx, new TileManifestEntry(
+                        actualImgFile, me.x(), me.y(), "val",
+                        me.sourceImage(), me.sourceImageId()));
+            }
         }
 
         logger.info("Global stratified split: {} train, {} validation", totalTrainCount, totalValCount);

@@ -75,13 +75,15 @@ public class TrainingDialog {
     /**
      * Result of the training dialog.
      *
-     * @param classifierName  name for the classifier
-     * @param description     classifier description
-     * @param trainingConfig  training configuration
-     * @param channelConfig   channel configuration
-     * @param selectedClasses selected class names
-     * @param selectedImages  project images to train from, or null for current image only
-     * @param classColors     map of class name to packed RGB color (from QuPath PathClass)
+     * @param classifierName   name for the classifier
+     * @param description      classifier description
+     * @param trainingConfig   training configuration
+     * @param channelConfig    channel configuration
+     * @param selectedClasses  selected class names
+     * @param selectedImages   project images to train from, or null for current image only
+     * @param classColors      map of class name to packed RGB color (from QuPath PathClass)
+     * @param trainOnlyImages  image names assigned exclusively to the training set (advanced mode)
+     * @param valOnlyImages    image names assigned exclusively to the validation set (advanced mode)
      */
     public record TrainingDialogResult(
             String classifierName,
@@ -91,7 +93,9 @@ public class TrainingDialog {
             List<String> selectedClasses,
             List<ProjectImageEntry<BufferedImage>> selectedImages,
             Map<String, Integer> classColors,
-            Map<String, Object> handlerParameters
+            Map<String, Object> handlerParameters,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages
     ) {
         /** Returns true if training should use multiple project images. */
         public boolean isMultiImage() {
@@ -1489,10 +1493,7 @@ public class TrainingDialog {
             info.setStyle("-fx-text-fill: #666;");
 
             imageSelectionList = new ListView<>();
-            imageSelectionList.setCellFactory(lv -> new CheckBoxListCell<>(
-                    item -> item.selected,
-                    item -> item.imageName
-            ));
+            imageSelectionList.setCellFactory(lv -> new ImageSelectionCell(advancedMode));
             imageSelectionList.setPrefHeight(150);
             TooltipHelper.install(imageSelectionList,
                     "Check the project images to include in training.\n" +
@@ -4408,6 +4409,36 @@ public class TrainingDialog {
                     .map(item -> item.entry)
                     .collect(Collectors.toList());
 
+            // Collect image-level split role assignments (advanced mode feature).
+            // Train-only and val-only images bypass the stratified splitter.
+            Set<String> trainOnlyImages = new LinkedHashSet<>();
+            Set<String> valOnlyImages = new LinkedHashSet<>();
+            for (ImageSelectionItem item : imageSelectionList.getItems()) {
+                if (!item.selected.get()) continue;
+                SplitRole role = item.splitRole.get();
+                if (role == SplitRole.TRAIN_ONLY) {
+                    trainOnlyImages.add(item.entry.getImageName());
+                } else if (role == SplitRole.VAL_ONLY) {
+                    valOnlyImages.add(item.entry.getImageName());
+                }
+            }
+
+            // Warn if ALL selected images are val-only (no training data)
+            if (!valOnlyImages.isEmpty() && trainOnlyImages.size() + (selectedImages.size() - trainOnlyImages.size() - valOnlyImages.size()) == 0) {
+                // Every non-val image is train-only or there are no "Both" images;
+                // but more critically, if ALL are val-only there is nothing to train on.
+                long bothCount = imageSelectionList.getItems().stream()
+                        .filter(i -> i.selected.get() && i.splitRole.get() == SplitRole.BOTH)
+                        .count();
+                if (bothCount == 0 && trainOnlyImages.isEmpty()) {
+                    Dialogs.showWarningNotification("Split Role Warning",
+                            "All selected images are set to 'Val'. "
+                            + "There will be no training data. "
+                            + "Please set at least one image to 'Train' or 'Both'.");
+                    return null;
+                }
+            }
+
             // Collect handler-specific parameters (e.g., MuViT architecture config)
             Map<String, Object> handlerParams = currentHandlerUI != null
                     ? currentHandlerUI.getParameters()
@@ -4429,7 +4460,9 @@ public class TrainingDialog {
                     selectedClasses,
                     selectedImages,
                     classColors,
-                    handlerParams
+                    handlerParams,
+                    trainOnlyImages,
+                    valOnlyImages
             );
         }
 
@@ -5228,6 +5261,31 @@ public class TrainingDialog {
     }
 
     /**
+     * Designates how an image's tiles participate in the train/validation split.
+     * <ul>
+     *   <li>{@code BOTH} (default) -- tiles enter the stratified splitter normally</li>
+     *   <li>{@code TRAIN_ONLY} -- all tiles go directly to the training set</li>
+     *   <li>{@code VAL_ONLY} -- all tiles go directly to the validation set</li>
+     * </ul>
+     */
+    public enum SplitRole {
+        BOTH("Both"),
+        TRAIN_ONLY("Train"),
+        VAL_ONLY("Val");
+
+        private final String displayName;
+
+        SplitRole(String displayName) {
+            this.displayName = displayName;
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
+    /**
      * Represents a project image in the selection list.
      */
     private static class ImageSelectionItem {
@@ -5237,6 +5295,7 @@ public class TrainingDialog {
         final int imageWidth;
         final int imageHeight;
         final javafx.beans.property.BooleanProperty selected;
+        final javafx.beans.property.ObjectProperty<SplitRole> splitRole;
 
         ImageSelectionItem(ProjectImageEntry<BufferedImage> entry, long annotationCount,
                            int imageWidth, int imageHeight) {
@@ -5246,6 +5305,85 @@ public class TrainingDialog {
             this.imageWidth = imageWidth;
             this.imageHeight = imageHeight;
             this.selected = new javafx.beans.property.SimpleBooleanProperty(true);
+            this.splitRole = new javafx.beans.property.SimpleObjectProperty<>(SplitRole.BOTH);
+        }
+    }
+
+    /**
+     * Custom list cell for the image selection list. Shows a checkbox, the image
+     * name, and (in advanced mode) a compact ComboBox for Train/Val/Both assignment.
+     * <p>
+     * Uses explicit listeners instead of bidirectional binding to prevent
+     * linked checkbox behavior during ListView cell recycling.
+     */
+    private static class ImageSelectionCell extends ListCell<ImageSelectionItem> {
+
+        private final javafx.beans.property.BooleanProperty advancedMode;
+        private final CheckBox checkBox = new CheckBox();
+        private final ComboBox<SplitRole> roleCombo = new ComboBox<>(
+                FXCollections.observableArrayList(SplitRole.values()));
+        private final HBox content = new HBox(6);
+
+        private javafx.beans.property.BooleanProperty boundSelectedProperty;
+        private javafx.beans.value.ChangeListener<Boolean> itemToCheckboxListener;
+        private javafx.beans.property.ObjectProperty<SplitRole> boundRoleProperty;
+        private javafx.beans.value.ChangeListener<SplitRole> itemToComboListener;
+
+        ImageSelectionCell(javafx.beans.property.BooleanProperty advancedMode) {
+            this.advancedMode = advancedMode;
+
+            roleCombo.setPrefWidth(70);
+            roleCombo.setStyle("-fx-font-size: 10px;");
+            roleCombo.visibleProperty().bind(advancedMode);
+            roleCombo.managedProperty().bind(advancedMode);
+
+            content.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        }
+
+        @Override
+        protected void updateItem(ImageSelectionItem item, boolean empty) {
+            super.updateItem(item, empty);
+
+            // Clean up previous listeners to avoid leaks during cell reuse
+            if (boundSelectedProperty != null && itemToCheckboxListener != null) {
+                boundSelectedProperty.removeListener(itemToCheckboxListener);
+            }
+            checkBox.setOnAction(null);
+            boundSelectedProperty = null;
+            itemToCheckboxListener = null;
+
+            if (boundRoleProperty != null && itemToComboListener != null) {
+                boundRoleProperty.removeListener(itemToComboListener);
+            }
+            roleCombo.setOnAction(null);
+            boundRoleProperty = null;
+            itemToComboListener = null;
+
+            if (empty || item == null) {
+                setGraphic(null);
+            } else {
+                // Checkbox binding
+                checkBox.setText(item.imageName);
+                boundSelectedProperty = item.selected;
+                checkBox.setSelected(boundSelectedProperty.get());
+                checkBox.setOnAction(e -> boundSelectedProperty.set(checkBox.isSelected()));
+                itemToCheckboxListener = (obs, oldVal, newVal) -> checkBox.setSelected(newVal);
+                boundSelectedProperty.addListener(itemToCheckboxListener);
+
+                // SplitRole combo binding
+                boundRoleProperty = item.splitRole;
+                roleCombo.setValue(boundRoleProperty.get());
+                roleCombo.setOnAction(e -> {
+                    if (boundRoleProperty != null) {
+                        boundRoleProperty.set(roleCombo.getValue());
+                    }
+                });
+                itemToComboListener = (obs, oldVal, newVal) -> roleCombo.setValue(newVal);
+                boundRoleProperty.addListener(itemToComboListener);
+
+                content.getChildren().setAll(checkBox, roleCombo);
+                setGraphic(content);
+            }
         }
     }
 

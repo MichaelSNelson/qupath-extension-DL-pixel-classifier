@@ -54,12 +54,14 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -529,7 +531,9 @@ public class TrainingWorkflow {
                                 result.selectedClasses(),
                                 result.selectedImages(),
                                 result.classColors(),
-                                result.handlerParameters()
+                                result.handlerParameters(),
+                                result.trainOnlyImages(),
+                                result.valOnlyImages()
                         );
                     }
                 })
@@ -549,14 +553,16 @@ public class TrainingWorkflow {
     /**
      * Executes the training process with progress monitoring.
      *
-     * @param classifierName name for the classifier
-     * @param description    classifier description
-     * @param handler        the classifier handler
-     * @param trainingConfig training configuration
-     * @param channelConfig  channel configuration
-     * @param classNames     list of class names
-     * @param selectedImages project images to train from, or null for current image only
-     * @param classColors    map of class name to packed RGB color for chart styling, or null
+     * @param classifierName  name for the classifier
+     * @param description     classifier description
+     * @param handler         the classifier handler
+     * @param trainingConfig  training configuration
+     * @param channelConfig   channel configuration
+     * @param classNames      list of class names
+     * @param selectedImages  project images to train from, or null for current image only
+     * @param classColors     map of class name to packed RGB color for chart styling, or null
+     * @param trainOnlyImages image names assigned exclusively to training (may be null/empty)
+     * @param valOnlyImages   image names assigned exclusively to validation (may be null/empty)
      */
     public void trainClassifierWithProgress(String classifierName,
                                             String description,
@@ -566,7 +572,9 @@ public class TrainingWorkflow {
                                             List<String> classNames,
                                             List<ProjectImageEntry<BufferedImage>> selectedImages,
                                             Map<String, Integer> classColors,
-                                            Map<String, Object> handlerParameters) {
+                                            Map<String, Object> handlerParameters,
+                                            Set<String> trainOnlyImages,
+                                            Set<String> valOnlyImages) {
         // Check for unsaved changes before training
         if (!checkUnsavedChanges(selectedImages)) {
             return;
@@ -763,7 +771,9 @@ public class TrainingWorkflow {
                         trainingConfig, channelConfig, classNames,
                         null, selectedImages, progress, currentJobId,
                         classColors, finalClassifierId, finalModelOutputDir,
-                        trainingDataPathHolder, modelPathHolder, handlerParameters);
+                        trainingDataPathHolder, modelPathHolder, handlerParameters,
+                        trainOnlyImages != null ? trainOnlyImages : Collections.emptySet(),
+                        valOnlyImages != null ? valOnlyImages : Collections.emptySet());
 
                 if (result.success()) {
                     String completionMsg;
@@ -939,7 +949,8 @@ public class TrainingWorkflow {
                                     Path modelOutputDir) {
         return trainCore(classifierName, description, handler, trainingConfig,
                 channelConfig, classNames, imageData, selectedImages, progress,
-                jobIdHolder, classColors, classifierId, modelOutputDir, null, null, null);
+                jobIdHolder, classColors, classifierId, modelOutputDir, null, null, null,
+                Collections.emptySet(), Collections.emptySet());
     }
 
     /**
@@ -962,6 +973,8 @@ public class TrainingWorkflow {
      *                               caller is responsible for cleanup. If null, tempDir is cleaned up.
      * @param modelPathHolder       if non-null, element 0 is set to the saved model path on success
      * @param handlerParameters     handler-specific parameters (e.g. MAE pretraining config), or null
+     * @param trainOnlyImages       image names assigned exclusively to training (may be null/empty)
+     * @param valOnlyImages         image names assigned exclusively to validation (may be null/empty)
      * @return the training result
      */
     static TrainingResult trainCore(String classifierName,
@@ -979,7 +992,9 @@ public class TrainingWorkflow {
                                     Path modelOutputDir,
                                     Path[] trainingDataPathHolder,
                                     String[] modelPathHolder,
-                                    Map<String, Object> handlerParameters) {
+                                    Map<String, Object> handlerParameters,
+                                    Set<String> trainOnlyImages,
+                                    Set<String> valOnlyImages) {
         Path tempDir = null;
         try {
             if (progress != null) {
@@ -1114,7 +1129,9 @@ public class TrainingWorkflow {
                         weightMultipliers,
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
-                        contextPadding
+                        contextPadding,
+                        trainOnlyImages,
+                        valOnlyImages
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -1480,7 +1497,7 @@ public class TrainingWorkflow {
                                 TrainingConfig trainingConfig,
                                 ChannelConfiguration channelConfig,
                                 List<String> classNames) {
-        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null, null, null);
+        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null, null, null, Collections.emptySet(), Collections.emptySet());
     }
 
     /**
