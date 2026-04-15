@@ -287,6 +287,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
         if (trainingConfig.getOhemHardRatio() < 1.0) {
             trainingParams.put("ohem_hard_ratio", trainingConfig.getOhemHardRatio());
+            trainingParams.put("ohem_hard_ratio_start", trainingConfig.getOhemHardRatioStart());
             trainingParams.put("ohem_schedule", trainingConfig.getOhemSchedule());
         }
         // "disabled" as the metric means the user wants to train for the full

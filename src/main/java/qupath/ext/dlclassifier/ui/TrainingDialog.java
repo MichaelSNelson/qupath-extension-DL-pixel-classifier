@@ -210,6 +210,7 @@ public class TrainingDialog {
         private Spinner<Double> focalGammaSpinner;
         private Label focalGammaLabel;
         private Spinner<Integer> ohemSpinner;
+        private Spinner<Integer> ohemStartSpinner;
         private ComboBox<String> ohemScheduleCombo;
         private Label ohemScheduleLabel;
         private ComboBox<String> earlyStoppingMetricCombo;
@@ -1372,10 +1373,15 @@ public class TrainingDialog {
                     ohemSpinner.getValueFactory().setValue(
                             (int) Math.round(((Number) ts.get("ohem_hard_ratio")).doubleValue() * 100));
                 }
-                if (ts.containsKey("ohem_schedule")) {
+                if (ts.containsKey("ohem_hard_ratio_start")) {
+                    ohemStartSpinner.getValueFactory().setValue(
+                            (int) Math.round(((Number) ts.get("ohem_hard_ratio_start")).doubleValue() * 100));
+                } else if (ts.containsKey("ohem_schedule")) {
+                    // Back-compat: derive start from the old schedule field.
+                    // "anneal" used to mean start at 100%, "fixed" meant start == end.
                     String sched = String.valueOf(ts.get("ohem_schedule"));
-                    ohemScheduleCombo.setValue(
-                            "anneal".equals(sched) ? "Anneal (100% -> target)" : "Fixed");
+                    ohemStartSpinner.getValueFactory().setValue(
+                            "anneal".equals(sched) ? 100 : ohemSpinner.getValue());
                 }
 
                 // Early stopping
@@ -1929,7 +1935,9 @@ public class TrainingDialog {
                     .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
                     .focalGamma(focalGammaSpinner.getValue())
                     .ohemHardRatio(ohemSpinner.getValue() / 100.0)
-                    .ohemSchedule(mapOhemScheduleFromDisplay(ohemScheduleCombo.getValue()))
+                    .ohemHardRatioStart(ohemStartSpinner.getValue() / 100.0)
+                    .ohemSchedule(ohemStartSpinner.getValue() > ohemSpinner.getValue()
+                            ? "anneal" : "fixed")
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
@@ -2855,17 +2863,20 @@ public class TrainingDialog {
             grid.add(focalGammaSpinner, 1, row);
             row++;
 
-            // OHEM hard pixel %
+            // OHEM hard pixel % (END / target value)
             ohemSpinner = new Spinner<>(
                     new SpinnerValueFactory.IntegerSpinnerValueFactory(
                             10, 100, DLClassifierPreferences.getDefaultOhemHardPixelPct(), 5));
             ohemSpinner.setEditable(true);
-            Label ohemLabel = new Label("Hard Pixel %:");
+            Label ohemLabel = new Label("Hard Pixel End %:");
             TooltipHelper.install(
                     "Online Hard Example Mining (OHEM): each batch, keep only the\n" +
                     "hardest N% of pixels and ignore the rest. Resets every batch\n" +
                     "(not cumulative across epochs).\n\n" +
-                    "100% = all pixels (standard, no OHEM).\n" +
+                    "This value is the END / target ratio training converges to.\n" +
+                    "Combined with Hard Pixel Start %, you can anneal from a\n" +
+                    "wide start to a narrow end, or just hold a fixed ratio.\n\n" +
+                    "100% = all pixels (no OHEM).\n" +
                     "25% = keep only the hardest quarter -- aggressive.\n" +
                     "5% = very aggressive, focuses almost entirely on mistakes.\n\n" +
                     "When to use: your images have large uniform regions (e.g.,\n" +
@@ -2883,36 +2894,67 @@ public class TrainingDialog {
             grid.add(ohemSpinner, 1, row);
             row++;
 
-            // OHEM schedule (visible only when OHEM is active, i.e., < 100%)
+            // OHEM hard pixel % (START value). Visible only when OHEM is active.
+            // When start > end, the ratio anneals linearly from start to end
+            // over the first 75% of epochs. When start == end, the ratio is
+            // constant.
+            int defaultStartPct = DLClassifierPreferences.getDefaultOhemHardPixelStartPct();
+            // Guard: start must be >= end. If the saved preference is below
+            // the current end, clamp it up so the spinner is valid.
+            if (defaultStartPct < ohemSpinner.getValue()) {
+                defaultStartPct = ohemSpinner.getValue();
+            }
+            ohemStartSpinner = new Spinner<>(
+                    new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                            10, 100, defaultStartPct, 5));
+            ohemStartSpinner.setEditable(true);
+            Label ohemStartLabel = new Label("Hard Pixel Start %:");
+            TooltipHelper.install(
+                    "Hard Pixel % used at the start of training. Combined with\n" +
+                    "Hard Pixel End %, controls whether OHEM anneals or stays fixed.\n\n" +
+                    "Start > End: Linearly anneal from Start to End over the first\n" +
+                    "  75% of epochs. Lets the model learn basic class distributions\n" +
+                    "  from all pixels early, then gradually shift focus to hard\n" +
+                    "  cases (boundaries, confusing regions).\n\n" +
+                    "Start == End: Fixed at that value throughout training.\n" +
+                    "  Use this when continuing training from an existing model\n" +
+                    "  that has already learned the easy pixels -- skip the warm-up\n" +
+                    "  and go straight to mining hard examples.\n\n" +
+                    "Must be >= Hard Pixel End %.",
+                    ohemStartLabel, ohemStartSpinner);
+            // Hide the schedule combo -- behavior is now derived from start vs end.
             ohemScheduleLabel = new Label("Hard Pixel Schedule:");
             ohemScheduleCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "Fixed", "Anneal (100% -> target)"));
-            ohemScheduleCombo.setValue(
-                    "anneal".equals(DLClassifierPreferences.getDefaultOhemSchedule())
-                            ? "Anneal (100% -> target)" : "Fixed");
-            TooltipHelper.install(
-                    "How the Hard Pixel % changes during training:\n\n" +
-                    "Fixed: Hard Pixel % stays constant throughout training.\n\n" +
-                    "Anneal: Starts at 100% (all pixels) and linearly decreases\n" +
-                    "to your target Hard Pixel % over the first 75% of epochs.\n" +
-                    "This lets the model learn basic class distributions from\n" +
-                    "all pixels early on, then gradually shifts focus to hard\n" +
-                    "cases (boundaries, confusing regions) as training progresses.",
-                    ohemScheduleLabel, ohemScheduleCombo);
+                    "Fixed", "Anneal"));
+            ohemScheduleLabel.setVisible(false);
+            ohemScheduleLabel.setManaged(false);
+            ohemScheduleCombo.setVisible(false);
+            ohemScheduleCombo.setManaged(false);
+
             boolean ohemActive = ohemSpinner.getValue() < 100;
-            ohemScheduleLabel.setVisible(ohemActive);
-            ohemScheduleLabel.setManaged(ohemActive);
-            ohemScheduleCombo.setVisible(ohemActive);
-            ohemScheduleCombo.setManaged(ohemActive);
+            ohemStartLabel.setVisible(ohemActive);
+            ohemStartLabel.setManaged(ohemActive);
+            ohemStartSpinner.setVisible(ohemActive);
+            ohemStartSpinner.setManaged(ohemActive);
             ohemSpinner.valueProperty().addListener((obs, old, val) -> {
                 boolean active = val != null && val < 100;
-                ohemScheduleLabel.setVisible(active);
-                ohemScheduleLabel.setManaged(active);
-                ohemScheduleCombo.setVisible(active);
-                ohemScheduleCombo.setManaged(active);
+                ohemStartLabel.setVisible(active);
+                ohemStartLabel.setManaged(active);
+                ohemStartSpinner.setVisible(active);
+                ohemStartSpinner.setManaged(active);
+                // Enforce start >= end whenever end changes.
+                if (val != null && ohemStartSpinner.getValue() < val) {
+                    ohemStartSpinner.getValueFactory().setValue(val);
+                }
             });
-            grid.add(ohemScheduleLabel, 0, row);
-            grid.add(ohemScheduleCombo, 1, row);
+            ohemStartSpinner.valueProperty().addListener((obs, old, val) -> {
+                // Enforce start >= end whenever start changes.
+                if (val != null && val < ohemSpinner.getValue()) {
+                    ohemStartSpinner.getValueFactory().setValue(ohemSpinner.getValue());
+                }
+            });
+            grid.add(ohemStartLabel, 0, row);
+            grid.add(ohemStartSpinner, 1, row);
             row++;
 
             // Early stopping metric
@@ -4412,7 +4454,9 @@ public class TrainingDialog {
             DLClassifierPreferences.setDefaultMixedPrecision(mixedPrecisionCheck.isSelected());
             DLClassifierPreferences.setDefaultGradientAccumulation(gradientAccumulationSpinner.getValue());
             DLClassifierPreferences.setDefaultOhemHardPixelPct(ohemSpinner.getValue());
-            DLClassifierPreferences.setDefaultOhemSchedule(mapOhemScheduleFromDisplay(ohemScheduleCombo.getValue()));
+            DLClassifierPreferences.setDefaultOhemHardPixelStartPct(ohemStartSpinner.getValue());
+            DLClassifierPreferences.setDefaultOhemSchedule(
+                    ohemStartSpinner.getValue() > ohemSpinner.getValue() ? "anneal" : "fixed");
             DLClassifierPreferences.setDefaultFocalGamma(focalGammaSpinner.getValue());
             DLClassifierPreferences.setDefaultProgressiveResize(progressiveResizeCheck.isSelected());
             DLClassifierPreferences.setDefaultFocusClass(

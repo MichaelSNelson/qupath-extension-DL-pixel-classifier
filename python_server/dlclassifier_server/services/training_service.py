@@ -1382,11 +1382,21 @@ class TrainingService:
         loss_function = training_params.get("loss_function", "ce_dice")
         focal_gamma = training_params.get("focal_gamma", 2.0)
         ohem_hard_ratio = training_params.get("ohem_hard_ratio", 1.0)
-        # TODO: Review adaptive OHEM after real-world testing.  The idea is
-        # sound (curriculum learning: all pixels early, hard pixels late) but
-        # it may be redundant with Dice loss already stabilizing training.
-        # Strip out if it doesn't measurably improve minority-class IoU.
-        ohem_schedule = training_params.get("ohem_schedule", "fixed")  # "fixed" or "anneal"
+        # Start value for OHEM anneal.  Defaults to the end value, i.e.
+        # "fixed" (no anneal).  When start > end, the ratio linearly anneals
+        # from start to end over the first 75% of epochs.  This lets the user
+        # skip the warm-up phase when continuing from an existing model that
+        # has already learned easy pixels.
+        ohem_hard_ratio_start = training_params.get(
+            "ohem_hard_ratio_start", ohem_hard_ratio)
+        # Back-compat: old "fixed"/"anneal" schedule param still honored if
+        # ohem_hard_ratio_start was not explicitly provided.  The default
+        # anneal behavior used to start at 100% regardless of start value.
+        ohem_schedule = training_params.get("ohem_schedule", "fixed")
+        if "ohem_hard_ratio_start" not in training_params and ohem_schedule == "anneal":
+            ohem_hard_ratio_start = 1.0
+        # Derived schedule flag for downstream checks.
+        _ohem_anneals = ohem_hard_ratio_start > ohem_hard_ratio
 
         # Build the base pixel-level loss
         dice = DiceLoss(ignore_index=unlabeled_index)
@@ -1434,9 +1444,14 @@ class TrainingService:
                 )
                 criterion = _CombinedPixelDiceLoss(ohem_pixel, dice)
                 sched_note = ""
-                if ohem_schedule == "anneal":
-                    sched_note = (f" [anneal: 100% -> {ohem_hard_ratio * 100:.0f}%"
+                if _ohem_anneals:
+                    sched_note = (f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
+                                  f" -> {ohem_hard_ratio * 100:.0f}%"
                                   f" over first 75% of epochs]")
+                    # Seed the OHEM module at the start value so the first
+                    # epoch actually begins at ohem_hard_ratio_start rather
+                    # than the configured end value.
+                    ohem_pixel.hard_ratio = ohem_hard_ratio_start
                 logger.info(
                     f"OHEM active: keeping hardest {ohem_hard_ratio * 100:.0f}%%"
                     f" of pixels (pixel-loss component only, Dice unchanged)"
@@ -1449,9 +1464,16 @@ class TrainingService:
                     class_weights=class_weights,
                     ignore_index=unlabeled_index,
                 )
+                if _ohem_anneals:
+                    criterion.hard_ratio = ohem_hard_ratio_start
+                sched_note = ""
+                if _ohem_anneals:
+                    sched_note = (f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
+                                  f" -> {ohem_hard_ratio * 100:.0f}%"
+                                  f" over first 75% of epochs]")
                 logger.info(
                     f"OHEM active: keeping hardest {ohem_hard_ratio * 100:.0f}%%"
-                    f" of pixels"
+                    f" of pixels{sched_note}"
                 )
 
         # Setup learning rate scheduler (deferred until after criterion for LR finder)
@@ -1741,7 +1763,8 @@ class TrainingService:
                 "Optimizer": optimizer_desc,
                 "Scheduler": sched_desc,
                 "Loss": self._format_loss_desc(
-                    loss_function, focal_gamma, ohem_hard_ratio, ohem_schedule),
+                    loss_function, focal_gamma, ohem_hard_ratio, ohem_schedule,
+                    ohem_hard_ratio_start),
                 "Batch Size": (f"{batch_size} (accumulation={accumulation_steps},"
                                f" effective={batch_size * accumulation_steps})"),
                 "Tile Size": tile_size_str,
@@ -1978,11 +2001,12 @@ class TrainingService:
                 set_batchrenorm_limits(
                     model, rmax=brenorm_rmax_target, dmax=brenorm_dmax_target)
 
-            # OHEM anneal: linearly decrease hard_ratio from 1.0 to the target
-            # over the first 75% of epochs.  This gives the model time to learn
-            # basic class distributions from all pixels before focusing on hard
-            # cases.  Only applies when ohem_schedule="anneal" and OHEM is active.
-            if (ohem_schedule == "anneal" and ohem_hard_ratio < 1.0):
+            # OHEM anneal: linearly decrease hard_ratio from
+            # ohem_hard_ratio_start to ohem_hard_ratio over the first 75% of
+            # epochs.  Lets the user choose whether to warm up from all pixels
+            # (start=100%) or pick up directly at the target (start=end).
+            # Only applies when start > end and OHEM is active.
+            if _ohem_anneals and ohem_hard_ratio < 1.0:
                 _ohem_module = None
                 if isinstance(criterion, _CombinedPixelDiceLoss):
                     if isinstance(criterion.pixel_loss, OHEMCrossEntropyLoss):
@@ -1992,15 +2016,16 @@ class TrainingService:
                 if _ohem_module is not None:
                     anneal_end = max(1, int(epochs * 0.75))
                     if epoch < anneal_end:
-                        # Linear from 1.0 -> ohem_hard_ratio
                         progress = epoch / anneal_end
-                        cur_ratio = 1.0 - (1.0 - ohem_hard_ratio) * progress
+                        cur_ratio = (ohem_hard_ratio_start
+                                     - (ohem_hard_ratio_start - ohem_hard_ratio) * progress)
                     else:
                         cur_ratio = ohem_hard_ratio
                     _ohem_module.hard_ratio = cur_ratio
                     if epoch == 0:
                         logger.info(
-                            "OHEM anneal: 100%% -> %.0f%% over %d epochs",
+                            "OHEM anneal: %.0f%% -> %.0f%% over %d epochs",
+                            ohem_hard_ratio_start * 100,
                             ohem_hard_ratio * 100, anneal_end)
                     elif epoch == anneal_end:
                         logger.info(
@@ -2763,16 +2788,21 @@ class TrainingService:
     @staticmethod
     def _format_loss_desc(
         loss_function: str, focal_gamma: float, ohem_hard_ratio: float,
-        ohem_schedule: str = "fixed"
+        ohem_schedule: str = "fixed",
+        ohem_hard_ratio_start: float = None
     ) -> str:
         """Format a human-readable loss description for the config summary."""
         desc = loss_function
         if loss_function in ("focal_dice", "focal"):
             desc += f" (gamma={focal_gamma})"
         if ohem_hard_ratio < 1.0:
-            desc += f" + OHEM (keep {ohem_hard_ratio * 100:.0f}%)"
-            if ohem_schedule == "anneal":
-                desc += " [anneal]"
+            start = ohem_hard_ratio_start if ohem_hard_ratio_start is not None else ohem_hard_ratio
+            anneals = start > ohem_hard_ratio
+            if anneals:
+                desc += (f" + OHEM (anneal {start * 100:.0f}%"
+                         f" -> {ohem_hard_ratio * 100:.0f}%)")
+            else:
+                desc += f" + OHEM (keep {ohem_hard_ratio * 100:.0f}%)"
         return desc
 
     def find_learning_rate(self, model, train_loader, criterion,

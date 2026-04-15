@@ -63,7 +63,8 @@ public class TrainingConfig {
     private final String lossFunction;
     private final double focalGamma;
     private final double ohemHardRatio;
-    private final String ohemSchedule; // "fixed" or "anneal"
+    private final double ohemHardRatioStart;
+    private final String ohemSchedule; // "fixed" or "anneal" -- derived from start vs end
     private final String earlyStoppingMetric;
     private final int earlyStoppingPatience;
     private final boolean mixedPrecision;
@@ -133,6 +134,7 @@ public class TrainingConfig {
         this.lossFunction = builder.lossFunction;
         this.focalGamma = builder.focalGamma;
         this.ohemHardRatio = builder.ohemHardRatio;
+        this.ohemHardRatioStart = builder.ohemHardRatioStart;
         this.ohemSchedule = builder.ohemSchedule;
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
@@ -331,6 +333,19 @@ public class TrainingConfig {
      */
     public double getOhemHardRatio() {
         return ohemHardRatio;
+    }
+
+    /**
+     * Gets the OHEM hard pixel ratio at the start of training.
+     * <p>
+     * When this is greater than {@link #getOhemHardRatio()}, the hard ratio
+     * linearly anneals from this start value down to the end value during
+     * the first 75% of epochs. When equal, the ratio is fixed.
+     *
+     * @return start hard ratio (0.05-1.0, default 1.0 = start from all pixels)
+     */
+    public double getOhemHardRatioStart() {
+        return ohemHardRatioStart;
     }
 
     /**
@@ -638,6 +653,7 @@ public class TrainingConfig {
                 Objects.equals(lossFunction, that.lossFunction) &&
                 Double.compare(that.focalGamma, focalGamma) == 0 &&
                 Double.compare(that.ohemHardRatio, ohemHardRatio) == 0 &&
+                Double.compare(that.ohemHardRatioStart, ohemHardRatioStart) == 0 &&
                 Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
                 Objects.equals(focusClass, that.focusClass) &&
                 Objects.equals(intensityAugMode, that.intensityAugMode) &&
@@ -655,7 +671,7 @@ public class TrainingConfig {
                 augmentationParams,
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
-                focalGamma, ohemHardRatio,
+                focalGamma, ohemHardRatio, ohemHardRatioStart,
                 earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
                 focusClass, focusClassMinIoU, intensityAugMode,
                 gradientAccumulationSteps, progressiveResize, wholeImage, pretrainedModelPath);
@@ -702,6 +718,7 @@ public class TrainingConfig {
         private String lossFunction = "ce_dice";
         private double focalGamma = 2.0;
         private double ohemHardRatio = 1.0;
+        private double ohemHardRatioStart = 1.0;
         private String ohemSchedule = "fixed";
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
@@ -756,6 +773,7 @@ public class TrainingConfig {
             this.lossFunction = config.lossFunction;
             this.focalGamma = config.focalGamma;
             this.ohemHardRatio = config.ohemHardRatio;
+            this.ohemHardRatioStart = config.ohemHardRatioStart;
             this.ohemSchedule = config.ohemSchedule;
             this.earlyStoppingMetric = config.earlyStoppingMetric;
             this.earlyStoppingPatience = config.earlyStoppingPatience;
@@ -996,6 +1014,17 @@ public class TrainingConfig {
         }
 
         /**
+         * Sets the OHEM hard pixel ratio at the start of training. When
+         * greater than {@link #ohemHardRatio(double)}, the ratio linearly
+         * anneals from start to end over the first 75% of epochs. When
+         * equal, the ratio stays fixed. Default 1.0 = start from all pixels.
+         */
+        public Builder ohemHardRatioStart(double ohemHardRatioStart) {
+            this.ohemHardRatioStart = ohemHardRatioStart;
+            return this;
+        }
+
+        /**
          * Sets the OHEM schedule: "fixed" or "anneal".
          */
         public Builder ohemSchedule(String ohemSchedule) {
@@ -1161,6 +1190,13 @@ public class TrainingConfig {
             }
             if (ohemHardRatio < 0.05 || ohemHardRatio > 1.0) {
                 throw new IllegalStateException("OHEM hard ratio must be between 0.05 and 1.0");
+            }
+            if (ohemHardRatioStart < 0.05 || ohemHardRatioStart > 1.0) {
+                throw new IllegalStateException("OHEM hard ratio start must be between 0.05 and 1.0");
+            }
+            if (ohemHardRatioStart < ohemHardRatio) {
+                throw new IllegalStateException("OHEM hard ratio start must be >= end (start "
+                        + ohemHardRatioStart + " < end " + ohemHardRatio + ")");
             }
             if (gradientAccumulationSteps < 1 || gradientAccumulationSteps > 16) {
                 throw new IllegalStateException("Gradient accumulation steps must be between 1 and 16");

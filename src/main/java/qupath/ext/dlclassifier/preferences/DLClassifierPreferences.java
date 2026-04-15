@@ -167,6 +167,9 @@ public final class DLClassifierPreferences {
     private static final IntegerProperty defaultOhemHardPixelPct = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultOhemHardPixelPct", 100);
 
+    private static final IntegerProperty defaultOhemHardPixelStartPct = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultOhemHardPixelStartPct", 100);
+
     private static final DoubleProperty defaultFocalGamma = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultFocalGamma", 2.0);
 
@@ -792,6 +795,14 @@ public final class DLClassifierPreferences {
 
     public static void setDefaultOhemHardPixelPct(int pct) {
         defaultOhemHardPixelPct.set(pct);
+    }
+
+    public static int getDefaultOhemHardPixelStartPct() {
+        return defaultOhemHardPixelStartPct.get();
+    }
+
+    public static void setDefaultOhemHardPixelStartPct(int pct) {
+        defaultOhemHardPixelStartPct.set(pct);
     }
 
     public static String getDefaultOhemSchedule() {
