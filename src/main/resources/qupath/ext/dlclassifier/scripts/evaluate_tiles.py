@@ -295,10 +295,12 @@ try:
     if class_colors_map:
         logger.info("Received class colors for %d classes", len(class_colors_map))
 
-    # Create disagreement output directory in the model directory (persistent)
+    # Create disagreement output directory in the model directory (persistent).
+    # Use split-scoped subdirectories so train/val tiles with matching stems
+    # cannot overwrite each other's PNGs.
     disagree_dir = model_dir / "disagreement"
     disagree_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Disagreement maps will be saved to %s", disagree_dir)
+    logger.info("Disagreement maps will be saved under %s", disagree_dir)
 
     # Create datasets for train and val splits (no augmentation)
     data_root = Path(data_path)
@@ -327,6 +329,10 @@ try:
 
         if len(dataset) == 0:
             continue
+
+        # Per-split subdirectory to prevent stem collisions between train/val.
+        split_disagree_dir = disagree_dir / split_name
+        split_disagree_dir.mkdir(parents=True, exist_ok=True)
 
         loader = torch.utils.data.DataLoader(
             dataset, batch_size=8, shuffle=False, num_workers=0
@@ -407,35 +413,55 @@ try:
                               if not (v != v)]  # filter NaN
                 mean_iou = sum(valid_ious) / len(valid_ious) if valid_ious else 0.0
 
-                # Save disagreement map, loss heatmap, and tile image
+                # Save disagreement map, loss heatmap, and tile image.
+                # Each save is wrapped independently so a failure in one step
+                # does not null out the others (e.g. a bad .raw header should
+                # not suppress the heatmap PNG).
                 disagree_path = None
                 loss_heatmap_path = None
                 tile_img_path = None
+
                 try:
                     pred_np = pred_i.cpu().numpy()
                     mask_np = mask_i.cpu().numpy()
                     loss_np = loss_i.cpu().numpy()
+                except Exception as convert_err:
+                    logger.warning(
+                        "Failed to convert tensors for [%s] %s: %s",
+                        split_name, stem, convert_err)
+                    pred_np = mask_np = loss_np = None
 
-                    disagree_file = disagree_dir / f"{stem}_disagree.png"
-                    save_disagreement_map(
-                        pred_np, mask_np, ignore_index, classes,
-                        class_colors_map, disagree_file, patch_size
-                    )
-                    disagree_path = str(disagree_file)
+                if pred_np is not None:
+                    disagree_file = split_disagree_dir / f"{stem}_disagree.png"
+                    try:
+                        save_disagreement_map(
+                            pred_np, mask_np, ignore_index, classes,
+                            class_colors_map, disagree_file, patch_size
+                        )
+                        disagree_path = str(disagree_file)
+                    except Exception as save_err:
+                        logger.warning(
+                            "save_disagreement_map failed for [%s] %s: %s",
+                            split_name, stem, save_err)
 
-                    # Save per-pixel loss heatmap
-                    loss_file = disagree_dir / f"{stem}_loss.png"
-                    save_loss_heatmap(loss_np, mask_np, ignore_index, loss_file)
-                    loss_heatmap_path = str(loss_file)
+                    loss_file = split_disagree_dir / f"{stem}_loss.png"
+                    try:
+                        save_loss_heatmap(loss_np, mask_np, ignore_index, loss_file)
+                        loss_heatmap_path = str(loss_file)
+                    except Exception as save_err:
+                        logger.warning(
+                            "save_loss_heatmap failed for [%s] %s: %s",
+                            split_name, stem, save_err)
 
-                    # Save tile image (from original training data)
-                    tile_file = disagree_dir / f"{stem}_tile.png"
+                tile_file = split_disagree_dir / f"{stem}_tile.png"
+                try:
                     img_path = dataset.image_files[file_idx]
                     save_tile_image(img_path, tile_file)
                     tile_img_path = str(tile_file)
                 except Exception as save_err:
-                    logger.warning("Failed to save evaluation images for %s: %s",
-                                   stem, save_err)
+                    logger.warning(
+                        "save_tile_image failed for [%s] %s: %s",
+                        split_name, stem, save_err)
 
                 results.append({
                     "filename": filename,

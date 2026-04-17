@@ -38,6 +38,7 @@ import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.SetupEnvironmentDialog;
 import qupath.ext.dlclassifier.ui.TooltipHelper;
+import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.common.Version;
@@ -560,9 +561,18 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         "Shows what will be deleted before proceeding.");
         cleanUpOption.setOnAction(e -> cleanUpStorage());
 
+        // Load Saved Training Area Issues - standalone reload entry point
+        MenuItem loadIssuesOption = new MenuItem("Load Saved Training Area Issues...");
+        TooltipHelper.installOnMenuItem(loadIssuesOption,
+                "Reopen a previously saved Training Area Issues session\n"
+                        + "for a specific classifier, without re-running evaluation.");
+        loadIssuesOption.setOnAction(e -> openSavedTrainingIssuesDialog());
+        loadIssuesOption.visibleProperty().bind(environmentReady);
+
         utilitiesMenu.getItems().addAll(pythonConsoleOption, whereFilesOption,
                 systemInfoOption, new SeparatorMenuItem(),
                 freeGpuOption, maePretrainOption, cleanUpOption,
+                loadIssuesOption,
                 new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
@@ -941,6 +951,45 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      * Interactive cleanup utility: scans for orphaned files and shows the
      * user what will be deleted before proceeding.
      */
+    /**
+     * Presents a picker of available classifiers, then (via
+     * {@link TrainingAreaIssuesDialog#openSavedSessionFromDisk}) a picker of
+     * saved sessions, and reopens the dialog without re-running evaluation.
+     */
+    private void openSavedTrainingIssuesDialog() {
+        try {
+            ModelManager manager = new ModelManager();
+            List<ClassifierMetadata> classifiers = manager.listClassifiers();
+            if (classifiers == null || classifiers.isEmpty()) {
+                Dialogs.showInfoNotification(EXTENSION_NAME,
+                        "No classifiers found in project or user classifier directories.");
+                return;
+            }
+            ClassifierMetadata metadata = Dialogs.showChoiceDialog(
+                    "Load Saved Training Area Issues",
+                    "Choose the classifier whose sessions you want to browse:",
+                    classifiers,
+                    classifiers.get(0));
+            if (metadata == null) {
+                return;
+            }
+            Path modelDir = manager.getModelPath(metadata.getId())
+                    .map(Path::getParent)
+                    .orElse(null);
+            if (modelDir == null) {
+                Dialogs.showErrorMessage(EXTENSION_NAME,
+                        "Could not locate model directory for classifier '"
+                                + metadata.getName() + "'.");
+                return;
+            }
+            TrainingAreaIssuesDialog.openSavedSessionFromDisk(metadata, modelDir);
+        } catch (Exception e) {
+            logger.error("Failed to open saved Training Area Issues session", e);
+            Dialogs.showErrorMessage(EXTENSION_NAME,
+                    "Failed to open saved session: " + e.getMessage());
+        }
+    }
+
     private void cleanUpStorage() {
         try {
             String userHome = System.getProperty("user.home");

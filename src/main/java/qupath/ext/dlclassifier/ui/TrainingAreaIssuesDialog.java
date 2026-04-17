@@ -20,19 +20,21 @@ import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import javafx.beans.binding.Bindings;
+import javafx.beans.binding.StringBinding;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.ClassifierClient;
+import qupath.ext.dlclassifier.service.TrainingIssuesOverlayController;
+import qupath.ext.dlclassifier.service.TrainingIssuesOverlayController.OverlayMode;
+import qupath.ext.dlclassifier.service.TrainingIssuesSessionStore;
 import qupath.lib.gui.QuPathGUI;
+import qupath.fx.dialogs.Dialogs;
+import qupath.lib.gui.viewer.OverlayOptions;
 import qupath.lib.gui.viewer.QuPathViewer;
-import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjects;
-import qupath.lib.objects.classes.PathClass;
-import qupath.lib.objects.hierarchy.PathObjectHierarchy;
-import qupath.lib.objects.hierarchy.events.PathObjectHierarchyEvent;
-import qupath.lib.objects.hierarchy.events.PathObjectHierarchyListener;
-import qupath.lib.regions.ImagePlane;
-import qupath.lib.roi.ROIs;
 
 import java.io.File;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,9 +44,8 @@ import java.util.Map;
  * <p>
  * Displays tiles sorted by loss (descending) to help users identify annotation
  * errors, hard cases, and model failures. Selecting a row navigates the
- * QuPath viewer to the tile location and shows a temporary highlight rectangle
- * that auto-clears when the user starts drawing.
- * A preview pane shows the loss heatmap or disagreement map overlay with zoom.
+ * QuPath viewer to the tile location. A preview pane shows the loss heatmap
+ * or disagreement map overlay with zoom.
  *
  * @author UW-LOCI
  * @since 0.3.0
@@ -61,11 +62,17 @@ public class TrainingAreaIssuesDialog {
     private final double downsample;
     private final int patchSize;
     private final Map<String, Integer> classColors;
+    private final ClassifierMetadata classifierMetadata;
+    private final Path modelDir;
+    private final String classifierName;
 
-    // Tile highlight tracking -- auto-removed when user interacts with hierarchy
-    private PathObject currentHighlight;
-    private qupath.lib.images.ImageData<?> highlightImageData;
-    private PathObjectHierarchyListener hierarchyListener;
+    // Renders the selected tile's heatmap/disagreement PNG as a real QuPath
+    // overlay aligned to the tile coordinates in the main viewer.
+    // TODO(0.4.x): Once this viewer overlay is validated on Windows, remove
+    // the inner JavaFX preview pane (tileImageView/disagreeImageView) -- the
+    // viewer overlay supersedes it. Tracked in claude-reports/TODO_LIST.md.
+    private final TrainingIssuesOverlayController overlayController =
+            new TrainingIssuesOverlayController();
 
     // Preview pane components
     private final ImageView tileImageView;
@@ -79,16 +86,25 @@ public class TrainingAreaIssuesDialog {
      * Creates the training area issues dialog.
      *
      * @param classifierName name of the classifier for the title
+     * @param classifierMetadata classifier metadata (for the session anchor); may be null
+     *                           for ad-hoc sessions, in which case Save/Load are disabled
+     * @param modelDir       directory holding {@code model.pt} / {@code model.onnx}
+     *                       and where sessions are persisted; may be null (disables Save/Load)
      * @param results        per-tile evaluation results sorted by loss descending
      * @param downsample     downsample factor used during training
      * @param patchSize      training patch size in pixels (at the downsampled resolution)
      * @param classColors    map of class name to packed RGB color, or null
      */
     public TrainingAreaIssuesDialog(String classifierName,
+                                    ClassifierMetadata classifierMetadata,
+                                    Path modelDir,
                                     List<ClassifierClient.TileEvaluationResult> results,
                                     double downsample,
                                     int patchSize,
                                     Map<String, Integer> classColors) {
+        this.classifierName = classifierName;
+        this.classifierMetadata = classifierMetadata;
+        this.modelDir = modelDir;
         this.downsample = downsample;
         this.patchSize = patchSize;
         this.classColors = classColors != null ? classColors : Map.of();
@@ -158,9 +174,7 @@ public class TrainingAreaIssuesDialog {
         table.setItems(sortedRows);
         table.setTooltip(TooltipHelper.create(
                 "Click a row to navigate to that tile in the viewer\n"
-                + "and see the loss heatmap preview.\n"
-                + "A temporary highlight rectangle marks the tile boundary\n"
-                + "and clears automatically when you start drawing."));
+                + "and see the loss heatmap preview."));
 
         TableColumn<TileRow, String> imageCol = new TableColumn<>("Image");
         imageCol.setCellValueFactory(new PropertyValueFactory<>("sourceImage"));
@@ -202,21 +216,25 @@ public class TrainingAreaIssuesDialog {
                 iouCol, worstClassCol));
         table.getSortOrder().add(lossCol);
 
-        // Single-click navigates to tile and updates preview
+        // Single-click navigates to tile, updates the inner preview pane, and
+        // installs the viewer overlay for the tile.
         table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> {
             if (newRow != null) {
                 navigateToTile(newRow);
                 updatePreview(newRow);
+                showViewerOverlay(newRow);
             } else {
                 clearPreview();
+                overlayController.clear();
             }
         });
 
-        // Re-clicking the same row should re-navigate
+        // Re-clicking the same row should re-navigate (and re-install the overlay)
         table.setOnMouseClicked(e -> {
             TileRow selected = table.getSelectionModel().getSelectedItem();
             if (selected != null) {
                 navigateToTile(selected);
+                showViewerOverlay(selected);
             }
         });
 
@@ -318,6 +336,7 @@ public class TrainingAreaIssuesDialog {
             TileRow currentRow = table.getSelectionModel().getSelectedItem();
             if (currentRow != null) {
                 updateOverlayImage(currentRow);
+                showViewerOverlay(currentRow);
             }
         });
 
@@ -333,8 +352,38 @@ public class TrainingAreaIssuesDialog {
         previewPane.setPrefWidth(300);
         previewPane.setMaxWidth(300);
 
+        // Warning banner shown when QuPath's overlay opacity is too low for
+        // the viewer overlay to be visible, or when pixel-classification
+        // display has been disabled in the View menu. Auto-hides when neither
+        // condition applies.
+        Label warningBanner = buildOverlayWarningBanner();
+
+        // Save/Load session buttons. Disabled when modelDir or metadata is
+        // unavailable (e.g. sessions opened outside the training workflow
+        // without sufficient context).
+        Button saveSessionButton = new Button("Save Session...");
+        saveSessionButton.setTooltip(TooltipHelper.create(
+                "Persist the current list of tiles and their PNG assets under\n"
+                + "the classifier's model directory so this analysis can be\n"
+                + "reopened without re-running evaluation."));
+        saveSessionButton.setOnAction(e -> saveCurrentSession());
+
+        Button loadSessionButton = new Button("Load Session...");
+        loadSessionButton.setTooltip(TooltipHelper.create(
+                "Reopen a previously saved Training Area Issues session\n"
+                + "for this classifier."));
+        loadSessionButton.setOnAction(e -> loadSavedSessionInteractive());
+
+        boolean sessionsAvailable = classifierMetadata != null && modelDir != null;
+        saveSessionButton.setDisable(!sessionsAvailable);
+        loadSessionButton.setDisable(!sessionsAvailable);
+
+        HBox sessionBar = new HBox(8, saveSessionButton, loadSessionButton);
+        sessionBar.setAlignment(Pos.CENTER_LEFT);
+
         // Layout: table on left, preview on right
-        VBox tablePane = new VBox(10, summaryLabel, filterBox, table, statusLabel);
+        VBox tablePane = new VBox(10, summaryLabel, warningBanner, filterBox,
+                table, statusLabel, sessionBar);
         tablePane.setPadding(new Insets(15));
         VBox.setVgrow(table, Priority.ALWAYS);
         HBox.setHgrow(tablePane, Priority.ALWAYS);
@@ -346,8 +395,9 @@ public class TrainingAreaIssuesDialog {
         Scene scene = new Scene(mainLayout, 900, 600);
         stage.setScene(scene);
 
-        // Clean up highlight on close
-        stage.setOnHidden(e -> removeCurrentHighlight());
+        // Release the custom pixel-layer overlay slot and restore the
+        // production DL overlay (if it had been running) when the dialog closes.
+        stage.setOnHidden(e -> overlayController.dispose());
     }
 
     /**
@@ -435,76 +485,241 @@ public class TrainingAreaIssuesDialog {
 
         viewer.setCenterPixelLocation(centerX, centerY);
         viewer.setDownsampleFactor(downsample);
-
-        // Add temporary highlight rectangle that auto-clears on user interaction
-        addTemporaryHighlight(imageData, row.getX(), row.getY(), regionSize);
     }
 
     /**
-     * Adds a temporary highlight rectangle that auto-clears when the user
-     * modifies the hierarchy (e.g., starts drawing a new annotation).
-     * This prevents the highlight from interfering with drawing tools.
+     * Called from the Save button. Writes out a persistent session under the
+     * classifier's model directory after a size/location confirmation prompt.
      */
-    private void addTemporaryHighlight(qupath.lib.images.ImageData<?> imageData,
-                                       int tileX, int tileY, double regionSize) {
-        removeCurrentHighlight();
+    private void saveCurrentSession() {
+        if (classifierMetadata == null || modelDir == null) {
+            Dialogs.showErrorMessage("Save Session",
+                    "Sessions require a classifier and model directory.");
+            return;
+        }
+        // Save the CURRENT (filtered+sorted) or FULL result set? Use the full
+        // underlying list so filters applied in the UI don't silently drop
+        // tiles from the saved session.
+        List<ClassifierClient.TileEvaluationResult> sourceResults = new ArrayList<>();
+        for (TileRow row : allRows) {
+            sourceResults.add(row.toResult());
+        }
+        TrainingIssuesSessionStore.saveWithConfirmation(
+                stage,
+                classifierMetadata,
+                modelDir,
+                downsample,
+                patchSize,
+                sourceResults);
+    }
 
+    /**
+     * Called from the Load button. Presents a session picker and, on
+     * selection, rebuilds the dialog's row list from the loaded data.
+     */
+    private void loadSavedSessionInteractive() {
+        if (classifierMetadata == null || modelDir == null) {
+            return;
+        }
+        List<TrainingIssuesSessionStore.SessionInfo> sessions =
+                TrainingIssuesSessionStore.listSessions(classifierMetadata, modelDir);
+        if (sessions.isEmpty()) {
+            Dialogs.showMessageDialog("Load Session",
+                    "No saved sessions exist for classifier '"
+                    + classifierMetadata.getName() + "'.");
+            return;
+        }
+        TrainingIssuesSessionStore.SessionInfo info = Dialogs.showChoiceDialog(
+                "Load Training Area Issues",
+                "Choose a saved session to load:",
+                sessions,
+                sessions.get(0));
+        if (info == null) {
+            return;
+        }
+        if (info.stale()) {
+            boolean proceed = Dialogs.showConfirmDialog("Stale session",
+                    "This session was saved against a different build of the "
+                    + "same classifier (" + info.stalenessReason()
+                    + ").\nResults may not reflect the current model.\n\nOpen anyway?");
+            if (!proceed) {
+                return;
+            }
+        }
         try {
-            var roi = ROIs.createRectangleROI(tileX, tileY, regionSize, regionSize,
-                    ImagePlane.getDefaultPlane());
-            var highlight = PathObjects.createAnnotationObject(roi,
-                    PathClass.fromString("Region*"));
-            highlight.setLocked(true);
-
-            var hierarchy = imageData.getHierarchy();
-            hierarchy.addObject(highlight);
-            hierarchy.getSelectionModel().setSelectedObject(highlight);
-
-            currentHighlight = highlight;
-            highlightImageData = imageData;
-
-            // Listen for hierarchy changes -- remove highlight when user
-            // adds/removes/modifies any other object (i.e., starts drawing)
-            hierarchyListener = new PathObjectHierarchyListener() {
-                @Override
-                public void hierarchyChanged(PathObjectHierarchyEvent event) {
-                    // Ignore events caused by our own highlight management
-                    if (event.getChangedObjects().size() == 1
-                            && event.getChangedObjects().contains(currentHighlight)) {
-                        return;
-                    }
-                    // User did something else -- clear our highlight
-                    Platform.runLater(() -> removeCurrentHighlight());
-                }
-            };
-            hierarchy.addListener(hierarchyListener);
-
+            TrainingIssuesSessionStore.LoadedSession loaded =
+                    TrainingIssuesSessionStore.load(info.dir());
+            applyLoadedSession(loaded);
         } catch (Exception e) {
-            logger.debug("Failed to create tile highlight: {}", e.getMessage());
+            logger.error("Failed to load session {}", info.dir(), e);
+            Dialogs.showErrorMessage("Load Session",
+                    "Failed to load session: " + e.getMessage());
         }
     }
 
     /**
-     * Removes the current highlight rectangle and hierarchy listener.
+     * Replaces the current table contents with rows from a loaded session.
+     * Clears the current viewer overlay (the user can click a new row to
+     * install one for the loaded tiles).
      */
-    private void removeCurrentHighlight() {
-        if (hierarchyListener != null && highlightImageData != null) {
-            try {
-                highlightImageData.getHierarchy().removeListener(hierarchyListener);
-            } catch (Exception e) {
-                // Ignore
-            }
-            hierarchyListener = null;
+    private void applyLoadedSession(TrainingIssuesSessionStore.LoadedSession loaded) {
+        overlayController.clear();
+        allRows.clear();
+        for (ClassifierClient.TileEvaluationResult r : loaded.results()) {
+            allRows.add(new TileRow(r));
         }
-        if (currentHighlight != null && highlightImageData != null) {
-            try {
-                highlightImageData.getHierarchy().removeObject(currentHighlight, false);
-            } catch (Exception e) {
-                logger.debug("Failed to remove highlight: {}", e.getMessage());
-            }
-            currentHighlight = null;
-            highlightImageData = null;
+        long highLoss = allRows.stream().filter(r -> r.getLoss() > 1.0).count();
+        summaryLabel.setText(String.format(
+                "%d tiles loaded | %d with loss > 1.0", allRows.size(), highLoss));
+        stage.setTitle("Training Area Issues - " + classifierName
+                + " (session " + loaded.info().sessionId() + ")");
+    }
+
+    /**
+     * Opens a standalone Training Area Issues dialog from a previously saved
+     * session, without re-running tile evaluation. Returns false if no
+     * session could be opened (no metadata, no sessions, user cancelled, etc.).
+     */
+    public static boolean openSavedSessionFromDisk(ClassifierMetadata metadata,
+                                                   Path modelDir) {
+        if (metadata == null || modelDir == null) {
+            Dialogs.showErrorMessage("Load Session",
+                    "Classifier metadata and model directory are required.");
+            return false;
         }
+        List<TrainingIssuesSessionStore.SessionInfo> sessions =
+                TrainingIssuesSessionStore.listSessions(metadata, modelDir);
+        if (sessions.isEmpty()) {
+            Dialogs.showMessageDialog("Load Session",
+                    "No saved sessions exist for classifier '"
+                    + metadata.getName() + "'.");
+            return false;
+        }
+        TrainingIssuesSessionStore.SessionInfo info = Dialogs.showChoiceDialog(
+                "Load Training Area Issues",
+                "Choose a saved session to load:",
+                sessions,
+                sessions.get(0));
+        if (info == null) {
+            return false;
+        }
+        if (info.stale()) {
+            boolean proceed = Dialogs.showConfirmDialog("Stale session",
+                    "This session was saved against a different build of the "
+                    + "same classifier (" + info.stalenessReason()
+                    + ").\nResults may not reflect the current model.\n\nOpen anyway?");
+            if (!proceed) {
+                return false;
+            }
+        }
+        try {
+            TrainingIssuesSessionStore.LoadedSession loaded =
+                    TrainingIssuesSessionStore.load(info.dir());
+            Map<String, Integer> classColors = new LinkedHashMap<>();
+            if (metadata.getClasses() != null) {
+                for (var c : metadata.getClasses()) {
+                    Integer rgb = parseHexRgb(c.color());
+                    if (rgb != null) {
+                        classColors.put(c.name(), rgb);
+                    }
+                }
+            }
+            TrainingAreaIssuesDialog dialog = new TrainingAreaIssuesDialog(
+                    metadata.getName(),
+                    metadata,
+                    modelDir,
+                    loaded.results(),
+                    loaded.downsample(),
+                    loaded.patchSize(),
+                    classColors);
+            dialog.stage.setTitle("Training Area Issues - " + metadata.getName()
+                    + " (session " + info.sessionId() + ")");
+            dialog.show();
+            return true;
+        } catch (Exception e) {
+            logger.error("Failed to load session {}", info.dir(), e);
+            Dialogs.showErrorMessage("Load Session",
+                    "Failed to load session: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static Integer parseHexRgb(String hex) {
+        if (hex == null || hex.isBlank()) return null;
+        String s = hex.trim();
+        if (s.startsWith("#")) s = s.substring(1);
+        if (s.startsWith("0x") || s.startsWith("0X")) s = s.substring(2);
+        try {
+            return Integer.parseInt(s, 16) & 0xFFFFFF;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Builds a warning banner that surfaces two conditions that would make
+     * the viewer overlay invisible to the user:
+     *   - View > Overlay opacity is < 10%
+     *   - View > Show pixel classification is off
+     * The banner auto-shows/hides via a binding on QuPath's overlay options.
+     */
+    private Label buildOverlayWarningBanner() {
+        Label banner = new Label();
+        banner.setWrapText(true);
+        banner.setStyle(
+                "-fx-background-color: #fff3cd;"
+                + " -fx-text-fill: #664d03;"
+                + " -fx-border-color: #e5c97a;"
+                + " -fx-border-width: 1;"
+                + " -fx-padding: 6 10 6 10;"
+                + " -fx-font-size: 11px;");
+
+        QuPathGUI qupath = QuPathGUI.getInstance();
+        if (qupath == null || qupath.getOverlayOptions() == null) {
+            banner.setVisible(false);
+            banner.setManaged(false);
+            return banner;
+        }
+
+        OverlayOptions opts = qupath.getOverlayOptions();
+        StringBinding message = Bindings.createStringBinding(() -> {
+            float opacity = opts.opacityProperty().get();
+            boolean show = opts.showPixelClassificationProperty().get();
+            StringBuilder sb = new StringBuilder();
+            if (!show) {
+                sb.append("Pixel classification display is OFF. "
+                        + "Enable via View > Show pixel classification.");
+            }
+            if (opacity < 0.10f) {
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(String.format(
+                        "Overlay opacity is %.0f%% - heatmap will be hard to see. "
+                        + "Raise opacity via View > Overlay slider.",
+                        opacity * 100.0));
+            }
+            return sb.toString();
+        }, opts.opacityProperty(), opts.showPixelClassificationProperty());
+
+        banner.textProperty().bind(message);
+        banner.visibleProperty().bind(message.isNotEmpty());
+        banner.managedProperty().bind(banner.visibleProperty());
+        return banner;
+    }
+
+    /**
+     * Installs a viewer-level overlay for the given tile using the currently
+     * selected overlay mode. No-op if the QuPath viewer is unavailable.
+     */
+    private void showViewerOverlay(TileRow row) {
+        QuPathGUI qupath = QuPathGUI.getInstance();
+        if (qupath == null) return;
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer == null) return;
+
+        OverlayMode mode = OVERLAY_DISAGREEMENT.equals(overlaySelector.getValue())
+                ? OverlayMode.DISAGREEMENT
+                : OverlayMode.LOSS_HEATMAP;
+        overlayController.showTile(viewer, row, mode, patchSize, downsample);
     }
 
     // ==================== Preview Pane ====================
@@ -652,7 +867,7 @@ public class TrainingAreaIssuesDialog {
     /**
      * Row model for the evaluation results table.
      */
-    public static class TileRow {
+    public static class TileRow implements TrainingIssuesOverlayController.TileRowData {
         private final StringProperty sourceImage;
         private final StringProperty sourceImageId;
         private final StringProperty split;
@@ -666,6 +881,8 @@ public class TrainingAreaIssuesDialog {
         private final StringProperty disagreementImagePath;
         private final StringProperty lossHeatmapPath;
         private final StringProperty tileImagePath;
+        // Preserved for session round-trips; not bound to the TableView.
+        private final Map<String, Double> perClassIoU;
 
         public TileRow(ClassifierClient.TileEvaluationResult result) {
             this.sourceImage = new SimpleStringProperty(result.sourceImage());
@@ -674,6 +891,9 @@ public class TrainingAreaIssuesDialog {
             this.loss = new SimpleDoubleProperty(result.loss());
             this.disagreementPct = new SimpleDoubleProperty(result.disagreementPct());
             this.meanIoU = new SimpleDoubleProperty(result.meanIoU());
+            this.perClassIoU = result.perClassIoU() != null
+                    ? new LinkedHashMap<>(result.perClassIoU())
+                    : new LinkedHashMap<>();
             this.x = new SimpleIntegerProperty(result.x());
             this.y = new SimpleIntegerProperty(result.y());
             this.filename = new SimpleStringProperty(result.filename());
@@ -727,5 +947,36 @@ public class TrainingAreaIssuesDialog {
         public String getDisagreementImagePath() { return disagreementImagePath.get(); }
         public String getLossHeatmapPath() { return lossHeatmapPath.get(); }
         public String getTileImagePath() { return tileImagePath.get(); }
+
+        /**
+         * Rebuilds a {@link ClassifierClient.TileEvaluationResult} from this
+         * row. Used when saving a session so the on-disk manifest reflects
+         * the currently loaded data (not the original evaluation JSON, which
+         * is already discarded by the time the dialog is open).
+         */
+        public ClassifierClient.TileEvaluationResult toResult() {
+            return new ClassifierClient.TileEvaluationResult(
+                    getFilename(),
+                    getSplit(),
+                    getLoss(),
+                    getDisagreementPct(),
+                    perClassIoU,
+                    getMeanIoU(),
+                    getX(),
+                    getY(),
+                    getSourceImage(),
+                    getSourceImageId(),
+                    getDisagreementImagePath(),
+                    getLossHeatmapPath(),
+                    getTileImagePath()
+            );
+        }
+
+        // TileRowData (for TrainingIssuesOverlayController)
+        @Override public int x() { return getX(); }
+        @Override public int y() { return getY(); }
+        @Override public String filename() { return getFilename(); }
+        @Override public String lossHeatmapPath() { return getLossHeatmapPath(); }
+        @Override public String disagreementImagePath() { return getDisagreementImagePath(); }
     }
 }

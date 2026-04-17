@@ -702,10 +702,26 @@ public class TrainingWorkflow {
                     progress.setOverallProgress(1.0);
                     progress.log("Evaluation complete: " + results.size() + " tiles analyzed");
 
-                    // Open the results dialog on the FX thread
+                    // Open the results dialog on the FX thread. Pass the
+                    // model directory and metadata so the dialog can offer
+                    // Save/Load session functionality.
+                    Path modelDir = Path.of(modelPath).getParent();
+                    qupath.ext.dlclassifier.model.ClassifierMetadata metadata = null;
+                    try {
+                        metadata = new ModelManager().loadMetadata(modelDir);
+                    } catch (Exception metaErr) {
+                        logger.debug("Could not load classifier metadata for session support: {}",
+                                metaErr.getMessage());
+                    }
+                    final qupath.ext.dlclassifier.model.ClassifierMetadata finalMetadata = metadata;
+                    final Path finalModelDir = modelDir;
                     Platform.runLater(() -> {
                         TrainingAreaIssuesDialog dialog = new TrainingAreaIssuesDialog(
-                                classifierName, results, trainingConfig.getDownsample(),
+                                classifierName,
+                                finalMetadata,
+                                finalModelDir,
+                                results,
+                                trainingConfig.getDownsample(),
                                 trainingConfig.getTileSize(),
                                 classColors);
                         dialog.show();
