@@ -2328,11 +2328,15 @@ public class TrainingWorkflow {
             return;
         }
         int tile = config.getTileSize();
-        int chs = Math.max(1, channels.getSelectedChannels().size());
+        int chs = Math.max(1, channels.getNumChannels());
+        int bitDepth = channels.getBitDepth();
+        // AnnotationExtractor.savePatch exports uint8 TIFF only when
+        // numBands <= 4 AND dataType == TYPE_BYTE; otherwise float32 .raw.
+        int bytesPerPixel = (chs <= 4 && bitDepth == 8) ? 1 : 4;
         boolean hasContext = config.getContextScale() > 1;
-        long perImage = (long) tile * tile * chs; // uint8 bytes
+        long perImage = (long) tile * tile * chs * bytesPerPixel;
         if (hasContext) perImage *= 2L;
-        long perMask = (long) tile * tile; // uint8
+        long perMask = (long) tile * tile; // uint8 in cache
         long totalBytes = (long) patchCount * (perImage + perMask);
 
         long availableBytes = -1L;

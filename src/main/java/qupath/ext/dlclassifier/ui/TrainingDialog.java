@@ -3684,18 +3684,27 @@ public class TrainingDialog {
             }
             int tile = tileSizeSpinner != null ? tileSizeSpinner.getValue() : 512;
             int chs = 3;
+            int bitDepth = 8;
             try {
                 if (channelPanel != null && channelPanel.isValid()) {
-                    chs = Math.max(1, channelPanel.getChannelConfiguration().getNumChannels());
+                    ChannelConfiguration cc = channelPanel.getChannelConfiguration();
+                    chs = Math.max(1, cc.getNumChannels());
+                    bitDepth = cc.getBitDepth();
                 }
             } catch (Exception ignored) {
-                // Pre-selection: fall back to 3 channels default
+                // Pre-selection: fall back to RGB 8-bit defaults
             }
+            // AnnotationExtractor.savePatch exports as uint8 TIFF only when
+            // numBands <= 4 AND dataType == TYPE_BYTE; otherwise float32 .raw
+            // at 4 bytes per channel per pixel.
+            int bytesPerPixel = (chs <= 4 && bitDepth == 8) ? 1 : 4;
             int ctxScale = contextScaleCombo != null
                     ? parseContextScale(contextScaleCombo.getValue()) : 1;
             boolean hasContext = ctxScale > 1;
-            long perImage = (long) tile * tile * chs;
+            long perImage = (long) tile * tile * chs * bytesPerPixel;
             if (hasContext) perImage *= 2L;
+            // Masks are always int indexed PNGs on disk but cached as uint8
+            // in RAM (class index fits in a byte for <=256 classes).
             long perMask = (long) tile * tile;
             long totalBytes = (long) tileEst * (perImage + perMask);
             double estGb = totalBytes / 1e9;
