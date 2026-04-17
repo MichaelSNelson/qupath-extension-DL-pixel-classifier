@@ -249,6 +249,33 @@ If you anticipate needing to stop training (e.g., end of day, shared workstation
 
 The pause checkpoint is stored both in memory (for immediate resume within the same QuPath session) and on disk (for recovery after restart).
 
+### What carries over when I pause and resume training?
+
+The Resume Training dialog asks only for the number of **Additional Epochs** -- learning rate and batch size stay at their original values. The rest of your training configuration is stored alongside the checkpoint and reused as-is on resume, so the resumed run behaves as if training had never been paused.
+
+**Preserved across pause/resume:**
+
+- Learning rate and batch size (from the original run)
+- OHEM hard-pixel ratio, adaptive per-class floor, and anneal schedule (including anneal start/end values -- the anneal picks up at the correct point for the current epoch rather than restarting at the start value)
+- Augmentation configuration (flip/rotate probabilities, elastic deformation, intensity mode, noise, etc.)
+- Early stopping metric, patience counter, and best score
+- Frozen layer configuration and transfer-learning settings
+- Mixed precision, gradient accumulation, weight decay
+- Class-weight multipliers and validation split
+- Optimizer state (momentum, adaptive parameters) and scheduler state
+
+**Re-exported on resume (to pick up annotation changes):**
+
+- Training tiles are re-extracted from the current annotations so any new or modified annotations made while paused are included in the resumed run.
+
+**Behavior to be aware of when extending a run:**
+
+- **LR schedulers that span the full run** (cosine, one-cycle) are re-parameterized over the new total epoch count starting from the current epoch -- they do not keep the original curve and tack extra epochs onto the end. If you were relying on a specific final-epoch LR, extending the run will change the LR trajectory.
+- **Epoch-indexed schedules** (OHEM anneal) compute their value as a function of the current epoch over the anneal window, so extending the run past the original anneal end leaves the hard-pixel ratio at its final value for the extra epochs (the anneal does not re-run).
+- **Training resumes from the last best epoch**, not the epoch where Pause was clicked. If the best was at epoch 30 and you paused at epoch 45, the resumed run starts at epoch 30.
+
+If you need to change learning rate or batch size (e.g. you hit VRAM issues or want to switch to a fine-tuning LR), cancel the paused run and start a new training using **Continue from checkpoint** instead -- that workflow gives you the full training dialog with all hyperparameters editable.
+
 #### What is NOT recoverable
 
 | Scenario | Model recovery | Resume training |
