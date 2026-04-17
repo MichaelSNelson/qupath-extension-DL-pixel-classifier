@@ -312,7 +312,7 @@ class PretrainedModelsService:
             layers = []
 
             # Get encoder layers
-            encoder_layers = self._get_encoder_layers(model, encoder)
+            encoder_layers = self._get_encoder_layers(model, encoder, num_channels)
             layers.extend(encoder_layers)
 
             # Get decoder layers
@@ -325,7 +325,10 @@ class PretrainedModelsService:
             logger.error("segmentation_models_pytorch not installed")
             return []
         except Exception as e:
-            logger.error(f"Error getting model layers: {e}")
+            # exc_info=True so stack trace is logged -- otherwise bugs like
+            # missing-arg or free-variable references are invisible and the
+            # Java side silently falls back to built-in layer defaults.
+            logger.error("Error getting model layers: %s", e, exc_info=True)
             return []
 
     def _create_model(
@@ -449,7 +452,8 @@ class PretrainedModelsService:
                 "The weights (~100MB) are downloaded from HuggingFace on first use."
             )
 
-    def _get_encoder_layers(self, model, encoder_name: str) -> List[Dict[str, Any]]:
+    def _get_encoder_layers(self, model, encoder_name: str,
+                            num_channels: int = 3) -> List[Dict[str, Any]]:
         """Extract encoder layer information."""
         layers = []
 

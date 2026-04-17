@@ -23,6 +23,18 @@ try:
     pretrained = PretrainedModelsService()
     layers = pretrained.get_model_layers(architecture, encoder, num_channels, num_classes)
     task.outputs["layers"] = layers
+    if not layers:
+        # Empty list may indicate an upstream error that was caught and
+        # logged inside get_model_layers(). Surface it so the Java side
+        # can warn the user instead of silently using its local fallback.
+        logger.warning(
+            "get_model_layers returned 0 layers for architecture=%s encoder=%s "
+            "num_channels=%d num_classes=%d. Java will fall back to built-in "
+            "layer defaults. Check worker log above for the root cause.",
+            architecture, encoder, num_channels, num_classes)
 except Exception as e:
-    logger.error("Failed to get model layers: %s", e)
+    # Log full traceback so a regression like the num_channels free-variable
+    # bug is not silent when it recurs.
+    import traceback as _tb
+    logger.error("Failed to get model layers: %s\n%s", e, _tb.format_exc())
     task.outputs["layers"] = []
