@@ -154,6 +154,12 @@ public class ProgressMonitorController {
 
         pauseButton = new Button("Pause");
         pauseButton.setOnAction(e -> handlePause());
+        // Disabled until the Python training job has a jobId assigned.
+        // Clicking earlier (e.g. during patch export) would write no signal
+        // and leave the user confused. Enable via onTrainingJobStarted().
+        pauseButton.setDisable(true);
+        pauseButton.setTooltip(new Tooltip(
+                "Pause becomes available once the training job starts on the worker."));
 
         cancelButton = new Button("Cancel");
         cancelButton.setOnAction(e -> handleCancel());
@@ -511,6 +517,18 @@ public class ProgressMonitorController {
     }
 
     /**
+     * Enables the Pause button. Call this once the Python training job has
+     * been assigned a jobId (via the backend's jobIdCallback) -- before that,
+     * a pause click would write nothing and leave the button stuck disabled.
+     */
+    public void onTrainingJobStarted() {
+        Platform.runLater(() -> {
+            pauseButton.setDisable(false);
+            pauseButton.setTooltip(null);
+        });
+    }
+
+    /**
      * Sets the resume callback.
      *
      * @param callback callback to invoke when resume is clicked
@@ -707,7 +725,13 @@ public class ProgressMonitorController {
             status.set("Training model...");
             statusLabel.setStyle("-fx-font-weight: bold;");
             pauseButton.setText("Pause");
-            pauseButton.setDisable(false);
+            // Keep disabled until the resumed Python worker signals readiness
+            // (via TrainingWorkflow's resume jobIdCallback -> onTrainingJobStarted()).
+            // Re-exporting tiles can take 30-90s, during which a pause click
+            // would write a signal with the wrong jobId and be lost.
+            pauseButton.setDisable(true);
+            pauseButton.setTooltip(new Tooltip(
+                    "Pause becomes available once the resumed training job starts."));
             pauseButton.setOnAction(e -> handlePause());
             completeTrainingButton.setVisible(false);
             completeTrainingButton.setManaged(false);

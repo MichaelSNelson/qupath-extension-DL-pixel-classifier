@@ -1325,6 +1325,10 @@ public class TrainingWorkflow {
                         if (jobIdHolder != null && jobIdHolder.length > 0) {
                             jobIdHolder[0] = jobId;
                         }
+                        // Python worker is now ready to receive pause signals.
+                        if (progress != null) {
+                            progress.onTrainingJobStarted();
+                        }
                     }
             );
 
@@ -1791,7 +1795,14 @@ public class TrainingWorkflow {
                             }
                         }
                     },
-                    progress::isCancelled
+                    progress::isCancelled,
+                    newJobId -> {
+                        if (currentJobId != null && currentJobId.length > 0) {
+                            currentJobId[0] = newJobId;
+                        }
+                        // Python worker is now ready to receive pause signals.
+                        progress.onTrainingJobStarted();
+                    }
             );
 
             // 6. Handle result -- may be paused again, completed, or cancelled

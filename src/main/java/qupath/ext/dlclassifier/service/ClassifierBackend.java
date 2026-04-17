@@ -89,6 +89,8 @@ public interface ClassifierBackend {
      * @param batchSize        optional new batch size
      * @param progressCallback callback for progress updates
      * @param cancelledCheck   supplier that returns true when cancelled
+     * @param jobIdCallback    optional callback that receives the new job ID
+     *                         once the worker is ready to accept pause signals
      * @return training result
      * @throws IOException if communication fails
      */
@@ -99,7 +101,8 @@ public interface ClassifierBackend {
             Double learningRate,
             Integer batchSize,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
-            Supplier<Boolean> cancelledCheck) throws IOException;
+            Supplier<Boolean> cancelledCheck,
+            Consumer<String> jobIdCallback) throws IOException;
 
     /**
      * Finalizes training from a saved checkpoint by restoring the best model

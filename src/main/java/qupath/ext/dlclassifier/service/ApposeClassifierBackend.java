@@ -491,7 +491,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Double learningRate,
             Integer batchSize,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
-            Supplier<Boolean> cancelledCheck) throws IOException {
+            Supplier<Boolean> cancelledCheck,
+            Consumer<String> jobIdCallback) throws IOException {
 
         CheckpointInfo checkpoint = checkpointStore.get(jobId);
         if (checkpoint == null) {
@@ -524,6 +525,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // correct pause signal path even if called with the old job ID.
         jobIdRedirects.put(jobId, newJobId);
         logger.info("Resume: new jobId={}, mapped from old={}", newJobId, jobId);
+        if (jobIdCallback != null) {
+            jobIdCallback.accept(newJobId);
+        }
 
         ClassLoader extensionCL = ApposeService.class.getClassLoader();
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
