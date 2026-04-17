@@ -243,25 +243,32 @@ public class InferenceConfig {
      * boundary handling. The result is a per-side padding value; total
      * overlap between adjacent tiles is {@code 2 * effectivePadding}.
      * <p>
-     * Guardrails:
+     * Guardrails (all proportional to tileSize so they stay valid for
+     * small tiles):
      * <ul>
-     *   <li>Minimum 25% of tileSize (tileSize/4) per side</li>
-     *   <li>Floor of 64px</li>
-     *   <li>Ceiling of 3/8 tileSize (ensures stride >= 25% of tileSize)</li>
+     *   <li>Minimum 25% of tileSize per side ({@code tileSize / 4})</li>
+     *   <li>Maximum 37.5% of tileSize per side ({@code tileSize * 3 / 8}),
+     *       which keeps stride = tileSize - 2*padding at 25% of tileSize
+     *       so tiling actually advances</li>
      * </ul>
+     * <p>
+     * A previous implementation imposed an absolute 64-pixel floor on
+     * padding; combined with the ceiling this left stride = 0 for
+     * tileSize below about 170 (e.g. tileSize=128 with overlap=64
+     * produced padding=64, stride=0). Stride=0 breaks the tiling loop,
+     * overflows the tile-count estimate (MAX*MAX wraps to 1), and
+     * triggers the overlay guardrail that refuses the full-viewport
+     * request as oversized. Proportional bounds only from here on.
      *
      * @param tileSize      tile size in pixels
      * @param configOverlap configured overlap in pixels (from user preferences)
-     * @return effective padding per side
+     * @return effective padding per side, always leaving a non-zero stride
      */
     public static int computeEffectivePadding(int tileSize, int configOverlap) {
-        // Minimum 25% padding ensures reasonable context at tile boundaries.
-        // For 512px tile: padding=128, stride=256.
         int minPadding = tileSize / 4;
-        int padding = Math.max(configOverlap, minPadding);
-        // Cap at 37.5% to keep stride reasonable (stride = tileSize - 2*padding).
-        int maxPadding = Math.max(64, tileSize * 3 / 8);
-        return Math.max(64, Math.min(padding, maxPadding));
+        int maxPadding = tileSize * 3 / 8;
+        int padding = Math.min(Math.max(configOverlap, minPadding), maxPadding);
+        return Math.max(1, padding);
     }
 
     public static Builder builder() {

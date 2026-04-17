@@ -174,18 +174,31 @@ public class DLPixelClassifier implements PixelClassifier {
         int imgH = imageData.getServer().getHeight();
         int tileSize = inferenceConfig.getTileSize();
         int stride = tileSize - 2 * inputPadding;
-        long estTiles = (long) Math.ceil((imgW / downsample) / (double) stride)
-                * (long) Math.ceil((imgH / downsample) / (double) stride);
         int modelInputSize = tileSize + 2 * contextInferencePad;
-        logger.info("DL overlay created: model={}, image={}x{}, downsample={}, "
-                + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
-                + "blendMode={}, est. tiles={}",
-                metadata.getName(), imgW, imgH, downsample,
-                tileSize, inputPadding, contextInferencePad, modelInputSize,
-                inferenceConfig.getBlendMode(), estTiles);
-        if (estTiles > 500) {
-            logger.warn("Large tile count ({}) -- overlay will take a long time to fill. "
-                    + "Zoom into a smaller region for faster results.", estTiles);
+        if (stride <= 0) {
+            logger.error("Invalid tile stride: tileSize={} padding={} -> stride={} (<=0); "
+                    + "the overlay cannot tile the image. This indicates a bug in "
+                    + "InferenceConfig.computeEffectivePadding for this tile size.",
+                    tileSize, inputPadding, stride);
+            logger.info("DL overlay created: model={}, image={}x{}, downsample={}, "
+                    + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
+                    + "blendMode={}, est. tiles=N/A (stride<=0)",
+                    metadata.getName(), imgW, imgH, downsample,
+                    tileSize, inputPadding, contextInferencePad, modelInputSize,
+                    inferenceConfig.getBlendMode());
+        } else {
+            long estTiles = (long) Math.ceil((imgW / downsample) / (double) stride)
+                    * (long) Math.ceil((imgH / downsample) / (double) stride);
+            logger.info("DL overlay created: model={}, image={}x{}, downsample={}, "
+                    + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
+                    + "blendMode={}, est. tiles={}",
+                    metadata.getName(), imgW, imgH, downsample,
+                    tileSize, inputPadding, contextInferencePad, modelInputSize,
+                    inferenceConfig.getBlendMode(), estTiles);
+            if (estTiles > 500) {
+                logger.warn("Large tile count ({}) -- overlay will take a long time to fill. "
+                        + "Zoom into a smaller region for faster results.", estTiles);
+            }
         }
     }
 
