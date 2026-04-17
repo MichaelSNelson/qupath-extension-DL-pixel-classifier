@@ -227,9 +227,14 @@ public final class TrainingIssuesSessionStore {
             t.addProperty("sourceImage", r.sourceImage());
             t.addProperty("sourceImageId", r.sourceImageId());
 
-            String tileAsset     = copyAsset(r.tileImagePath(), assetsDir);
-            String lossAsset     = copyAsset(r.lossHeatmapPath(), assetsDir);
-            String disagreeAsset = copyAsset(r.disagreementImagePath(), assetsDir);
+            // Prefix each asset filename with the tile's split to mirror the
+            // train/val subdir separation in <modelDir>/disagreement/. Without
+            // this, two tiles with the same stem in different splits collapse
+            // onto the same assets/<stem>.png and one split silently wins.
+            String split = r.split() == null ? "" : r.split();
+            String tileAsset     = copyAsset(r.tileImagePath(), assetsDir, split);
+            String lossAsset     = copyAsset(r.lossHeatmapPath(), assetsDir, split);
+            String disagreeAsset = copyAsset(r.disagreementImagePath(), assetsDir, split);
             t.addProperty("tileAsset", tileAsset);
             t.addProperty("lossAsset", lossAsset);
             t.addProperty("disagreeAsset", disagreeAsset);
@@ -411,11 +416,18 @@ public final class TrainingIssuesSessionStore {
         return "";
     }
 
-    private static String copyAsset(String sourcePath, Path assetsDir) throws IOException {
+    private static String copyAsset(String sourcePath, Path assetsDir, String split)
+            throws IOException {
         if (sourcePath == null || sourcePath.isEmpty()) return null;
         Path src = Paths.get(sourcePath);
         if (!Files.exists(src)) return null;
-        String filename = src.getFileName().toString();
+        String base = src.getFileName().toString();
+        // Prefix the asset filename with the split so a "stem_loss.png" from
+        // train and one from val don't collide in the flat assets/ directory.
+        // ASCII-only to stay Windows-safe.
+        String filename = (split != null && !split.isEmpty())
+                ? split + "_" + base
+                : base;
         Path dst = assetsDir.resolve(filename);
         Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
         return ASSETS_DIRNAME + "/" + filename;
