@@ -736,8 +736,6 @@ public class TrainingWorkflow {
 
         // Wire pause callback
         progress.setOnPause(v -> {
-            // TODO(diagnostic): remove after pause regression is diagnosed (2026-04-17).
-            logger.info("DIAG pause: onPause fired, currentJobId={}", currentJobId[0]);
             if (currentJobId[0] != null) {
                 try {
                     ClassifierBackend backend = BackendFactory.getBackend();
@@ -747,11 +745,14 @@ public class TrainingWorkflow {
                     progress.log("ERROR: Failed to pause: " + e.getMessage());
                 }
             } else {
-                // TODO(diagnostic): remove after pause regression is diagnosed.
-                logger.warn("DIAG pause: onPause fired but currentJobId is null -- "
-                        + "jobIdCallback never ran; nothing will happen");
+                // Defensive: the pause button is disabled until jobIdCallback
+                // fires (ProgressMonitorController.onTrainingJobStarted), so
+                // this branch should be unreachable. If it fires, a new
+                // regression has reintroduced the race.
+                logger.warn("Pause clicked but currentJobId is null -- "
+                        + "button-disable fix regressed?");
                 progress.log("ERROR: Pause clicked before training job id was assigned. "
-                        + "Nothing will happen -- this is a bug.");
+                        + "Nothing will happen -- please report this.");
             }
         });
 
