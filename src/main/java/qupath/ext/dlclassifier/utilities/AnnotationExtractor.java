@@ -374,10 +374,9 @@ public class AnnotationExtractor {
         if (patchIndex == 0) {
             throw new IOException("No valid training patches could be extracted. "
                     + "This usually means the annotations are too small to produce "
-                    + "any tiles at the current downsample level. "
-                    + "Try: (1) using a lower downsample value, "
-                    + "(2) making annotations larger, or "
-                    + "(3) adding annotations to more images.");
+                    + "any tiles at the current downsample level, or the project "
+                    + "was not saved after annotating. "
+                    + "See: https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/TROUBLESHOOTING.md#no-valid-training-patches-could-be-extracted");
         }
         if (trainCount == 0) {
             throw new IOException("All " + patchIndex + " exported patches were assigned "
@@ -841,6 +840,17 @@ public class AnnotationExtractor {
         List<String> sourceImages = new ArrayList<>();
         List<TileManifestEntry> allManifestEntries = new ArrayList<>();
 
+        // Diagnostics used only if the run ends with zero patches, so the
+        // error message can tell the user WHY (exceptions, unclassified
+        // annotations, class-name mismatches, etc.) instead of a generic hint.
+        int imagesFailedException = 0;
+        String firstExceptionMessage = null;
+        int imagesWithZeroPatches = 0;
+        int totalAnnotationsAll = 0;
+        int annotationsUnclassified = 0;
+        Set<String> unmatchedPathClasses = new LinkedHashSet<>();
+        Set<String> selectedClassNameSet = new HashSet<>(classNames);
+
         // Track which manifest entries came from "Both" images (need stratified split)
         // vs train-only/val-only images (already assigned).
         // We store the starting index in allManifestEntries for each "Both" image's patches.
@@ -861,12 +871,26 @@ public class AnnotationExtractor {
                 ImageData<BufferedImage> imageData = entry.readImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale, contextPadding);
 
+                // Per-image annotation diagnostics, collected before export so
+                // that a zero-patch failure can report the full picture.
+                for (PathObject ann : imageData.getHierarchy().getAnnotationObjects()) {
+                    totalAnnotationsAll++;
+                    if (ann.getPathClass() == null) {
+                        annotationsUnclassified++;
+                    } else if (!selectedClassNameSet.contains(ann.getPathClass().getName())) {
+                        unmatchedPathClasses.add(ann.getPathClass().getName());
+                    }
+                }
+
                 String imageId = entry.getID();
 
                 int patchesBefore = totalPatchIndex;
                 ExportResult result = extractor.exportTrainingDataWithOffset(
                         outputDir, classNames, 0.0, totalPatchIndex,
                         imageName, imageId);
+                if (result.totalPatches() == 0) {
+                    imagesWithZeroPatches++;
+                }
 
                 // Accumulate statistics
                 totalPatchIndex += result.totalPatches();
@@ -927,18 +951,42 @@ public class AnnotationExtractor {
 
                 imageData.getServer().close();
             } catch (Exception e) {
+                imagesFailedException++;
+                if (firstExceptionMessage == null) {
+                    firstExceptionMessage = e.getClass().getSimpleName()
+                            + (e.getMessage() != null ? ": " + e.getMessage() : "");
+                }
                 logger.warn("Failed to export from image '{}': {}",
                         entry.getImageName(), e.getMessage());
             }
         }
 
         if (totalPatchIndex == 0) {
-            throw new IOException("No valid training patches could be extracted from any image. "
-                    + "This usually means the annotations are too small to produce "
-                    + "any tiles at the current downsample level. "
-                    + "Try: (1) using a lower downsample value, "
-                    + "(2) making annotations larger, or "
-                    + "(3) adding annotations to more images.");
+            StringBuilder msg = new StringBuilder();
+            msg.append("No valid training patches could be extracted from any image.\n\n");
+            msg.append("Diagnostics:\n");
+            msg.append(String.format("  Images attempted: %d%n", entries.size()));
+            msg.append(String.format("  Images that produced zero patches: %d%n", imagesWithZeroPatches));
+            if (imagesFailedException > 0) {
+                msg.append(String.format("  Images that failed with an exception: %d%n", imagesFailedException));
+                msg.append(String.format("  First exception: %s%n", firstExceptionMessage));
+            }
+            msg.append(String.format("  Total annotations found on disk: %d%n", totalAnnotationsAll));
+            if (annotationsUnclassified > 0) {
+                msg.append(String.format("  Annotations WITHOUT a class (skipped): %d%n", annotationsUnclassified));
+            }
+            if (!unmatchedPathClasses.isEmpty()) {
+                msg.append(String.format("  Annotation classes that did NOT match the selected classes: %s%n",
+                        unmatchedPathClasses));
+                msg.append(String.format("  Selected training classes: %s%n", classNames));
+            }
+            msg.append('\n');
+            msg.append("Common causes include: unsaved project changes, unclassified annotations, ")
+                    .append("case-sensitive class-name mismatches, images that failed to load, ")
+                    .append("or annotations too small for the current downsample.\n\n");
+            msg.append("See the troubleshooting guide for step-by-step diagnosis:\n")
+                    .append("  https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/TROUBLESHOOTING.md#no-valid-training-patches-could-be-extracted");
+            throw new IOException(msg.toString());
         }
 
         // Phase 2: Global stratified split -- only for "Both" images' patches.

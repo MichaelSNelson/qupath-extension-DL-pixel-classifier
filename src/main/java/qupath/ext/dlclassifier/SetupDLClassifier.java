@@ -46,10 +46,7 @@ import qupath.lib.gui.extensions.GitHubProject;
 import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.images.ImageData;
 
-import javafx.stage.FileChooser;
-
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -403,6 +400,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 qupath.imageDataProperty()
         );
 
+        // When the user changes overlay smoothing or tile-averaging in
+        // Preferences, rebuild the active overlay so the change is visible
+        // immediately -- matching the old "Overlay Settings..." dialog.
+        DLClassifierPreferences.overlaySmoothingProperty().addListener((obs, oldV, newV) -> {
+            if (overlayService.hasOverlay()) overlayService.recreateOverlay();
+        });
+        DLClassifierPreferences.multiPassAveragingProperty().addListener((obs, oldV, newV) -> {
+            if (overlayService.hasOverlay()) overlayService.recreateOverlay();
+        });
+
         // 3) Select Overlay Model - choose which classifier to use for the overlay
         MenuItem selectModelOption = new MenuItem("Select Overlay Model...");
         TooltipHelper.installOnMenuItem(selectModelOption,
@@ -504,16 +511,6 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         });
         freeGpuOption.visibleProperty().bind(environmentReady);
 
-        // Recover from Checkpoint - finalize a model from a .pt checkpoint file
-        MenuItem recoverCheckpointOption = new MenuItem("Recover from Checkpoint...");
-        TooltipHelper.installOnMenuItem(recoverCheckpointOption,
-                "Recover a trained model from a checkpoint (.pt) file.\n" +
-                        "Use this after a crash, power outage, or paused training\n" +
-                        "that was interrupted before the model could be finalized.\n" +
-                        "The best model weights are extracted and saved as a usable classifier.");
-        recoverCheckpointOption.setOnAction(e -> recoverFromCheckpoint(qupath));
-        recoverCheckpointOption.visibleProperty().bind(environmentReady);
-
         // MAE Pretrain Encoder - visible when environment ready
         MenuItem maePretrainOption = new MenuItem("MAE Pretrain Encoder...");
         TooltipHelper.installOnMenuItem(maePretrainOption,
@@ -547,15 +544,6 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         pythonConsoleOption.setOnAction(e -> PythonConsoleWindow.getInstance().show());
         pythonConsoleOption.visibleProperty().bind(environmentReady);
 
-        // Overlay Settings - configure prediction smoothing
-        MenuItem overlaySettingsOption = new MenuItem("Overlay Settings...");
-        TooltipHelper.installOnMenuItem(overlaySettingsOption,
-                "Configure prediction smoothing for the overlay.\n" +
-                        "Changes apply immediately if an overlay is active.");
-        overlaySettingsOption.setOnAction(e ->
-                new qupath.ext.dlclassifier.ui.OverlaySettingsDialog(overlayService).show());
-        overlaySettingsOption.visibleProperty().bind(environmentReady);
-
         // Where Are My Files? - always visible
         MenuItem whereFilesOption = new MenuItem("Where Are My Files?");
         TooltipHelper.installOnMenuItem(whereFilesOption,
@@ -574,8 +562,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         utilitiesMenu.getItems().addAll(pythonConsoleOption, whereFilesOption,
                 systemInfoOption, new SeparatorMenuItem(),
-                freeGpuOption, maePretrainOption, recoverCheckpointOption,
-                overlaySettingsOption, cleanUpOption,
+                freeGpuOption, maePretrainOption, cleanUpOption,
                 new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
@@ -597,38 +584,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     }
 
     /**
-     * Collects Java-side and Python-side system information and shows it
-     * in a copyable text dialog.
-     */
-    /**
-     * Menu entry point: prompts the user to choose a checkpoint file, then
-     * runs {@link #recoverFromCheckpoint(QuPathGUI, Path)} on the selection.
-     */
-    private void recoverFromCheckpoint(QuPathGUI qupath) {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Select Checkpoint File");
-        fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("PyTorch Checkpoint", "*.pt"),
-                new FileChooser.ExtensionFilter("All Files", "*.*"));
-
-        Path defaultDir = CheckpointScanner.getRegistryDir();
-        if (Files.isDirectory(defaultDir)) {
-            fileChooser.setInitialDirectory(defaultDir.toFile());
-        }
-
-        File selected = fileChooser.showOpenDialog(qupath.getStage());
-        if (selected == null) return;
-        recoverFromCheckpoint(qupath, selected.toPath());
-    }
-
-    /**
      * Recovers a trained model from a specific checkpoint {@code .pt} file.
      * Runs {@code finalize_training.py} in the background and reports the
      * finalized model via an info notification. If no project is open, the
      * user is asked to confirm saving to the default fallback location.
      * <p>
-     * This is the single recovery code path used by the menu entry point,
-     * the project-open toast, and the TrainingDialog banner.
+     * Called from the project-open toast and the TrainingDialog banner,
+     * both of which discover orphaned checkpoints automatically.
      */
     public static void recoverFromCheckpoint(QuPathGUI qupath, Path checkpointPath) {
         if (checkpointPath == null || !Files.isRegularFile(checkpointPath)) {

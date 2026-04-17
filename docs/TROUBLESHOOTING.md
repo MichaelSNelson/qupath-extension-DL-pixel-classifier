@@ -149,6 +149,24 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 | "Server error" | Server connection failed | Check server is running and accessible |
 | Dialog won't open | No image loaded | Open an image first |
 
+### "No valid training patches could be extracted"
+
+The extension exports training patches from the **saved** project file on disk, not from the live QuPath hierarchy. When training fails with "No valid training patches could be extracted from any image," the error message now includes diagnostic counts (images processed, failed, total annotations, unclassified annotations, class name mismatches). Use those counts to pick the matching cause below.
+
+**1. Project not saved.** If you created or edited annotations but never saved, the extractor reads an empty hierarchy from disk. Save first (`File > Save` or `Ctrl+S`) and re-run training. This is the most common cause when the hierarchy looks fine in QuPath but the error says 0 annotations.
+
+**2. Annotations have no class assigned.** The error message reports "Annotations WITHOUT a class." Every annotation must have a `PathClass` assigned (right-click > Set class, or use the Annotations tab). Unclassified annotations are silently skipped.
+
+**3. Annotation class names do not match selected training classes.** The error message reports unmatched class names and the list of selected classes. Comparison is **exact and case-sensitive**: `Tumor` and `tumor` are different classes, and trailing whitespace also breaks the match. Either rename the annotations or adjust the selected class list in the training dialog.
+
+**4. Images failed to load.** The error message reports a count of images that threw an exception during export, plus the first exception message. Common causes: the image file was moved/deleted after import, a permissions problem, or an OME reader error. Check the QuPath log for full stack traces.
+
+**5. All images marked val-only (or all marked train-only).** If the image-role split assigned every image to the same side, one side has zero images and the extractor produces nothing usable. Ensure at least one image is set to "both" or split roles across images.
+
+**6. Downsample too high for the patch size.** If `patchSize * downsample` exceeds the image dimensions, the patch placement clips to a single location and small annotations can rasterize to zero mask pixels. Try reducing the downsample (e.g. 4 -> 2 -> 1) or increasing the patch size in the training dialog.
+
+**7. Annotations too small at the chosen downsample.** Even with matching classes and saved data, very thin line annotations at a high downsample can produce no labeled pixels once rasterized. Lower the downsample, thicken the stroke (Training dialog > `Line Stroke Width`), or draw larger annotations.
+
 ### Training is very slow
 
 | Cause | Fix |
@@ -325,7 +343,7 @@ Both the overlay and Apply Classifier (OBJECTS) use the same unified inference p
 If seams are still visible:
 
 - **Re-train the model** -- new models use BatchRenorm and save dataset normalization statistics, giving the best cross-tile consistency. Older models trained with standard BatchNorm are more susceptible to tiling artifacts.
-- Increase the **Overlay Smoothing** sigma (Edit > Preferences or Overlay Settings) -- higher values smooth noisy per-pixel predictions
+- Increase the **Overlay Prediction Smoothing** sigma in Edit > Preferences > DL Pixel Classifier -- higher values smooth noisy per-pixel predictions
 - The tile overlap is enforced automatically (minimum 25% per side) -- manually increasing it beyond the default has diminishing returns
 
 ### Objects don't match the overlay

@@ -202,8 +202,9 @@ if model_output_dir:
         _shutil.copy2(str(src), str(dst))
         # Keep the source in ~/.dlclassifier/checkpoints/ as well. That is the
         # central registry the Java side scans for crash-recovery discovery
-        # (CheckpointScanner + "Recover from Checkpoint..." menu). Both copies
-        # are cleaned up on normal completion/cancel via _cleanup_best_in_progress.
+        # (CheckpointScanner, surfaced via project-open toast and Train dialog
+        # banner). Both copies are cleaned up on normal completion/cancel via
+        # _cleanup_best_in_progress.
         logger.info("Best-in-progress saved to project and central registry: %s", dst)
         return str(dst)
 

@@ -128,9 +128,10 @@ If you toggle the overlay on without selecting a model first, you will be prompt
 
 ### Overlay Settings
 
-**Extensions > DL Pixel Classifier > Utilities > Overlay Settings...** lets you configure:
+Overlay behavior is configured in **Edit > Preferences > DL Pixel Classifier**:
 
-- **Prediction Smoothing** (sigma 0-10, default 2.0): Gaussian smoothing of probability maps before classification. Higher values reduce noisy per-pixel predictions, especially for ResNet/CNN models. MuViT/ViT models produce smoother predictions and may need less smoothing.
+- **Overlay Prediction Smoothing** (sigma 0-10, default 2.0): Gaussian smoothing of probability maps before classification. Higher values reduce noisy per-pixel predictions, especially for ResNet/CNN models. MuViT/ViT models produce smoother predictions and may need less smoothing.
+- **Overlay High-Quality Tile Averaging** (default off): Run each tile at 4 spatial offsets and average the predictions to eliminate tile boundary seams. Applies to both the overlay and Apply Classifier. ~4x slower.
 
 Changes are applied immediately to the active overlay. The overlay always uses CENTER_CROP tile handling.
 
