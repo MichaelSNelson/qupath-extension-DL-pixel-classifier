@@ -75,6 +75,9 @@ public class TrainingConfig {
     private final boolean fusedOptimizer;
     // When false, skip the LR Finder presweep and use a heuristic max_lr.
     private final boolean useLrFinder;
+    // GPU-side augmentation via kornia. Off by default (opt-in);
+    // auto-disabled on non-CUDA devices or when kornia is not installed.
+    private final boolean gpuAugmentation;
 
     // Focus class for best model selection and early stopping
     private final String focusClass;       // null = disabled (use earlyStoppingMetric as-is)
@@ -151,6 +154,7 @@ public class TrainingConfig {
         this.mixedPrecision = builder.mixedPrecision;
         this.fusedOptimizer = builder.fusedOptimizer;
         this.useLrFinder = builder.useLrFinder;
+        this.gpuAugmentation = builder.gpuAugmentation;
         this.focusClass = builder.focusClass;
         this.focusClassMinIoU = builder.focusClassMinIoU;
         this.intensityAugMode = builder.intensityAugMode;
@@ -429,6 +433,10 @@ public class TrainingConfig {
 
     public boolean isUseLrFinder() {
         return useLrFinder;
+    }
+
+    public boolean isGpuAugmentation() {
+        return gpuAugmentation;
     }
 
     /**
@@ -781,6 +789,7 @@ public class TrainingConfig {
         private boolean mixedPrecision = true;
         private boolean fusedOptimizer = true;
         private boolean useLrFinder = true;
+        private boolean gpuAugmentation = false;
         private String focusClass = null;
         private double focusClassMinIoU = 0.5;
         private String intensityAugMode = "none";
@@ -841,6 +850,7 @@ public class TrainingConfig {
             this.mixedPrecision = config.mixedPrecision;
             this.fusedOptimizer = config.fusedOptimizer;
             this.useLrFinder = config.useLrFinder;
+            this.gpuAugmentation = config.gpuAugmentation;
             this.focusClass = config.focusClass;
             this.focusClassMinIoU = config.focusClassMinIoU;
             this.intensityAugMode = config.intensityAugMode;
@@ -1160,6 +1170,11 @@ public class TrainingConfig {
 
         public Builder useLrFinder(boolean useLrFinder) {
             this.useLrFinder = useLrFinder;
+            return this;
+        }
+
+        public Builder gpuAugmentation(boolean gpuAugmentation) {
+            this.gpuAugmentation = gpuAugmentation;
             return this;
         }
 

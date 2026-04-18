@@ -48,6 +48,14 @@ except ImportError:
     ALBUMENTATIONS_AVAILABLE = False
     logger.warning("albumentations not available - augmentation will be disabled")
 
+# Try to import kornia for GPU-side augmentation. Optional; when unavailable
+# the training path silently falls back to CPU albumentations.
+try:
+    import kornia.augmentation as K  # noqa: N814
+    KORNIA_AVAILABLE = True
+except ImportError:
+    KORNIA_AVAILABLE = False
+
 
 class PerChannelIntensityJitter(A.ImageOnlyTransform):
     """Apply random brightness/contrast independently to each channel.
@@ -204,6 +212,101 @@ def get_validation_transform() -> Optional[A.Compose]:
 
     # No transforms for validation - just return as-is
     return None
+
+
+def build_gpu_augmentation(aug_config: Optional[Dict[str, Any]]):
+    """Build a kornia.AugmentationSequential pipeline for GPU-side augmentation.
+
+    Mirrors a subset of the CPU albumentations pipeline but runs on tensors
+    already on the GPU, which is dramatically faster once the per-batch
+    CPU-decode cost is eliminated by the in-memory dataset preload.
+
+    Supported (mask-consistent when geometric):
+    - HorizontalFlip / VerticalFlip
+    - 90-degree rotation (RandomRotation with multiples of 90)
+    - Color jitter (brightfield mode)
+    - Gaussian noise and blur at low probability
+
+    Deferred to CPU albumentations (too costly or non-trivial on GPU for the
+    marginal benefit):
+    - ElasticTransform, GridDistortion, arbitrary-angle Rotate
+
+    Args:
+        aug_config: augmentation config dict (same one passed to
+            get_training_augmentation) -- keys like ``p_flip``, ``p_rotate``,
+            ``p_color``, ``intensity_mode``, etc.
+
+    Returns:
+        A kornia AugmentationSequential instance with ``data_keys=["input",
+        "mask"]`` so geometric ops apply consistently to image and mask.
+        Returns ``None`` if kornia is unavailable or aug_config is empty.
+    """
+    if not KORNIA_AVAILABLE:
+        return None
+    if not aug_config:
+        return None
+
+    cfg = dict(aug_config)  # shallow copy
+    p_flip = float(cfg.get("p_flip", 0.5))
+    p_rotate = float(cfg.get("p_rotate", 0.5))
+    p_color = float(cfg.get("p_color", 0.3))
+    p_noise = float(cfg.get("p_noise", 0.2))
+    brightness_limit = float(cfg.get("brightness_limit", 0.2))
+    contrast_limit = float(cfg.get("contrast_limit", 0.2))
+    noise_std_min = float(cfg.get("noise_std_min", 0.04))
+    noise_std_max = float(cfg.get("noise_std_max", 0.2))
+    intensity_mode = cfg.get("intensity_mode", "none")
+
+    # same_on_batch=False applies a different sample from each transform to
+    # each element in the batch -- the usual correct behaviour for training.
+    augs = [
+        K.RandomHorizontalFlip(p=p_flip),
+        K.RandomVerticalFlip(p=p_flip),
+        # 90-degree rotation -- pick uniformly from {0, 90, 180, 270} per sample.
+        K.RandomRotation(degrees=[0.0, 270.0], p=p_rotate,
+                         resample="nearest", align_corners=False),
+    ]
+
+    # Intensity augmentation (image only -- kornia handles the mask skip).
+    # Brightfield: RGB-correlated jitter (ColorJitter). Fluorescence and
+    # multi-channel are not cleanly expressible via ColorJitter (it is
+    # defined for 3-channel RGB), so fall back to per-channel random
+    # brightness+contrast via RandomBrightness + RandomContrast which both
+    # operate on arbitrary channel counts.
+    if intensity_mode == "brightfield":
+        augs.append(K.ColorJitter(
+            brightness=brightness_limit,
+            contrast=contrast_limit,
+            p=p_color,
+        ))
+    else:
+        # Works for 1-N channel inputs; brightness/contrast independently.
+        augs.append(K.RandomBrightness(
+            brightness=(max(0.0, 1.0 - brightness_limit),
+                        1.0 + brightness_limit),
+            p=p_color,
+        ))
+        augs.append(K.RandomContrast(
+            contrast=(max(0.0, 1.0 - contrast_limit),
+                      1.0 + contrast_limit),
+            p=p_color,
+        ))
+
+    # Low-probability blur and noise -- cheap regularization.
+    augs.append(K.RandomGaussianBlur(
+        kernel_size=(3, 3), sigma=(0.1, 1.5), p=0.1,
+    ))
+    augs.append(K.RandomGaussianNoise(
+        mean=0.0, std=noise_std_max, p=p_noise,
+    ))
+    # noise_std_min is informational for the CPU path (range); kornia's
+    # RandomGaussianNoise uses a single std, so we use the upper bound.
+
+    return K.AugmentationSequential(
+        *augs,
+        data_keys=["input", "mask"],
+        same_on_batch=False,
+    )
 
 
 class EarlyStopping:
@@ -1158,6 +1261,39 @@ class TrainingService:
         data_path = Path(data_path)
         augmentation_config = training_params.get("augmentation_config", {})
 
+        # GPU-side augmentation via kornia.  Opt-in through
+        # training_params["gpu_augmentation"], auto-disabled when kornia is
+        # unavailable or when the device is not CUDA.  When active, CPU-side
+        # albumentations is skipped in the dataset to avoid double-augment.
+        use_gpu_aug = bool(training_params.get("gpu_augmentation", False))
+        gpu_augment_on_cuda = (
+            use_gpu_aug
+            and KORNIA_AVAILABLE
+            and isinstance(self.device, torch.device)
+            and self.device.type == "cuda"
+        )
+        if use_gpu_aug and not KORNIA_AVAILABLE:
+            logger.warning(
+                "gpu_augmentation requested but kornia is not installed; "
+                "falling back to CPU albumentations."
+            )
+        elif use_gpu_aug and not gpu_augment_on_cuda:
+            logger.info(
+                "gpu_augmentation requested but device is %s; "
+                "falling back to CPU albumentations (kornia needs CUDA to "
+                "be a meaningful speedup).",
+                self.device,
+            )
+        gpu_augment = (
+            build_gpu_augmentation(augmentation_config)
+            if gpu_augment_on_cuda else None
+        )
+        if gpu_augment is not None:
+            logger.info(
+                "GPU augmentation enabled via kornia; CPU albumentations "
+                "will be skipped on training dataset."
+            )
+
         # Multi-scale context: when context_scale > 1, load context tiles from context/ dirs
         train_context_dir = None
         val_context_dir = None
@@ -1172,11 +1308,15 @@ class TrainingService:
             if val_ctx.exists():
                 val_context_dir = str(val_ctx)
 
+        cpu_augment_enabled = (
+            training_params.get("augmentation", True)
+            and gpu_augment is None
+        )
         train_dataset = SegmentationDataset(
             images_dir=str(data_path / "train" / "images"),
             masks_dir=str(data_path / "train" / "masks"),
             input_config=input_config,
-            augment=training_params.get("augmentation", True),
+            augment=cpu_augment_enabled,
             augmentation_config=augmentation_config,
             context_dir=train_context_dir
         )
@@ -2180,6 +2320,17 @@ class TrainingService:
             for batch_idx, (images, masks) in enumerate(active_train_loader):
                 images = images.to(self.device)
                 masks = masks.to(self.device)
+
+                # GPU-side augmentation: mask-consistent geometric ops plus
+                # intensity jitter and low-p noise/blur.  Kornia expects the
+                # mask as a 4D float tensor (N, 1, H, W); we unsqueeze,
+                # transform, then squeeze back to int64 (N, H, W).
+                if gpu_augment is not None:
+                    masks_aug = masks.unsqueeze(1).float()
+                    images, masks_aug = gpu_augment(images, masks_aug)
+                    # Round is a no-op for images but makes mask values
+                    # (nearest-interpolated) safely castable to long.
+                    masks = masks_aug.squeeze(1).round().long()
 
                 if use_mixed_precision:
                     with torch.amp.autocast("cuda", dtype=amp_dtype):

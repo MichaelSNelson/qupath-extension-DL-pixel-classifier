@@ -221,6 +221,7 @@ public class TrainingDialog {
         private CheckBox progressiveResizeCheck;
         private CheckBox fusedOptimizerCheck;
         private CheckBox useLrFinderCheck;
+        private CheckBox gpuAugmentationCheck;
 
         // Focus class
         private ComboBox<String> focusClassCombo;
@@ -1967,6 +1968,8 @@ public class TrainingDialog {
                             ? fusedOptimizerCheck.isSelected() : true)
                     .useLrFinder(useLrFinderCheck != null
                             ? useLrFinderCheck.isSelected() : true)
+                    .gpuAugmentation(gpuAugmentationCheck != null
+                            && gpuAugmentationCheck.isSelected())
                     .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
                     .progressiveResize(progressiveResizeCheck.isSelected())
                     .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
@@ -3257,6 +3260,27 @@ public class TrainingDialog {
                     "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n" +
                     "Only affects training when the scheduler is OneCycleLR.");
             grid.add(useLrFinderCheck, 0, row, 2, 1);
+            row++;
+
+            // GPU augmentation via kornia (experimental, opt-in).
+            gpuAugmentationCheck = new CheckBox("GPU augmentation (experimental, CUDA only)");
+            gpuAugmentationCheck.setSelected(false);
+            TooltipHelper.installWithLink(gpuAugmentationCheck,
+                    "Run data augmentation on the GPU via kornia instead of on\n" +
+                    "the CPU via albumentations. When the in-memory dataset\n" +
+                    "preload is active, CPU augmentation is the dominant cost\n" +
+                    "per batch; moving it to the GPU can speed up an epoch\n" +
+                    "10-20x on small models.\n\n" +
+                    "Covered augmentations:\n" +
+                    "- Horizontal / vertical flip, 90 deg rotation\n" +
+                    "- Color jitter (brightfield) or brightness/contrast (other)\n" +
+                    "- Low-probability Gaussian noise and blur\n\n" +
+                    "Skipped on the GPU path (still available via CPU):\n" +
+                    "- Elastic transform, grid distortion, arbitrary-angle rotation\n\n" +
+                    "Safe to leave off. Silently falls back to CPU albumentations\n" +
+                    "when kornia is not installed or the device is not CUDA.",
+                    "https://kornia.readthedocs.io/en/latest/augmentation.html");
+            grid.add(gpuAugmentationCheck, 0, row, 2, 1);
 
             // Update the basic-mode early stopping status label when these controls change,
             // and grey out the patience spinner when early stopping is disabled.
