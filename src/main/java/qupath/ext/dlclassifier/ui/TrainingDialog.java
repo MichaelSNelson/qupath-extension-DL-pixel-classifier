@@ -117,15 +117,35 @@ public class TrainingDialog {
     }
 
     /**
+     * Singleton guard: at most one training dialog may be open at a time.
+     * Prevents confusion from a second configuration window being opened
+     * mid-training or while another is being configured. Access on FX thread.
+     */
+    private static Stage activeDialog;
+
+    /**
      * Shows the training configuration dialog.
+     * <p>
+     * If a training dialog is already open, it is brought to the front and
+     * the returned future is cancelled (no new dialog is created).
      *
      * @return CompletableFuture with the result, or cancelled if user cancels
+     *         or a dialog is already open
      */
     public static CompletableFuture<TrainingDialogResult> showDialog() {
         CompletableFuture<TrainingDialogResult> future = new CompletableFuture<>();
 
         Platform.runLater(() -> {
             try {
+                if (activeDialog != null && activeDialog.isShowing()) {
+                    logger.info("Training dialog already open -- focusing existing window");
+                    activeDialog.toFront();
+                    activeDialog.requestFocus();
+                    Dialogs.showInfoNotification("Training Dialog",
+                            "A training configuration window is already open.");
+                    future.cancel(true);
+                    return;
+                }
                 TrainingDialogBuilder builder = new TrainingDialogBuilder();
                 builder.buildAndShow(result -> {
                     if (result != null) {
@@ -363,6 +383,9 @@ public class TrainingDialog {
                     contextPreviewManager = null;
                     contextPreviewStage = null;
                 }
+                if (activeDialog == dialog) {
+                    activeDialog = null;
+                }
             });
 
             Region spacer = new Region();
@@ -484,6 +507,7 @@ public class TrainingDialog {
             // one-click recovery for any interrupted training.
             refreshCheckpointRecoveryBanner();
 
+            activeDialog = dialog;
             dialog.show();
         }
 
@@ -869,8 +893,8 @@ public class TrainingDialog {
                     "Finalizes the checkpoint into a usable model, then loads its\n" +
                     "settings so you can continue training from where it left off.\n\n" +
                     "Look for checkpoint files in:\n" +
-                    "  - Your project's classifiers/dl/ directory\n" +
-                    "  - ~/.dlclassifier/checkpoints/\n" +
+                    "  - Your project's classifiers/dl/ directory (opened by default)\n" +
+                    "  - ~/.dlclassifier/checkpoints/ (pause/resume + best_in_progress files)\n" +
                     "  - Files named checkpoint_*.pt or best_in_progress_*.pt");
 
             loadedModelLabel = new Label();
@@ -1160,11 +1184,30 @@ public class TrainingDialog {
                     new FileChooser.ExtensionFilter("PyTorch Checkpoint", "*.pt"),
                     new FileChooser.ExtensionFilter("All Files", "*.*"));
 
-            // Default to checkpoints directory if it exists
-            java.nio.file.Path defaultDir = java.nio.file.Path.of(
-                    System.getProperty("user.home"), ".dlclassifier", "checkpoints");
-            if (java.nio.file.Files.isDirectory(defaultDir)) {
-                fileChooser.setInitialDirectory(defaultDir.toFile());
+            // Default to the project's classifiers/dl directory when available
+            // (where completed models live, plus where in-progress .pt files land
+            // when modelOutputDir is set). Fall back to the per-user checkpoints
+            // dir where the Python backend writes best_in_progress_*.pt files.
+            java.nio.file.Path initialDir = null;
+            QuPathGUI qupathForInitDir = QuPathGUI.getInstance();
+            if (qupathForInitDir != null && qupathForInitDir.getProject() != null
+                    && qupathForInitDir.getProject().getPath() != null) {
+                java.nio.file.Path projectClassifiersDl = qupathForInitDir.getProject()
+                        .getPath().getParent()
+                        .resolve("classifiers").resolve("dl");
+                if (java.nio.file.Files.isDirectory(projectClassifiersDl)) {
+                    initialDir = projectClassifiersDl;
+                }
+            }
+            if (initialDir == null) {
+                java.nio.file.Path userCheckpointDir = java.nio.file.Path.of(
+                        System.getProperty("user.home"), ".dlclassifier", "checkpoints");
+                if (java.nio.file.Files.isDirectory(userCheckpointDir)) {
+                    initialDir = userCheckpointDir;
+                }
+            }
+            if (initialDir != null) {
+                fileChooser.setInitialDirectory(initialDir.toFile());
             }
 
             java.io.File selected = fileChooser.showOpenDialog(dialog.getOwner());
