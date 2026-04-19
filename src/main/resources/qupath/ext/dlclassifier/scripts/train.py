@@ -312,6 +312,21 @@ if _in_memory_mode in ("auto", "on") and not getattr(
 # regardless of the installed server version. Bootstraps cleanly off once
 # dlclassifier-server >= 0.5.5-dev honors training_params natively.
 _dl_workers_pref = int(training_params.get("data_loader_workers", 0))
+# Suppress the monkey-patch whenever the in-memory cache is active.
+# The cache is attached to the dataset instance before any DataLoader
+# is built, so on Windows/Appose spawn each worker pickles a copy of
+# the cache (RAM usage scales linearly with worker count). The
+# training_service now also forces num_workers=0 in that case; we
+# must not re-upgrade here. Matches the D.1 fix.
+_cache_mode_for_workers = str(
+    training_params.get("in_memory_dataset", "auto")).lower()
+if _cache_mode_for_workers in ("auto", "on") and _dl_workers_pref > 0:
+    logger.info(
+        "DataLoader bootstrap: monkey-patch suppressed because "
+        "in-memory cache is active (would duplicate cache per "
+        "worker on Windows/Appose spawn).")
+    _dl_workers_pref = 0
+
 if _dl_workers_pref > 0:
     from torch.utils.data import DataLoader as _DataLoader
     if not getattr(_DataLoader, "_patched_num_workers", False):

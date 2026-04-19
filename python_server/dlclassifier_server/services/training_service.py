@@ -1933,6 +1933,26 @@ class TrainingService:
         # via the "Training: DataLoader Workers" preference; older Appose
         # releases hang when >0, which is why the default is 0.
         dl_workers = int(training_params.get("data_loader_workers", 0))
+
+        # Force num_workers=0 when the in-memory cache is active.
+        # The cache is attached to the dataset instance before the
+        # DataLoader is constructed, so on Windows/Appose spawn each
+        # worker pickles and copies the whole cache -- RAM usage
+        # scales linearly with worker count. The D.1 audit row
+        # (section 6 of the 2026-04-19 interaction table) documents
+        # this; InMemoryCacheWorkersWatcher reports the downgrade to
+        # users via the GUI.
+        _cache_mode = str(training_params.get(
+            "in_memory_dataset", "auto")).lower()
+        if _cache_mode in ("auto", "on") and dl_workers > 0:
+            logger.info(
+                "Forcing data_loader_workers=0 because in-memory "
+                "dataset cache is active (requested %d workers). On "
+                "Windows/Appose each worker would pickle a copy of "
+                "the cache, multiplying RAM usage. Disable the cache "
+                "if you need multiple workers.", dl_workers,
+            )
+            dl_workers = 0
         train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
