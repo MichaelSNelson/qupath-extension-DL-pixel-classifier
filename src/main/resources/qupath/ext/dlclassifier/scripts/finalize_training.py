@@ -67,6 +67,18 @@ if torch.cuda.is_available():
 logger.info("Loading checkpoint: %s", checkpoint_path)
 checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
+# Distinguish a training checkpoint (dict with training_config) from a
+# finalized model.pt (bare state_dict). The latter has no metadata to
+# rebuild the architecture from, so finalizing it again is impossible.
+if not isinstance(checkpoint, dict) or "training_config" not in checkpoint:
+    raise RuntimeError(
+        "File at %s is not a training checkpoint; it looks like a "
+        "finalized model.pt (no 'training_config' key). Finalize accepts "
+        "only the *checkpoint* files written to ~/.dlclassifier/checkpoints "
+        "during training. Re-finalizing an already-finalized model is not "
+        "supported -- load the existing model directly instead."
+        % checkpoint_path)
+
 # Extract config from checkpoint
 config = checkpoint["training_config"]
 model_type = config["model_type"]

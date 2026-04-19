@@ -3732,6 +3732,20 @@ class TrainingService:
                 dummy_input = torch.randn(1, actual_channels, input_size[0], input_size[1])
                 dummy_input = dummy_input.to(self.device)
 
+                # PyTorch 2.10 changed torch.onnx.export to use the dynamo
+                # exporter by default, which requires onnxscript. We keep
+                # using the legacy TorchScript tracer (dynamo=False) so the
+                # export works on stock installs without onnxscript as a
+                # hard dependency. Older PyTorch versions ignore the kwarg.
+                _onnx_export_kwargs = {"dynamo": False}
+                try:
+                    import inspect as _inspect
+                    if "dynamo" not in _inspect.signature(
+                            torch.onnx.export).parameters:
+                        _onnx_export_kwargs = {}
+                except Exception:
+                    _onnx_export_kwargs = {}
+
                 onnx_path = output_dir / "model.onnx"
                 torch.onnx.export(
                     model,
@@ -3743,12 +3757,14 @@ class TrainingService:
                     dynamic_axes={
                         "input": {0: "batch", 2: "height", 3: "width"},
                         "output": {0: "batch", 2: "height", 3: "width"}
-                    }
+                    },
+                    **_onnx_export_kwargs,
                 )
                 logger.info(f"Exported ONNX model to {onnx_path}")
                 onnx_variants["dynamic"] = {"path": "model.onnx"}
             except Exception as e:
                 logger.warning(f"ONNX export (dynamic) failed: {e}")
+                _onnx_export_kwargs = {}
 
             # Static-shape variant. Phase 3b / Phase 4 prerequisite.
             try:
@@ -3761,6 +3777,7 @@ class TrainingService:
                     input_names=["input"],
                     output_names=["output"],
                     # no dynamic_axes -> fully static shape baked into the graph
+                    **_onnx_export_kwargs,
                 )
                 logger.info(
                     "Exported static-shape ONNX model to %s (shape=%s)",
@@ -3797,6 +3814,7 @@ class TrainingService:
                         opset_version=14,
                         input_names=["input"],
                         output_names=["output"],
+                        **_onnx_export_kwargs,
                     )
                     logger.info(
                         "Exported BN-folded static ONNX to %s for INT8 TRT",
