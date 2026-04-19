@@ -233,6 +233,20 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty useCompactArgmaxOutput = PathPrefs.createPersistentPreference(
             "dlclassifier.useCompactArgmaxOutput", false);
 
+    // Phase 4: experimental TensorRT inference path. Requires
+    // onnxruntime-gpu built with TensorrtExecutionProvider. Builds a TRT
+    // engine from model_static.onnx on first inference and caches it on
+    // disk; silently falls back to CUDAExecutionProvider when TRT is
+    // unavailable. Windows wheels are hit-or-miss, so default is off.
+    private static final BooleanProperty experimentalTensorRT = PathPrefs.createPersistentPreference(
+            "dlclassifier.experimentalTensorRT", false);
+
+    // Phase 4: experimental INT8 PTQ. Requires experimentalTensorRT on.
+    // Calibration uses a sample of training tiles; BatchRenorm is folded
+    // to BatchNorm at export time (safe at eval() with rmax=dmax=inf).
+    private static final BooleanProperty experimentalInt8 = PathPrefs.createPersistentPreference(
+            "dlclassifier.experimentalInt8", false);
+
     // Preload training patches into RAM to skip per-batch disk I/O and
     // TIFF decode. "auto" = enable when the dataset fits in ~25% of free
     // RAM; "on" = always enable (may exhaust memory on huge datasets);
@@ -344,6 +358,32 @@ public final class DLClassifierPreferences {
                         "and tile boundary blending (these all require float " +
                         "probabilities). Leave off for highest-quality overlays; " +
                         "turn on for quick previews or lower memory use.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(experimentalTensorRT, Boolean.class)
+                .name("Experimental: TensorRT Inference")
+                .category(CATEGORY)
+                .description("Use TensorRT for ONNX inference on CUDA. " +
+                        "Builds a TRT engine from the static-shape ONNX on first " +
+                        "inference and caches it next to the model. " +
+                        "Typical speedup: 2-4x over plain CUDAExecutionProvider. " +
+                        "Requires onnxruntime-gpu built with the " +
+                        "TensorrtExecutionProvider. Silently falls back to " +
+                        "CUDAExecutionProvider when unavailable. " +
+                        "EXPERIMENTAL -- may not work on all Windows setups; " +
+                        "report issues if encountered.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(experimentalInt8, Boolean.class)
+                .name("Experimental: INT8 Quantization")
+                .category(CATEGORY)
+                .description("Quantize weights and activations to INT8 when " +
+                        "TensorRT is enabled. Typical additional speedup: ~2x " +
+                        "over FP16 TRT with ~1-2 point IoU drop on simple tasks. " +
+                        "Requires a calibration pass (done once at engine " +
+                        "build time). Only effective when " +
+                        "'Experimental: TensorRT Inference' is also on. " +
+                        "EXPERIMENTAL.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(defaultInMemoryDataset, String.class)
@@ -1076,6 +1116,32 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty useCompactArgmaxOutputProperty() {
         return useCompactArgmaxOutput;
+    }
+
+    // ==================== Phase 4 experimental inference ====================
+
+    public static boolean isExperimentalTensorRT() {
+        return experimentalTensorRT.get();
+    }
+
+    public static void setExperimentalTensorRT(boolean enabled) {
+        experimentalTensorRT.set(enabled);
+    }
+
+    public static BooleanProperty experimentalTensorRTProperty() {
+        return experimentalTensorRT;
+    }
+
+    public static boolean isExperimentalInt8() {
+        return experimentalInt8.get();
+    }
+
+    public static void setExperimentalInt8(boolean enabled) {
+        experimentalInt8.set(enabled);
+    }
+
+    public static BooleanProperty experimentalInt8Property() {
+        return experimentalInt8;
     }
 
     /**

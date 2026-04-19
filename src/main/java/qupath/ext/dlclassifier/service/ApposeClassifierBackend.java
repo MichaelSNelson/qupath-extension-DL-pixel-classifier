@@ -13,6 +13,7 @@ import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
+import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -1064,6 +1065,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         if (inferenceConfig.isUseCompactArgmaxOutput()) {
                             inputs.put("output_format", "argmax_uint8");
                         }
+                        if (DLClassifierPreferences.isExperimentalTensorRT()) {
+                            inputs.put("use_tensorrt", true);
+                        }
+                        if (DLClassifierPreferences.isExperimentalInt8()) {
+                            inputs.put("use_int8", true);
+                        }
 
                         Task task = appose.runTask("inference_pixel", inputs);
 
@@ -1187,6 +1194,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     }
                     if (inferenceConfig.isUseCompactArgmaxOutput()) {
                         inputs.put("output_format", "argmax_uint8");
+                    }
+                    if (DLClassifierPreferences.isExperimentalTensorRT()) {
+                        inputs.put("use_tensorrt", true);
+                    }
+                    if (DLClassifierPreferences.isExperimentalInt8()) {
+                        inputs.put("use_int8", true);
                     }
 
                     Task task = appose.runTask("inference_pixel_batch", inputs);

@@ -99,6 +99,19 @@ try:
     output_format
 except NameError:
     output_format = "prob_fp32"
+try:
+    use_tensorrt
+except NameError:
+    use_tensorrt = False
+try:
+    use_int8
+except NameError:
+    use_int8 = False
+
+# Phase 4: experimental TensorRT / INT8 provider selection for ORT.
+if hasattr(inference_service, "set_experimental_providers"):
+    inference_service.set_experimental_providers(
+        use_tensorrt=use_tensorrt, use_int8=use_int8)
 
 num_tiles = len(tile_ids)
 os.makedirs(output_dir, exist_ok=True)

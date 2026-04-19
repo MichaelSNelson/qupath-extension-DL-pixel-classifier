@@ -116,15 +116,49 @@ class InferenceService:
         # Model paths where the static-shape ONNX variant does not match
         # runtime tile geometry; _load_model skips it and uses model.onnx.
         self._onnx_skip_static: set = set()
+        # Phase 4: experimental provider flags. When flipped on mid-session,
+        # already-cached sessions are unaffected (they stay on their prior
+        # provider); newly-loaded models pick up the new provider list.
+        self._use_tensorrt: bool = False
+        self._use_int8: bool = False
         self._onnx_providers = self._get_onnx_providers()
 
         logger.info("InferenceService initialized on device: %s", self._device_str)
 
-    def _get_onnx_providers(self) -> List[str]:
-        """Get available ONNX execution providers based on device.
+    def set_experimental_providers(
+        self, use_tensorrt: bool = False, use_int8: bool = False
+    ) -> None:
+        """Toggle experimental ORT execution providers for subsequent loads.
+
+        Called from the Appose task wrappers with values sourced from the
+        Java preference pane. Takes effect on the next ``_load_model``
+        call; already-cached sessions stay on their prior provider to
+        avoid mid-session reloads.
+        """
+        changed = (use_tensorrt != self._use_tensorrt
+                   or use_int8 != self._use_int8)
+        self._use_tensorrt = bool(use_tensorrt)
+        self._use_int8 = bool(use_int8)
+        if changed:
+            self._onnx_providers = self._get_onnx_providers()
+            logger.info(
+                "Experimental ORT providers updated: trt=%s int8=%s -> %s",
+                self._use_tensorrt, self._use_int8, self._onnx_providers)
+
+    def _get_onnx_providers(self) -> List[Any]:
+        """Get available ONNX execution providers based on device and flags.
+
+        Phase 4: when ``self._use_tensorrt`` is on and
+        ``TensorrtExecutionProvider`` is available, prepend it with a
+        configured options dict (engine cache + optional INT8). Silent
+        fallback to CUDAExecutionProvider when TRT is not installed.
+        Users enable this via the "Experimental: TensorRT Inference"
+        preference.
 
         Returns:
-            List of ONNX execution provider names
+            List of execution providers. Items may be strings or
+            ``(name, options_dict)`` tuples as accepted by ORT's
+            ``InferenceSession(providers=...)``.
         """
         try:
             import onnxruntime as ort
@@ -134,6 +168,31 @@ class InferenceService:
             return ["CPUExecutionProvider"]
 
         if self._device_str == "cuda" and "CUDAExecutionProvider" in available:
+            # Phase 4 experimental TRT EP. Engine build is slow (seconds
+            # to a minute); caching the engine next to the model avoids
+            # paying that cost on every session start.
+            if self._use_tensorrt and "TensorrtExecutionProvider" in available:
+                cache_dir = os.path.expanduser(
+                    "~/.dlclassifier/tensorrt_cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                trt_opts = {
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": cache_dir,
+                    "trt_fp16_enable": True,
+                    "trt_max_workspace_size": 2 * 1024 * 1024 * 1024,
+                }
+                if self._use_int8:
+                    trt_opts["trt_int8_enable"] = True
+                return [
+                    ("TensorrtExecutionProvider", trt_opts),
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
+            if self._use_tensorrt:
+                logger.warning(
+                    "Experimental TensorRT requested but "
+                    "TensorrtExecutionProvider not in %s -- using "
+                    "CUDAExecutionProvider instead.", available)
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
         elif self._device_str == "mps" and "CoreMLExecutionProvider" in available:
             # MPS devices can use CoreML for ONNX
@@ -746,9 +805,13 @@ class InferenceService:
         # back to the dynamic model on a re-load. See
         # claude-reports/2026-04-17_input-size-divisibility.md for shape
         # coordination notes.
+        # Phase 4: when INT8 TRT is enabled, prefer the BN-folded static
+        # ONNX so TRT's calibrator can fuse conv+BN cleanly. Falls through
+        # to the ordinary static variant if the BN-folded file is absent
+        # (older models exported before the Phase 4 upgrade).
+        onnx_static_bn_path = model_dir / "model_static_bn.onnx"
         onnx_static_path = model_dir / "model_static.onnx"
         onnx_path = model_dir / "model.onnx"
-
         def _try_load_onnx(path: Path, label: str, static_shape=None):
             try:
                 logger.info("Loading %s ONNX model from %s", label, path)
@@ -768,6 +831,23 @@ class InferenceService:
                 logger.warning(
                     "%s ONNX loading failed (%s): %s", label, path, e)
                 return None
+
+        if (self._use_tensorrt and self._use_int8
+                and onnx_static_bn_path.exists()
+                and model_path not in self._onnx_skip_static):
+            try:
+                with open(model_dir / "metadata.json") as f:
+                    meta = json.load(f)
+                bn_shape = meta.get(
+                    "onnx_variants", {}).get(
+                    "static_bn", {}).get("shape")
+            except Exception:
+                bn_shape = None
+            loaded = _try_load_onnx(
+                onnx_static_bn_path, "static-BN INT8",
+                static_shape=bn_shape)
+            if loaded is not None:
+                return loaded
 
         if onnx_static_path.exists() and model_path not in self._onnx_skip_static:
             # Read baked-in shape from metadata so runtime can check matches.

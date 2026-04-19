@@ -197,6 +197,55 @@ def replace_bn_with_batchrenorm(model: nn.Module) -> nn.Module:
     return model
 
 
+def fold_brn_to_bn(model: nn.Module) -> nn.Module:
+    """Replace every ``BatchRenorm2d`` with an equivalent ``BatchNorm2d``.
+
+    INT8 post-training quantization (Phase 4) only recognizes the
+    standard BatchNorm pattern; TensorRT's INT8 calibrator cannot fuse
+    BRN's r/d correction buffers. The fold is safe at eval time with
+    ``rmax=dmax=inf`` (or with the default converged statistics), where
+    BRN collapses to a plain BN that uses only ``running_mean``,
+    ``running_var``, ``weight``, ``bias``.
+
+    Args:
+        model: Model with BatchRenorm2d layers. Modified in-place.
+
+    Returns:
+        The same model with BRN replaced by BN. Callers should set the
+        model to ``eval()`` before this and use the result for ONNX
+        export or TRT engine build.
+    """
+    count = 0
+    for name, module in list(model.named_modules()):
+        if isinstance(module, BatchRenorm2d):
+            bn = nn.BatchNorm2d(
+                num_features=module.num_features,
+                eps=module.eps,
+                momentum=module.momentum if module.momentum is not None else 0.01,
+                affine=module.affine,
+            )
+            # Copy running stats and affine params. r/d correction is
+            # discarded -- this is the whole point of the fold.
+            if module.running_mean is not None:
+                bn.running_mean.copy_(module.running_mean)
+            if module.running_var is not None:
+                bn.running_var.copy_(module.running_var)
+            if module.num_batches_tracked is not None:
+                bn.num_batches_tracked.copy_(module.num_batches_tracked)
+            if module.affine:
+                bn.weight.data.copy_(module.weight.data)
+                bn.bias.data.copy_(module.bias.data)
+            _set_module(model, name, bn)
+            count += 1
+
+    if count > 0:
+        logger.info("Folded %d BatchRenorm2d layers to BatchNorm2d for export",
+                    count)
+    else:
+        logger.debug("No BatchRenorm2d layers to fold")
+    return model
+
+
 def set_batchrenorm_limits(model: nn.Module, rmax: float, dmax: float):
     """Update rmax/dmax clipping bounds on all BatchRenorm2d layers.
 

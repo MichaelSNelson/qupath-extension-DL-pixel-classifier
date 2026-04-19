@@ -98,6 +98,22 @@ try:
     output_format
 except NameError:
     output_format = "prob_fp32"
+try:
+    use_tensorrt
+except NameError:
+    use_tensorrt = False
+try:
+    use_int8
+except NameError:
+    use_int8 = False
+
+# Phase 4: apply experimental ORT provider flags before _load_model caches
+# an InferenceSession. set_experimental_providers is a best-effort helper
+# that only takes effect for models not yet loaded this session; existing
+# cached sessions are unaffected.
+if hasattr(inference_service, "set_experimental_providers"):
+    inference_service.set_experimental_providers(
+        use_tensorrt=use_tensorrt, use_int8=use_int8)
 
 # Zero-copy read from shared memory NDArray.
 # Copy immediately so the shared memory segment can be reused by Java.

@@ -134,6 +134,36 @@ At inference time the extension also enables `channels_last` memory
 format on CUDA when the architecture benefits (typical 1.1-1.3x on
 conv-heavy models). This is automatic; no UI toggle.
 
+## Experimental inference acceleration (Phase 4)
+
+Two opt-in preferences under **Edit > Preferences > DL Pixel Classifier**
+sit behind the label "Experimental" because they depend on GPU driver
+stack quirks and can fail silently on atypical setups.
+
+- **TensorRT Inference**: routes ONNX inference through ORT's
+  `TensorrtExecutionProvider` on CUDA. Requires `onnxruntime-gpu`
+  built with TRT support and a compatible CUDA toolkit. On first
+  inference TRT builds an engine from `model_static.onnx` (the static
+  variant exported in Phase 3b) and caches it under
+  `~/.dlclassifier/tensorrt_cache`. Typical speedup: 2-4x over plain
+  `CUDAExecutionProvider`. If TRT is not available, the extension
+  silently falls back to the standard provider and logs a warning.
+- **INT8 Quantization**: adds `trt_int8_enable=True` to the TRT
+  provider options. Only takes effect when "TensorRT Inference" is
+  also on. The training pipeline exports an extra ONNX variant
+  `model_static_bn.onnx` with BatchRenorm folded to BatchNorm
+  (safe at eval time when BRN has converged), because TRT's INT8
+  calibrator cannot fuse BRN's r/d correction ops. Expect roughly
+  another 2x over FP16 TRT with ~1-2 IoU point drop on simple tasks.
+
+Windows caveats: `onnxruntime-gpu` wheels with TRT support exist but
+lag upstream, and cuDNN/CUDA/TRT version combinations are fussy. If
+the TRT provider fails to load, check the server logs for the
+"TensorrtExecutionProvider not in [...] -- using
+CUDAExecutionProvider instead" line and verify
+`onnxruntime.get_available_providers()`. Report issues if you hit an
+incompatibility so we can add it to a known-bad list.
+
 ## References
 
 The design of Tiny UNet draws on:

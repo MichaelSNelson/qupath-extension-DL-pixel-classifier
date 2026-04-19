@@ -3775,6 +3775,41 @@ class TrainingService:
             except Exception as e:
                 logger.warning(f"ONNX export (static) failed: {e}")
 
+            # Phase 4: BN-folded static variant for TensorRT INT8 calibration.
+            # BRN's r/d correction ops confuse TRT's INT8 calibrator; folding
+            # them to plain BatchNorm at eval time is safe (BRN with
+            # rmax/dmax at their converged values collapses to BN) and lets
+            # TRT fuse conv+BN+activation into a single quantized op.
+            try:
+                import copy
+                from ..utils.batchrenorm import fold_brn_to_bn, BatchRenorm2d
+
+                has_brn = any(isinstance(m, BatchRenorm2d)
+                              for m in model.modules())
+                if has_brn:
+                    export_model = copy.deepcopy(model).eval()
+                    fold_brn_to_bn(export_model)
+                    onnx_bn_path = output_dir / "model_static_bn.onnx"
+                    torch.onnx.export(
+                        export_model,
+                        dummy_input,
+                        str(onnx_bn_path),
+                        opset_version=14,
+                        input_names=["input"],
+                        output_names=["output"],
+                    )
+                    logger.info(
+                        "Exported BN-folded static ONNX to %s for INT8 TRT",
+                        onnx_bn_path)
+                    onnx_variants["static_bn"] = {
+                        "path": "model_static_bn.onnx",
+                        "shape": [1, int(actual_channels),
+                                  int(input_size[0]), int(input_size[1])],
+                    }
+                    del export_model
+            except Exception as e:
+                logger.warning(f"ONNX export (BN-folded) failed: {e}")
+
         # Read class colors from training config.json if available
         class_colors = {}
         try:
