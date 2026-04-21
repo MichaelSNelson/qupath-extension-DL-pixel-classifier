@@ -197,6 +197,12 @@ public class TrainingDialog {
         private Spinner<Double> learningRateSpinner;
         private Label lrInfoLabel;
         private Spinner<Integer> validationSplitSpinner;
+        // Shows derived train/val counts when users have imposed per-image roles.
+        private Label validationSplitObservedLabel;
+        // Stashed user-entered spinner value, restored when we leave fully-manual mode.
+        private Integer lastUserValidationSplitPct;
+        // Guard so our own programmatic spinner updates don't overwrite lastUserValidationSplitPct.
+        private boolean updatingSpinnerProgrammatically;
 
         // Tiling parameters
         private Spinner<Integer> tileSizeSpinner;
@@ -1753,7 +1759,10 @@ public class TrainingDialog {
                                     markClassesStale();
                                 }
                                 updateWholeImageInfoLabel();
+                                updateValidationSplitSpinnerState();
                             });
+                            item.splitRole.addListener(
+                                    (obs, old, newVal) -> updateValidationSplitSpinnerState());
                             imageSelectionList.getItems().add(item);
                         }
                     } catch (Exception e) {
@@ -1774,6 +1783,18 @@ public class TrainingDialog {
             selectNoneImagesBtn.setOnAction(e ->
                     imageSelectionList.getItems().forEach(item -> item.selected.set(false)));
 
+            Button autoDistributeBtn = new Button("Auto-Distribute");
+            TooltipHelper.install(autoDistributeBtn,
+                    "Assign selected images to Training or Validation using the current\n" +
+                    "split percentage. Similar images -- same dimensions, channel count,\n" +
+                    "and filename prefix -- are bucketed together so related images\n" +
+                    "aren't clumped on one side of the split.");
+            autoDistributeBtn.setOnAction(e -> autoDistributeSelectedImages());
+            // Per-image Train/Val dropdowns are only rendered in advanced mode,
+            // so the button that manipulates them follows the same visibility.
+            autoDistributeBtn.visibleProperty().bind(advancedMode);
+            autoDistributeBtn.managedProperty().bind(advancedMode);
+
             // Load Classes button
             loadClassesButton = new Button("Load Classes from Selected Images");
             loadClassesButton.setStyle("-fx-font-weight: bold;");
@@ -1784,7 +1805,7 @@ public class TrainingDialog {
                     "Also initializes channel configuration from the first image.");
             loadClassesButton.setOnAction(e -> loadClassesFromSelectedImages());
 
-            HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn);
+            HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn, autoDistributeBtn);
 
             tileEstimateLabel = new Label();
             tileEstimateLabel.setWrapText(true);
@@ -1810,6 +1831,184 @@ public class TrainingDialog {
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Select project images and load classes for training"));
             return pane;
+        }
+
+        /**
+         * Returns a lowercased grouping key for image "similarity", used to
+         * avoid putting all related images on one side of the train/val split.
+         * Takes the filename stem up to the first '_', '-', or ' '.
+         */
+        private String filenamePrefix(String imageName) {
+            if (imageName == null || imageName.isEmpty()) return "";
+            int dot = imageName.lastIndexOf('.');
+            String stem = (dot > 0) ? imageName.substring(0, dot) : imageName;
+            int cut = stem.length();
+            for (char sep : new char[]{'_', '-', ' '}) {
+                int idx = stem.indexOf(sep);
+                if (idx > 0 && idx < cut) cut = idx;
+            }
+            return stem.substring(0, cut).toLowerCase(Locale.ROOT);
+        }
+
+        /**
+         * Auto-Distribute button handler. Bucket selected images by
+         * (dimensions, channel count, filename prefix), shuffle each bucket,
+         * and assign the first {@code ceil(bucket.size * valPct)} items to
+         * VAL_ONLY and the rest to TRAIN_ONLY. Unselected items are never
+         * touched. If any selected item already has a non-BOTH role, a
+         * confirmation dialog is shown before anything is overwritten.
+         */
+        private void autoDistributeSelectedImages() {
+            List<ImageSelectionItem> selected = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get())
+                    .collect(Collectors.toList());
+            if (selected.size() < 2) {
+                Dialogs.showInfoNotification("Auto-Distribute",
+                        "Select at least two images before auto-distributing.");
+                return;
+            }
+
+            long fixedCount = selected.stream()
+                    .filter(item -> item.splitRole.get() != SplitRole.BOTH)
+                    .count();
+            if (fixedCount > 0) {
+                boolean proceed = Dialogs.showConfirmDialog("Auto-Distribute",
+                        fixedCount + " of " + selected.size() + " selected images "
+                                + "already have a fixed Train/Val role. "
+                                + "Auto-Distribute will overwrite them. Continue?");
+                if (!proceed) return;
+            }
+
+            int numChannels = -1;
+            try {
+                if (channelPanel != null && channelPanel.isValid()) {
+                    numChannels = channelPanel.getChannelConfiguration().getNumChannels();
+                }
+            } catch (Exception ignored) {
+                // channel config not loaded yet -- grouping key just won't include channel count
+            }
+
+            int splitPct = (validationSplitSpinner != null)
+                    ? validationSplitSpinner.getValue()
+                    : DLClassifierPreferences.getValidationSplit();
+            double valFraction = splitPct / 100.0;
+
+            Map<String, List<ImageSelectionItem>> buckets = new LinkedHashMap<>();
+            for (ImageSelectionItem item : selected) {
+                String key = item.imageWidth + "x" + item.imageHeight
+                        + "|" + (numChannels > 0 ? String.valueOf(numChannels) : "?")
+                        + "|" + filenamePrefix(item.entry.getImageName());
+                buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+            }
+
+            long seed = System.currentTimeMillis();
+            Random rng = new Random(seed);
+            int nTrain = 0;
+            int nVal = 0;
+            StringBuilder summary = new StringBuilder();
+            for (Map.Entry<String, List<ImageSelectionItem>> e : buckets.entrySet()) {
+                List<ImageSelectionItem> bucket = e.getValue();
+                Collections.shuffle(bucket, rng);
+                // Buckets of size 1 always go to training so every bucket
+                // contributes at least one training image; validation gets
+                // items only when the bucket has at least 2 images.
+                int bucketVal = (bucket.size() == 1)
+                        ? 0
+                        : Math.max(1, Math.min(bucket.size() - 1,
+                                (int) Math.round(bucket.size() * valFraction)));
+                for (int i = 0; i < bucket.size(); i++) {
+                    ImageSelectionItem item = bucket.get(i);
+                    if (i < bucketVal) {
+                        item.splitRole.set(SplitRole.VAL_ONLY);
+                        nVal++;
+                    } else {
+                        item.splitRole.set(SplitRole.TRAIN_ONLY);
+                        nTrain++;
+                    }
+                }
+                if (summary.length() > 0) summary.append(", ");
+                summary.append(e.getKey()).append(": ")
+                        .append(bucket.size() - bucketVal).append("t/")
+                        .append(bucketVal).append("v");
+            }
+
+            logger.info("Auto-distribute (seed={}): {} train / {} val across {} bucket(s); {}",
+                    seed, nTrain, nVal, buckets.size(), summary);
+            // The splitRole listeners installed when items were added will
+            // fire updateValidationSplitSpinnerState() for us.
+        }
+
+        /**
+         * Sync the Validation Split (%) spinner with the current per-image
+         * role assignments. Three states:
+         * <ul>
+         *   <li>No fixed roles (all BOTH): spinner editable, observed label hidden.</li>
+         *   <li>Some fixed roles, some BOTH: spinner editable, observed label shows
+         *       how many images are fixed train/val.</li>
+         *   <li>All selected images have fixed roles (no BOTH): spinner is disabled,
+         *       shows the observed percentage, and the user's last manually-typed
+         *       value is stashed so it can be restored when a BOTH image reappears.</li>
+         * </ul>
+         */
+        private void updateValidationSplitSpinnerState() {
+            if (validationSplitSpinner == null || imageSelectionList == null) return;
+
+            int nTrain = 0;
+            int nVal = 0;
+            int nBoth = 0;
+            for (ImageSelectionItem item : imageSelectionList.getItems()) {
+                if (!item.selected.get()) continue;
+                SplitRole r = item.splitRole.get();
+                if (r == SplitRole.TRAIN_ONLY) nTrain++;
+                else if (r == SplitRole.VAL_ONLY) nVal++;
+                else nBoth++;
+            }
+            int fixedTotal = nTrain + nVal;
+
+            if (nBoth == 0 && fixedTotal >= 2) {
+                // Fully-manual mode: disable spinner, show observed.
+                if (lastUserValidationSplitPct == null) {
+                    lastUserValidationSplitPct = validationSplitSpinner.getValue();
+                }
+                int observedPct = (int) Math.round(100.0 * nVal / fixedTotal);
+                updatingSpinnerProgrammatically = true;
+                try {
+                    validationSplitSpinner.getValueFactory().setValue(observedPct);
+                } finally {
+                    updatingSpinnerProgrammatically = false;
+                }
+                validationSplitSpinner.setDisable(true);
+                if (validationSplitObservedLabel != null) {
+                    validationSplitObservedLabel.setText(String.format(
+                            "Disabled: all selected images have fixed roles "
+                                    + "(%d train / %d val = %d%%). Change a "
+                                    + "dropdown to 'Both' to re-enable.",
+                            nTrain, nVal, observedPct));
+                }
+            } else {
+                // Mixed or no fixed roles: spinner editable.
+                if (validationSplitSpinner.isDisable() && lastUserValidationSplitPct != null) {
+                    updatingSpinnerProgrammatically = true;
+                    try {
+                        validationSplitSpinner.getValueFactory()
+                                .setValue(lastUserValidationSplitPct);
+                    } finally {
+                        updatingSpinnerProgrammatically = false;
+                    }
+                    lastUserValidationSplitPct = null;
+                }
+                validationSplitSpinner.setDisable(false);
+                if (validationSplitObservedLabel != null) {
+                    if (fixedTotal > 0) {
+                        validationSplitObservedLabel.setText(String.format(
+                                "Plus %d image(s) fixed to Train, %d fixed to Val "
+                                        + "from manual assignments.",
+                                nTrain, nVal));
+                    } else {
+                        validationSplitObservedLabel.setText("");
+                    }
+                }
+            }
         }
 
         private TitledPane createModelSection() {
@@ -2486,6 +2685,30 @@ public class TrainingDialog {
 
             grid.add(valSplitLabel, 0, row);
             grid.add(validationSplitSpinner, 1, row);
+            row++;
+
+            // Record user-typed values so we can restore them if an
+            // Auto-Distribute or manual role assignment later forces the
+            // spinner to show an observed value and disable it.
+            validationSplitSpinner.valueProperty().addListener((obs, oldVal, newVal) -> {
+                if (!updatingSpinnerProgrammatically && newVal != null) {
+                    lastUserValidationSplitPct = newVal;
+                }
+            });
+
+            // Companion label that shows train/val counts derived from
+            // per-image roles, and explains why the spinner is disabled
+            // when all selected images have fixed roles.
+            validationSplitObservedLabel = new Label();
+            validationSplitObservedLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 10px;");
+            validationSplitObservedLabel.setWrapText(true);
+            validationSplitObservedLabel.setVisible(false);
+            validationSplitObservedLabel.setManaged(false);
+            validationSplitObservedLabel.visibleProperty().bind(advancedMode.and(
+                    validationSplitObservedLabel.textProperty().isNotEmpty()));
+            validationSplitObservedLabel.managedProperty().bind(advancedMode.and(
+                    validationSplitObservedLabel.textProperty().isNotEmpty()));
+            grid.add(validationSplitObservedLabel, 1, row);
             row++;
 
             // Tile size
