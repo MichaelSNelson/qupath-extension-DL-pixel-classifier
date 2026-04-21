@@ -343,6 +343,7 @@ class PretrainedModelsService:
 
         arch_map = {
             "unet": smp.Unet,
+            "fast-pretrained": smp.Unet,  # UNet with mobile encoder
             "unetplusplus": smp.UnetPlusPlus,
             "deeplabv3": smp.DeepLabV3,
             "deeplabv3plus": smp.DeepLabV3Plus,
