@@ -2043,7 +2043,8 @@ public class TrainingDialog {
                     "  Best general-purpose choice. Good default for most tasks.\n\n" +
                     "MuViT (Transformer): Multi-resolution Vision Transformer\n" +
                     "  with multi-scale feature fusion. Supports MAE pretraining.\n\n" +
-                    "Custom ONNX: Import externally trained models for inference.",
+                    "Custom ONNX: Import externally trained models for inference.\n" +
+                    "  UNTESTED -- no end-to-end validation yet; expect rough edges.",
                     "https://arxiv.org/abs/1505.04597",
                     archLabel, architectureCombo);
             architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateBackboneOptions(newVal));

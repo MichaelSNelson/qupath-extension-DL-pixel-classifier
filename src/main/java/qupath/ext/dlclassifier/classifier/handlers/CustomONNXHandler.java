@@ -59,14 +59,16 @@ public class CustomONNXHandler implements ClassifierHandler {
 
     @Override
     public String getDisplayName() {
-        return "Custom ONNX Model";
+        return "Custom ONNX Model (untested)";
     }
 
     @Override
     public String getDescription() {
         return "Import and use your own ONNX segmentation model for inference. " +
                 "Supports any ONNX model with NCHW input and segmentation output. " +
-                "Training is not supported - use for pre-trained models only.";
+                "Training is not supported - use for pre-trained models only.\n\n" +
+                "WARNING: this option has not been exercised end-to-end on real " +
+                "ONNX models yet. Treat as experimental and expect rough edges.";
     }
 
     @Override
