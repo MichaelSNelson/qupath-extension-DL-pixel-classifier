@@ -2706,13 +2706,14 @@ public class TrainingDialog {
             validationSplitObservedLabel = new Label();
             validationSplitObservedLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 10px;");
             validationSplitObservedLabel.setWrapText(true);
+            validationSplitObservedLabel.setMaxWidth(280);
             validationSplitObservedLabel.setVisible(false);
             validationSplitObservedLabel.setManaged(false);
             validationSplitObservedLabel.visibleProperty().bind(advancedMode.and(
                     validationSplitObservedLabel.textProperty().isNotEmpty()));
             validationSplitObservedLabel.managedProperty().bind(advancedMode.and(
                     validationSplitObservedLabel.textProperty().isNotEmpty()));
-            grid.add(validationSplitObservedLabel, 1, row);
+            grid.add(validationSplitObservedLabel, 1, row, 2, 1);
             row++;
 
             // Tile size
