@@ -357,14 +357,53 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(extensionCL);
 
-        // No retry for training -- it is a long-running stateful operation.
-        // If Appose reports "thread death", the Python-side may still be running.
-        // Retrying would create a duplicate training process on the same GPU.
+        // Training retry is gated on whether Python actually started executing.
+        // If Appose returns "thread death" *before any progress update fires*,
+        // the worker died on task receipt (stale worker from a prior job or
+        // idle overlay task). No Python code ran, so retrying is safe and will
+        // land on the fresh worker that Appose auto-launched. If we ever saw
+        // a progress update, Python has a running training loop -- do NOT
+        // retry, as that would create a duplicate GPU training process.
         try {
-            return executeTrainingTask(appose, inputs, jobId, extensionCL,
-                    progressCallback, cancelledCheck);
+            for (int attempt = 0; attempt < 2; attempt++) {
+                try {
+                    return executeTrainingTask(appose, inputs, jobId, extensionCL,
+                            progressCallback, cancelledCheck);
+                } catch (IOException e) {
+                    String msg = e.getMessage() != null ? e.getMessage() : "";
+                    boolean isThreadDeath = msg.toLowerCase().contains("thread death");
+                    boolean pythonStarted = (e instanceof TrainingStartedException tse)
+                            && tse.pythonStarted;
+                    if (isThreadDeath && !pythonStarted && attempt == 0) {
+                        logger.warn("Training hit 'thread death' before Python started " +
+                                "(stale worker); retrying on the replacement worker. " +
+                                "Error: {}", msg);
+                        try {
+                            Thread.sleep(500);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("Interrupted during training retry", ie);
+                        }
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+            throw new IOException("Training retry loop exited unexpectedly");
         } finally {
             Thread.currentThread().setContextClassLoader(originalCL);
+        }
+    }
+
+    /**
+     * IOException subclass signaling whether Python started executing the
+     * training task before failing. Used to gate the pre-start retry safely.
+     */
+    private static final class TrainingStartedException extends IOException {
+        final boolean pythonStarted;
+        TrainingStartedException(String msg, Throwable cause, boolean pythonStarted) {
+            super(msg, cause);
+            this.pythonStarted = pythonStarted;
         }
     }
 
@@ -623,9 +662,15 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         Task task = appose.createTask("train", inputs);
 
+        // Track whether Python ever emitted a progress update. Used by the
+        // caller to decide if a "thread death" failure is safely retryable
+        // (no progress = worker died before any training code ran).
+        final boolean[] pythonStarted = {false};
+
         // Listen for progress events
         task.listen(event -> {
             if (event.responseType == ResponseType.UPDATE && event.message != null) {
+                pythonStarted[0] = true;
                 try {
                     ClassifierClient.TrainingProgress progress = parseProgressJson(event.message);
                     if (progressCallback != null) {
@@ -721,11 +766,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         true, cancelLastPath,
                         cancelFocusName, cancelFocusIoU, cancelFocusMet);
             }
-            // Do NOT retry training on "thread death". Training is a long-running
-            // stateful operation -- the Python-side task may still be executing even
-            // though Appose reported failure. Retrying would create a second concurrent
-            // training run on the same GPU, causing deadlock or OOM.
-            throw new IOException("Training failed: " + task.error, e);
+            // Wrap so the caller can distinguish "worker died before Python ran"
+            // (safe to retry) from "Python was running training" (NOT safe --
+            // risks a duplicate GPU training process).
+            throw new TrainingStartedException("Training failed: " + task.error,
+                    e, pythonStarted[0]);
         }
 
         // Check if training was paused (not cancelled, not failed)
