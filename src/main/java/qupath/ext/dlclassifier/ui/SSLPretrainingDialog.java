@@ -13,6 +13,7 @@ import javafx.stage.DirectoryChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.classifier.handlers.UNetHandler;
+import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
@@ -97,6 +98,10 @@ public class SSLPretrainingDialog {
     private final Spinner<Integer> batchSizeSpinner;
     private final Spinner<Double> learningRateSpinner;
     private final Spinner<Integer> warmupEpochsSpinner;
+
+    // Live VRAM estimation
+    private Label vramEstimateLabel;
+    private int gpuTotalMb = 0;
 
     // Source-mode controls
     private final ToggleGroup sourceModeGroup = new ToggleGroup();
@@ -333,6 +338,16 @@ public class SSLPretrainingDialog {
 
         // Populate project images list
         populateProjectImages();
+
+        // Cache GPU memory for live VRAM estimation
+        try {
+            ApposeService appose = ApposeService.getInstance();
+            if (appose.isAvailable() && "cuda".equals(appose.getGpuType())) {
+                gpuTotalMb = appose.getLastGpuMemoryMb();
+            }
+        } catch (Exception e) {
+            logger.debug("Could not get GPU memory info: {}", e.getMessage());
+        }
     }
 
     public static Optional<SSLPretrainingConfig> showDialog() {
@@ -559,6 +574,19 @@ public class SSLPretrainingDialog {
                 warmupLabel, warmupEpochsSpinner);
         grid.add(warmupLabel, 0, 3);
         grid.add(warmupEpochsSpinner, 1, 3);
+
+        // Live VRAM estimate
+        vramEstimateLabel = new Label();
+        vramEstimateLabel.setWrapText(true);
+        vramEstimateLabel.setStyle("-fx-font-size: 11px;");
+        grid.add(vramEstimateLabel, 0, 4, 2, 1);
+
+        // Wire VRAM estimation listeners
+        backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+        batchSizeSpinner.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+        extractionTileSpinner.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+        methodCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+        updateVramEstimate();
 
         TitledPane pane = new TitledPane("Training Parameters", grid);
         pane.setExpanded(true); pane.setCollapsible(false);
@@ -849,6 +877,76 @@ public class SSLPretrainingDialog {
         long nClasses = annotationClassList.getItems().stream().filter(i -> i.selected).count();
         projectSummaryLabel.setText(
                 nImages + " image(s) selected, " + nClasses + " annotation class(es) selected");
+    }
+
+    private void updateVramEstimate() {
+        if (vramEstimateLabel == null || gpuTotalMb <= 0) {
+            if (vramEstimateLabel != null) vramEstimateLabel.setText("");
+            return;
+        }
+        try {
+            String backbone = backboneCombo.getValue();
+            int tileSize = extractionTileSpinner.getValue();
+            int batchSize = batchSizeSpinner.getValue();
+            String method = methodCombo.getValue();
+
+            double modelMb = estimateModelSizeMb(backbone);
+            // BYOL has ~2x encoder memory (online + target networks)
+            double modelFactor = "BYOL".equals(method) ? 2.0 : 1.0;
+            // SSL: model + optimizer (3x) + activations (~4x CNN, halved for AMP)
+            double actMultiplier = 4.0 * 0.6; // assume mixed precision
+            double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
+            double estimatedMb = modelMb * modelFactor
+                    * (1 + 3 + actMultiplier * areaScale * batchSize);
+
+            double budgetMb = gpuTotalMb * 0.85;
+            double pct = (estimatedMb / gpuTotalMb) * 100;
+
+            String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)",
+                    estimatedMb, gpuTotalMb, pct);
+
+            if (estimatedMb > budgetMb) {
+                vramEstimateLabel.setStyle(
+                        "-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
+                // Suggest max batch that fits
+                double perBatchMb = estimatedMb / batchSize;
+                int maxBatch = Math.max(1, (int)(budgetMb / perBatchMb));
+                text += String.format("  --  EXCEEDS GPU! Try batch %d or smaller tiles",
+                        maxBatch);
+            } else if (pct > 75) {
+                vramEstimateLabel.setStyle(
+                        "-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
+                text += "  --  tight, may OOM";
+            } else {
+                vramEstimateLabel.setStyle(
+                        "-fx-font-size: 11px; -fx-text-fill: #228B22;");
+            }
+
+            vramEstimateLabel.setText(text);
+        } catch (Exception e) {
+            vramEstimateLabel.setText("");
+            logger.debug("VRAM estimate update failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Estimates model parameter size in MB for SMP backbones.
+     * SSL wraps the encoder in a projection head, but the encoder
+     * dominates the memory footprint.
+     */
+    private static double estimateModelSizeMb(String backbone) {
+        if (backbone == null) return 30.0;
+        return switch (backbone.toLowerCase()) {
+            case "resnet18" -> 47.0;
+            case "resnet34" -> 87.0;
+            case "resnet50", "resnet50_lunit-swav", "resnet50_lunit-bt",
+                 "resnet50_kather100k", "resnet50_tcga-brca" -> 100.0;
+            case "efficientnet-b0" -> 21.0;
+            case "efficientnet-b1" -> 31.0;
+            case "efficientnet-b2" -> 36.0;
+            case "mobilenet_v2" -> 14.0;
+            default -> 30.0;
+        };
     }
 
     private void updateBatchSizeDefault(String method) {
