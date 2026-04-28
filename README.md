@@ -23,31 +23,41 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 
 ## Features
 
-- **Train custom classifiers** from annotated regions using sparse annotations
-- **Multi-image training** from multiple project images in a single training run
-- **Multi-channel support** with per-channel normalization
-- **Real-time progress** with separate train/val loss charting
-- **Multiple output types**: Measurements, detection objects, or classification overlays
-- **Pixel-level inference** for OBJECTS and OVERLAY output types with full per-pixel probability maps
-- **Image-level normalization** eliminates tile boundary artifacts by computing consistent statistics across the entire image
-- **Load settings from a previous model** for quick retraining iterations with class auto-matching
-- **Dialog preference persistence** -- training and inference settings are remembered across sessions
-- **Combined CE + Dice loss** for improved segmentation quality (default)
-- **IoU-based early stopping** monitors mean IoU instead of validation loss
-- **Mixed precision training** (AMP) for ~2x speedup on CUDA GPUs
-- **Configurable training strategy** via collapsed "Training Strategy" section in the training dialog (scheduler, loss function, early stopping metric/patience, mixed precision)
-- **Histology-pretrained encoders** from TCGA/Lunit/Kather100K for better tissue feature extraction
-- **Foundation model encoders** (h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large) -- large-scale pretrained vision transformers for rich tissue representations, downloaded on-demand from HuggingFace. All commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods).
-- **MuViT (Multi-scale Vision Transformer)** architecture with multi-resolution feature fusion
-- **MAE self-supervised pretraining** for MuViT encoders using unlabeled image tiles (standalone workflow via Utilities menu)
-- **SSL self-supervised pretraining** (SimCLR / BYOL) for CNN encoder backbones (ResNet, EfficientNet, MobileNet). Extract tiles from user-selected annotation classes. Supports **domain-adaptive pretraining** -- initialize from an existing trained model's encoder and adapt to new unlabeled data from a different microscope, staining, or compression. See [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md).
-- **Pluggable architecture** supporting UNet, MuViT, and custom ONNX models
-- **Appose shared-memory IPC** for embedded Python inference with zero-copy tile transfer
-- **Groovy scripting API** for batch processing
-- **Headless builder API** for running workflows without GUI
-- **"Copy as Script" buttons** in dialogs for reproducible workflows
-- **Post-training tile evaluation** identifies annotation errors and hard cases by running the model over all training tiles and ranking by loss. Per-tile loss heatmap and disagreement maps render as viewer overlays, and sessions can be saved per classifier version and reloaded later without re-running evaluation
-- **Hierarchical geometry union** for efficient ROI merging
+Each bullet leads with what you can *do*; the algorithm or architecture name is in parentheses or after an em-dash for when you need to know what's under the hood.
+
+### Train your own classifier
+- **Train custom pixel classifiers from sparse annotations** -- draw a few regions per class, the extension samples training tiles from them
+- **Train across multiple project images in one run** for more representative sampling
+- **Works on brightfield (RGB) and multi-channel fluorescence/spectral images**, with per-channel normalization
+- **Eliminate tile-boundary artifacts** by computing normalization statistics over the whole image instead of per tile
+- **Choose your encoder backbone** -- ResNet / EfficientNet / MobileNet (UNet), MuViT (multi-scale Vision Transformer with multi-resolution feature fusion), or bring your own ONNX model
+- **Start from histology-pretrained weights** (TCGA, Lunit, Kather100K) instead of ImageNet, for better tissue features out of the box
+- **Use foundation-model encoders for richer features** -- h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large; downloaded on demand from HuggingFace, all under commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods)
+- **Tune the training recipe in one place** -- scheduler, loss, early-stopping metric and patience, and mixed precision live together in the collapsed "Training Strategy" panel
+- **Better segmentation by default** -- combined cross-entropy + Dice loss
+- **Stop training when segmentation quality plateaus, not just loss** (mean-IoU-based early stopping)
+- **Train roughly 2x faster on NVIDIA GPUs** (mixed-precision training, AMP)
+- **Reuse a previous model's settings** for fast retraining iterations, with class auto-matching
+
+### Pretrain and adapt to your data
+- **Pretrain on your own unlabeled tiles** before training a classifier -- self-supervised learning on CNN backbones (SimCLR / BYOL) or on MuViT (MAE), using tiles drawn from annotation classes you choose
+- **Adapt an existing trained model to a new microscope, stain, or compression** -- domain-adaptive pretraining seeds SSL from a prior encoder. See [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md)
+
+### Run inference
+- **Pick your output** -- per-pixel measurements, detection objects, or classification overlays
+- **Get full per-pixel probability maps** for OBJECTS and OVERLAY outputs, not just argmax labels
+- **Fast embedded Python inference** with zero-copy tile transfer (Appose shared-memory IPC)
+- **Efficient ROI merging** via hierarchical geometry union
+
+### Inspect and iterate
+- **Find your worst annotations and hardest tiles automatically** -- post-training evaluation runs the model over every training tile, ranks by loss, and renders per-tile loss heatmaps and disagreement maps as viewer overlays. Sessions save per classifier version and reload without re-running
+- **See training progress live** with separate train and validation loss charts
+
+### Automate and reproduce
+- **Run from Groovy scripts** for batch processing across a project
+- **Run headless** via the builder API, no GUI required
+- **"Copy as Script" buttons** in every dialog turn a configured run into a reproducible Groovy snippet
+- **Settings persist across sessions** so you don't re-enter the same training and inference parameters every time
 
 ## Installation
 
@@ -334,6 +344,10 @@ Foundation model integration inspired by **[LazySlide](https://github.com/rendei
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+For general support and feature requests, please post on the [image.sc forum](https://forum.image.sc/) with the `#qupath` tag and mention `@Mike_Nelson` to flag the topic for my attention.
 
 ## Contributing
 
