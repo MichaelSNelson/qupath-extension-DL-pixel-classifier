@@ -793,6 +793,24 @@ class SSLPretrainingService:
         logger.info("Dataset: %d images, %d channels, tile_size=%d",
                      num_images, num_channels, tile_size)
 
+        # Hard floor: SSL needs more than 1 sample per batch or BatchNorm in
+        # the projection head crashes ("Expected more than 1 value per channel
+        # when training, got input size [1, 2048]"). Refuse early with a
+        # readable error instead of letting the user wait minutes for the
+        # opaque BN failure deep in the forward pass. We also require enough
+        # images to sustain a 2-sample batch with drop_last=False.
+        SSL_MIN_DATASET = 4
+        if num_images < SSL_MIN_DATASET:
+            raise ValueError(
+                "SSL pretraining requires at least {n} unlabeled images, but "
+                "found only {actual} in {path}. With fewer than {n} images "
+                "the dataloader cannot form a batch large enough for the "
+                "projection head's BatchNorm to train. Check that tile "
+                "extraction completed (look for 'Extracted N tiles' in the "
+                "log) and that the data directory wasn't deleted before "
+                "training started.".format(
+                    n=SSL_MIN_DATASET, actual=num_images, path=image_dir))
+
         # Dataset size warnings
         if num_images < 10:
             logger.warning(

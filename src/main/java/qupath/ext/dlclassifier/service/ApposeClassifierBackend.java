@@ -450,58 +450,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             jobIdCallback.accept(jobId);
         }
 
-        Task task = appose.createTask("pretrain_mae", inputs);
-
-        // Wire up progress reporting
-        task.listen(event -> {
-            if (event.responseType == ResponseType.UPDATE && event.message != null) {
-                try {
-                    JsonObject json = JsonParser.parseString(event.message).getAsJsonObject();
-                    ClassifierClient.TrainingProgress progress =
-                            new ClassifierClient.TrainingProgress(
-                                    json.has("epoch") ? json.get("epoch").getAsInt() : 0,
-                                    json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
-                                    json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
-                                    json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
-                                    json.has("accuracy") ? json.get("accuracy").getAsDouble() : 0.0,
-                                    json.has("mean_iou") ? json.get("mean_iou").getAsDouble() : 0.0,
-                                    Map.of(), Map.of(),
-                                    json.has("device") ? json.get("device").getAsString() : "",
-                                    json.has("device_info") ? json.get("device_info").getAsString() : "",
-                                    json.has("status") ? json.get("status").getAsString() : "",
-                                    json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
-                                    Map.of()
-                            );
-                    if (progressCallback != null) {
-                        progressCallback.accept(progress);
-                    }
-                } catch (Exception e) {
-                    logger.warn("Failed to parse pretraining progress: {}", e.getMessage());
-                }
-            }
-        });
-
-        // Start task and poll for cancellation
-        task.start();
-        while (!task.status.isFinished()) {
-            if (cancelledCheck != null && cancelledCheck.get()) {
-                task.cancel();
-                logger.info("MAE pretraining cancelled by user");
-            }
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                task.cancel();
-                throw new IOException("MAE pretraining interrupted", e);
-            }
-        }
-
-        if (task.status == org.apposed.appose.Service.TaskStatus.FAILED) {
-            throw new IOException("MAE pretraining failed: " + task.error);
-        }
-
-        return buildPretrainingResult(task, jobId, "mae", inputs, outputDir);
+        // See SSL pretraining for the rationale; MAE shares the same race
+        // (worker dies on dispatch -> Java throws -> finally block deletes the
+        // temp tile dir while Appose's silent auto-retry is still running).
+        return runPretrainingWithThreadDeathRetry(appose, "pretrain_mae", inputs,
+                jobId, "mae", outputDir, progressCallback, cancelledCheck);
     }
 
     /**
@@ -618,75 +571,123 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             jobIdCallback.accept(jobId);
         }
 
-        Task task = appose.createTask("pretrain_ssl", inputs);
+        // Retry once if Appose's worker dies before Python starts. Without this,
+        // the SSL/MAE poll loop bails on the FAILURE, the SetupDLClassifier
+        // finally-block wipes the temp tiles directory, and Appose's silent
+        // auto-retry then runs Python on an empty tile dir (1 image left ->
+        // BatchNorm-on-batch-of-1 crash). Mirrors the supervised retry at
+        // executeTrainingTask().
+        return runPretrainingWithThreadDeathRetry(appose, "pretrain_ssl", inputs,
+                jobId, "ssl", outputDir, progressCallback, cancelledCheck);
+    }
 
-        // Wire up progress reporting with timing data and VRAM info
-        task.listen(event -> {
-            if (event.responseType == ResponseType.UPDATE && event.message != null) {
+    /**
+     * Polls a pretraining task to completion. If the task fails with
+     * "thread death" before Python ever emits a progress event (i.e. the
+     * Appose worker died on receipt), recreates the task once with the same
+     * inputs and retries on a fresh worker. Returns the resulting
+     * TrainingResult once the (possibly retried) task finishes successfully
+     * or with a non-recoverable failure.
+     */
+    private ClassifierClient.TrainingResult runPretrainingWithThreadDeathRetry(
+            ApposeService appose,
+            String taskName,
+            Map<String, Object> inputs,
+            String jobId,
+            String label,
+            Path outputDir,
+            Consumer<ClassifierClient.TrainingProgress> progressCallback,
+            Supplier<Boolean> cancelledCheck) throws IOException {
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            Task task = appose.createTask(taskName, inputs);
+            boolean[] pythonStarted = {false};
+
+            task.listen(event -> {
+                if (event.responseType == ResponseType.UPDATE && event.message != null) {
+                    pythonStarted[0] = true;
+                    try {
+                        JsonObject json = JsonParser.parseString(event.message).getAsJsonObject();
+                        Map<String, String> extraData = new HashMap<>();
+                        if (json.has("elapsed_sec"))
+                            extraData.put("elapsed_sec", json.get("elapsed_sec").getAsString());
+                        if (json.has("remaining_sec"))
+                            extraData.put("remaining_sec", json.get("remaining_sec").getAsString());
+                        if (json.has("epoch_sec"))
+                            extraData.put("epoch_sec", json.get("epoch_sec").getAsString());
+                        if (json.has("images_per_sec"))
+                            extraData.put("images_per_sec", json.get("images_per_sec").getAsString());
+                        if (json.has("config") && json.get("config").isJsonObject()) {
+                            JsonObject cfg = json.getAsJsonObject("config");
+                            if (cfg.has("message"))
+                                extraData.put("message", cfg.get("message").getAsString());
+                        }
+
+                        ClassifierClient.TrainingProgress progress =
+                                new ClassifierClient.TrainingProgress(
+                                        json.has("epoch") ? json.get("epoch").getAsInt() : 0,
+                                        json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
+                                        json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
+                                        json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
+                                        json.has("accuracy") ? json.get("accuracy").getAsDouble() : 0.0,
+                                        json.has("mean_iou") ? json.get("mean_iou").getAsDouble() : 0.0,
+                                        Map.of(), Map.of(),
+                                        json.has("device") ? json.get("device").getAsString() : "",
+                                        json.has("device_info") ? json.get("device_info").getAsString() : "",
+                                        json.has("status") ? json.get("status").getAsString() : "",
+                                        json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
+                                        extraData
+                                );
+                        if (progressCallback != null) {
+                            progressCallback.accept(progress);
+                        }
+                    } catch (Exception e) {
+                        logger.warn("Failed to parse {} pretraining progress: {}",
+                                label, e.getMessage());
+                    }
+                }
+            });
+
+            task.start();
+            while (!task.status.isFinished()) {
+                if (cancelledCheck != null && cancelledCheck.get()) {
+                    task.cancel();
+                    logger.info("{} pretraining cancelled by user", label.toUpperCase());
+                }
                 try {
-                    JsonObject json = JsonParser.parseString(event.message).getAsJsonObject();
-                    // Extract timing data into configSummary for the orchestration layer
-                    Map<String, String> extraData = new HashMap<>();
-                    if (json.has("elapsed_sec"))
-                        extraData.put("elapsed_sec", json.get("elapsed_sec").getAsString());
-                    if (json.has("remaining_sec"))
-                        extraData.put("remaining_sec", json.get("remaining_sec").getAsString());
-                    if (json.has("epoch_sec"))
-                        extraData.put("epoch_sec", json.get("epoch_sec").getAsString());
-                    if (json.has("images_per_sec"))
-                        extraData.put("images_per_sec", json.get("images_per_sec").getAsString());
-                    // Extract setup phase data (VRAM estimates, peak memory)
-                    if (json.has("config") && json.get("config").isJsonObject()) {
-                        JsonObject cfg = json.getAsJsonObject("config");
-                        if (cfg.has("message"))
-                            extraData.put("message", cfg.get("message").getAsString());
-                    }
-
-                    ClassifierClient.TrainingProgress progress =
-                            new ClassifierClient.TrainingProgress(
-                                    json.has("epoch") ? json.get("epoch").getAsInt() : 0,
-                                    json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
-                                    json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
-                                    json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
-                                    json.has("accuracy") ? json.get("accuracy").getAsDouble() : 0.0,
-                                    json.has("mean_iou") ? json.get("mean_iou").getAsDouble() : 0.0,
-                                    Map.of(), Map.of(),
-                                    json.has("device") ? json.get("device").getAsString() : "",
-                                    json.has("device_info") ? json.get("device_info").getAsString() : "",
-                                    json.has("status") ? json.get("status").getAsString() : "",
-                                    json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
-                                    extraData
-                            );
-                    if (progressCallback != null) {
-                        progressCallback.accept(progress);
-                    }
-                } catch (Exception e) {
-                    logger.warn("Failed to parse SSL pretraining progress: {}", e.getMessage());
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    task.cancel();
+                    throw new IOException(
+                            label.toUpperCase() + " pretraining interrupted", e);
                 }
             }
-        });
 
-        // Start task and poll for cancellation
-        task.start();
-        while (!task.status.isFinished()) {
-            if (cancelledCheck != null && cancelledCheck.get()) {
-                task.cancel();
-                logger.info("SSL pretraining cancelled by user");
+            if (task.status == org.apposed.appose.Service.TaskStatus.FAILED) {
+                String err = task.error == null ? "" : task.error;
+                boolean isThreadDeath = err.toLowerCase().contains("thread death");
+                if (isThreadDeath && !pythonStarted[0] && attempt == 0) {
+                    logger.warn("{} pretraining hit 'thread death' before Python started "
+                                    + "(stale Appose worker); retrying on a fresh task. "
+                                    + "Error: {}", label.toUpperCase(), err);
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException(
+                                "Interrupted during " + label + " pretraining retry", ie);
+                    }
+                    continue;
+                }
+                throw new IOException(
+                        label.toUpperCase() + " pretraining failed: " + err);
             }
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                task.cancel();
-                throw new IOException("SSL pretraining interrupted", e);
-            }
-        }
 
-        if (task.status == org.apposed.appose.Service.TaskStatus.FAILED) {
-            throw new IOException("SSL pretraining failed: " + task.error);
+            return buildPretrainingResult(task, jobId, label, inputs, outputDir);
         }
-
-        return buildPretrainingResult(task, jobId, "ssl", inputs, outputDir);
+        throw new IOException(
+                label.toUpperCase() + " pretraining retry loop exited unexpectedly");
     }
 
     /**
