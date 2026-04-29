@@ -42,13 +42,20 @@ jobs:
             TAG="${{ github.event.release.tag_name }}"
             ASSETS_JSON='${{ toJSON(github.event.release.assets) }}'
           fi
-          # Prefer *-all.jar (shadow jar, the standard QuPath extension asset).
-          # Fall back to any *.jar so repos that don't yet ship a shadow jar
-          # still work; the catalog-side bump_catalog.py just stores whatever
-          # URL we send, so consistency with the existing main_url is more
-          # important than the suffix.
+          # Asset selection priority:
+          #   1. *-all.jar (shadow/fat jar with bundled deps)
+          #   2. The plain extension jar -- any *.jar that is NOT
+          #      -javadoc.jar or -sources.jar
+          #   3. As a last resort, anything ending in .jar
+          # The previous fallback ("any .jar") was matching -javadoc.jar
+          # first because that name sorts before the plain extension jar
+          # in the assets list. That sent a useless documentation jar to
+          # the catalog (v0.7.5 broke updates for users this way).
           ASSET_URL=$(echo "$ASSETS_JSON" | jq -r '
             ([.[] | select(.name | endswith("-all.jar"))][0]?.browser_download_url
+             // [.[] | select((.name | endswith(".jar"))
+                              and (.name | endswith("-javadoc.jar") | not)
+                              and (.name | endswith("-sources.jar") | not))][0]?.browser_download_url
              // [.[] | select(.name | endswith(".jar"))][0]?.browser_download_url
              // empty)')
           if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
