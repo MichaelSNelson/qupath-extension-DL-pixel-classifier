@@ -264,22 +264,45 @@ class SSLImageDataset(Dataset):
             self._preload_images()
 
     def _preload_images(self):
-        """Load all images into memory."""
+        """Load all images into memory.
+
+        Refuses to preload when memory headroom is unknown or insufficient.
+        The previous behavior (assume infinite memory when psutil is missing)
+        produced silent disk-paging stalls on Windows hosts without psutil
+        installed -- 20k tiles at 512x512 is ~15 GB decoded, which routinely
+        tipped systems with 32-48 GB total RAM into the page file once the
+        JVM, GPU driver, and dataloader workers added their share.
+        """
         try:
             import psutil
             available_mb = psutil.virtual_memory().available / (1024 * 1024)
         except ImportError:
-            logger.info("psutil not available -- skipping memory check, "
-                        "preloading all images")
-            available_mb = float('inf')
+            logger.warning(
+                "psutil not available -- cannot verify host memory "
+                "headroom. Falling back to disk streaming to avoid "
+                "silently exhausting system RAM. Install psutil to "
+                "enable in-memory preload.")
+            self.preload = False
+            return
 
-        # Estimate dataset size: assume ~1MB per tile (conservative)
-        estimated_mb = len(self.image_paths) * 1.0
-        if estimated_mb > available_mb * 0.25:
+        # Estimate decoded-bytes-per-tile from the actual tile_size instead
+        # of a flat 1 MB/tile. SSL targets 512x512x3 uint8 = 0.75 MB raw,
+        # but PyTorch tensors hold a float copy after transform (3 MB), and
+        # dataloader workers may briefly hold an extra augmented copy.
+        # Assume 3 channels (typical for SSL) and ~4x the raw size to cover
+        # transient peaks. Channels=1 makes the estimate 3x conservative,
+        # which biases toward the safer disk-streaming path.
+        bytes_per_tile = self.tile_size * self.tile_size * 3 * 4
+        estimated_mb = len(self.image_paths) * bytes_per_tile / (1024 * 1024)
+        # Reserve 25% of available RAM for the OS, JVM, GPU driver, and
+        # transient buffers; only preload if dataset fits in the rest.
+        budget_mb = available_mb * 0.50
+        if estimated_mb > budget_mb:
             logger.warning(
                 "Dataset too large for in-memory preload "
-                "(~%.0f MB, available %.0f MB). Using disk streaming.",
-                estimated_mb, available_mb)
+                "(~%.0f MB, %.0f MB available, %.0f MB budget). "
+                "Using disk streaming instead.",
+                estimated_mb, available_mb, budget_mb)
             self.preload = False
             return
 

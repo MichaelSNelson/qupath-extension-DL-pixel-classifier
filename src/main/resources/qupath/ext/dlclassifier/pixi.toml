@@ -21,6 +21,10 @@ scikit-image = ">=0.21.0"
 tifffile = ">=2023.7.0"
 imagecodecs = ">=2023.7.0"
 pydantic = ">=2.0.0"
+# psutil powers the SSL pretraining preflight memory check. Without it,
+# the dataset preloader cannot tell whether the host has enough RAM to
+# hold all decoded tiles, and the safe fallback (disk streaming) kicks in.
+psutil = ">=5.9.0"
 
 # PyTorch (base dependency for all platforms)
 pytorch = ">=2.1.0"
