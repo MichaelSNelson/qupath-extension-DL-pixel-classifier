@@ -1078,6 +1078,11 @@ class SSLPretrainingService:
 
         # Collapse-guard state
         collapse_streak = 0
+        # Set when the training loop exits because the collapse probe
+        # tripped, so the post-loop save path can return a status that
+        # the Java side surfaces as a warning instead of pretending the
+        # run completed normally.
+        aborted_collapse = False
 
         first_batch_done = False
         try:
@@ -1288,6 +1293,7 @@ class SSLPretrainingService:
                         "(proj_std < %.6f for %d consecutive epochs). "
                         "Use checkpoint_epoch_<earlier>.pt for downstream.",
                         collapse_threshold, collapse_patience)
+                    aborted_collapse = True
                     break
 
                 # Best model tracking with disk persistence
@@ -1395,6 +1401,22 @@ class SSLPretrainingService:
             dataset_size=len(dataset),
             batch_size=batch_size,
         )
+        # If the collapse probe explicitly aborted, escalate quality and
+        # prepend an unambiguous warning so the user sees it first. The
+        # heuristic check may not catch a 3-epoch run on its own.
+        if aborted_collapse:
+            quality = "likely_collapse"
+            warnings.insert(0,
+                "Training aborted by the collapse probe -- the encoder's "
+                "embeddings degenerated to a near-constant output (proj_std "
+                "below threshold for 3 consecutive epochs). The saved "
+                "encoder is almost certainly unusable for downstream "
+                "supervised training. Causes for this run: "
+                "(1) tiles within each annotation class are very similar, "
+                "so positive pairs were trivially aligned; "
+                "(2) default temperature (0.5) and small batches make this "
+                "worse on visually-uniform histology -- try temperature "
+                "0.1-0.2; (3) consider BYOL with ema_decay=0.99 instead.")
         if warnings:
             logger.warning("=" * 60)
             logger.warning("SSL pretraining QUALITY WARNINGS (%s):", quality.upper())
@@ -1455,8 +1477,12 @@ class SSLPretrainingService:
 
         self.gpu_manager.clear_cache()
 
+        # Distinct status when the run was halted by the collapse probe.
+        # The Java side reads this and shows the warning to the user
+        # instead of the standard "Encoder saved! Final loss: ..." message.
+        result_status = "aborted_collapse" if aborted_collapse else "completed"
         return {
-            "status": "completed",
+            "status": result_status,
             "encoder_path": encoder_path,
             "epochs_completed": len(history),
             "final_loss": history[-1]["loss"] if history else 0.0,

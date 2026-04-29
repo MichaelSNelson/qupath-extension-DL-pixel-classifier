@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -167,19 +169,51 @@ public class ClassifierClient {
             String lastModelPath,
             String focusClassName,
             double focusClassIoU,
-            boolean focusClassTargetMet
+            boolean focusClassTargetMet,
+            String quality,
+            List<String> warnings
     ) {
+        /**
+         * Canonical constructor - normalizes quality/warnings to safe defaults.
+         */
+        public TrainingResult {
+            if (quality == null) {
+                quality = "ok";
+            }
+            warnings = warnings == null ? Collections.emptyList() : List.copyOf(warnings);
+        }
+
         /** Compact constructor for non-paused results. */
         public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy,
                               int bestEpoch, double bestMeanIoU) {
             this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU,
-                    false, 0, 0, null, false, null, null, 0.0, true);
+                    false, 0, 0, null, false, null, null, 0.0, true,
+                    "ok", Collections.emptyList());
         }
 
         /** Compact constructor for cancelled results (no save). */
         public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
             this(jobId, modelPath, finalLoss, finalAccuracy, 0, 0.0,
-                    false, 0, 0, null, true, null, null, 0.0, true);
+                    false, 0, 0, null, true, null, null, 0.0, true,
+                    "ok", Collections.emptyList());
+        }
+
+        /**
+         * Legacy 15-arg compact constructor (pre-quality/warnings).
+         * Defaults {@code quality="ok"} and an empty warnings list so existing
+         * callers in TrainingWorkflow / ApposeClassifierBackend continue to work
+         * without churn. New callers (SSL pretraining) should use the full
+         * 17-arg form.
+         */
+        public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy,
+                              int bestEpoch, double bestMeanIoU, boolean paused, int lastEpoch,
+                              int totalEpochs, String checkpointPath, boolean cancelled,
+                              String lastModelPath, String focusClassName, double focusClassIoU,
+                              boolean focusClassTargetMet) {
+            this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU,
+                    paused, lastEpoch, totalEpochs, checkpointPath, cancelled, lastModelPath,
+                    focusClassName, focusClassIoU, focusClassTargetMet,
+                    "ok", Collections.emptyList());
         }
 
         /** Returns true if training was cancelled. */
@@ -195,6 +229,11 @@ public class ClassifierClient {
         /** Returns true if training was paused. */
         public boolean isPaused() {
             return paused;
+        }
+
+        /** Returns true if the run produced quality warnings (likely_collapse, warn, etc). */
+        public boolean hasQualityWarnings() {
+            return !"ok".equals(quality) || (warnings != null && !warnings.isEmpty());
         }
     }
 

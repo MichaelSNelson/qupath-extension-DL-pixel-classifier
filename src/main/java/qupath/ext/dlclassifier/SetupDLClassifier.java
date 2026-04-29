@@ -2297,26 +2297,70 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         String encoderPath = result.modelPath();
         boolean hasSavedModel = encoderPath != null && !encoderPath.isEmpty();
         if (hasSavedModel) {
-            String message;
+            // Quality flags from Python: "ok", "warn", "likely_collapse",
+            // "aborted_collapse". The collapse-probe variants mean the encoder
+            // is almost certainly unusable -- show that prominently rather than
+            // burying it under a "complete!" headline.
+            String quality = result.quality();
+            java.util.List<String> warnings = result.warnings();
+            boolean collapsed = "likely_collapse".equals(quality)
+                    || "aborted_collapse".equals(quality);
+            boolean hasWarnings = result.hasQualityWarnings();
+
+            StringBuilder messageBuilder = new StringBuilder();
+            if (collapsed) {
+                messageBuilder.append("[REVIEW WARNINGS] The collapse probe flagged this run.\n")
+                        .append("The saved encoder is almost certainly unusable for downstream\n")
+                        .append("supervised training. See details below.\n\n");
+            } else if (hasWarnings) {
+                messageBuilder.append("[REVIEW WARNINGS] This run completed with quality warnings.\n\n");
+            }
             if ("MAE".equals(label)) {
-                message = String.format(
+                messageBuilder.append(String.format(
                         "Encoder saved to:%n%s%n%nFinal reconstruction loss: %.4f%n%n"
                                 + "To use: In the training dialog, select MuViT and%n"
                                 + "choose 'Continue from model' to load this encoder.",
-                        encoderPath, result.finalLoss());
+                        encoderPath, result.finalLoss()));
             } else {
-                message = String.format(
+                messageBuilder.append(String.format(
                         "Encoder saved to:%n%s%n%nFinal loss: %.4f%n%n"
                                 + "To use: In the training dialog, select UNet and%n"
                                 + "choose 'Use SSL pretrained encoder' to load this backbone.",
-                        encoderPath, result.finalLoss());
+                        encoderPath, result.finalLoss()));
             }
+            if (hasWarnings) {
+                messageBuilder.append("\n\n--- Warnings ---");
+                for (String w : warnings) {
+                    messageBuilder.append("\n* ").append(w);
+                }
+            }
+            String message = messageBuilder.toString();
             progress.complete(true, message);
-            logger.info("{} pretraining complete: loss={}, path={}",
-                    label, result.finalLoss(), encoderPath);
-            Platform.runLater(() ->
+            logger.info("{} pretraining complete: loss={}, path={}, quality={}, warnings={}",
+                    label, result.finalLoss(), encoderPath, quality, warnings.size());
+            for (String w : warnings) {
+                logger.warn("{} pretraining warning: {}", label, w);
+            }
+            Platform.runLater(() -> {
+                if (collapsed) {
+                    // Use a blocking warning dialog so the user can't miss it,
+                    // then a notification as a follow-up reminder.
+                    Dialogs.showWarningNotification(EXTENSION_NAME,
+                            label + " pretraining flagged: encoder may be unusable. See dialog for details.");
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle(label + " pretraining: encoder collapsed");
+                    alert.setHeaderText("Collapse probe aborted training");
+                    alert.setContentText(message);
+                    alert.getDialogPane().setPrefWidth(560);
+                    alert.show();
+                } else if (hasWarnings) {
+                    Dialogs.showWarningNotification(EXTENSION_NAME,
+                            label + " pretraining complete with warnings. See dialog for details.");
+                } else {
                     Dialogs.showInfoNotification(EXTENSION_NAME,
-                            label + " pretraining complete! Encoder saved to:\n" + encoderPath));
+                            label + " pretraining complete! Encoder saved to:\n" + encoderPath);
+                }
+            });
         } else {
             progress.complete(false, label + " pretraining cancelled (no model saved).");
             logger.info("{} pretraining cancelled, no model saved", label);

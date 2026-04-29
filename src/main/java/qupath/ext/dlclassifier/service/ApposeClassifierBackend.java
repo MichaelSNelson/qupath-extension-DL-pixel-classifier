@@ -521,6 +521,18 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 ? ((Number) task.outputs.get("epochs_completed")).intValue() : 0;
         double finalLoss = task.outputs.containsKey("final_loss")
                 ? ((Number) task.outputs.get("final_loss")).doubleValue() : 0.0;
+        // Python may report a quality assessment ("ok", "warn", "likely_collapse",
+        // "aborted_collapse") plus a list of human-readable warnings. Plumb both
+        // through so the completion dialog can flag problems instead of silently
+        // saving a degenerate encoder.
+        String quality = task.outputs.containsKey("quality")
+                ? String.valueOf(task.outputs.get("quality")) : "ok";
+        java.util.List<String> warnings = extractStringList(task.outputs.get("warnings"));
+        if ("aborted_collapse".equals(status) && "ok".equals(quality)) {
+            // Defensive: if the abort happened but the quality field wasn't set,
+            // tag it so downstream UI still flags the run as suspect.
+            quality = "likely_collapse";
+        }
 
         if ("paused".equals(status)) {
             // Python wrote pause_checkpoint.pt to outputDir; record it for resume/finalize.
@@ -534,14 +546,40 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             return new ClassifierClient.TrainingResult(
                     jobId, null, finalLoss, 0.0, 0, 0.0,
                     true, epochsCompleted, totalEpochs, checkpointPath.toString(),
-                    false, null, null, 0.0, true);
+                    false, null, null, 0.0, true,
+                    quality, warnings);
         }
 
-        logger.info("{} pretraining {}: {} epochs, loss={}, path={}",
-                label.toUpperCase(), status, epochsCompleted, finalLoss, encoderPath);
+        logger.info("{} pretraining {}: {} epochs, loss={}, path={}, quality={}, warnings={}",
+                label.toUpperCase(), status, epochsCompleted, finalLoss, encoderPath,
+                quality, warnings.size());
 
         return new ClassifierClient.TrainingResult(
-                jobId, encoderPath, finalLoss, 0.0, 0, 0.0);
+                jobId, encoderPath, finalLoss, 0.0, 0, 0.0,
+                false, epochsCompleted, epochsCompleted, null,
+                false, null, null, 0.0, true,
+                quality, warnings);
+    }
+
+    /**
+     * Coerces a task.outputs value (which may be null, a List, or a single
+     * string from older Python builds) into a List&lt;String&gt;. Defensive against
+     * malformed payloads -- never throws.
+     */
+    private static java.util.List<String> extractStringList(Object raw) {
+        if (raw == null) {
+            return java.util.Collections.emptyList();
+        }
+        if (raw instanceof java.util.List<?> list) {
+            java.util.List<String> out = new java.util.ArrayList<>(list.size());
+            for (Object item : list) {
+                if (item != null) {
+                    out.add(item.toString());
+                }
+            }
+            return out;
+        }
+        return java.util.List.of(raw.toString());
     }
 
     /**
