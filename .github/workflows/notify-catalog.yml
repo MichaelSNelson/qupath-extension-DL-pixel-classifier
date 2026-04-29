@@ -51,13 +51,17 @@ jobs:
           # first because that name sorts before the plain extension jar
           # in the assets list. That sent a useless documentation jar to
           # the catalog (v0.7.5 broke updates for users this way).
+          # gh release view returns "url"; the release event payload uses
+          # "browser_download_url". Normalize to one field name with the
+          # short-circuit "//" so this works for both trigger sources.
           ASSET_URL=$(echo "$ASSETS_JSON" | jq -r '
-            ([.[] | select(.name | endswith("-all.jar"))][0]?.browser_download_url
-             // [.[] | select((.name | endswith(".jar"))
+            def dl: (.browser_download_url // .url);
+            ([.[] | select(.name | endswith("-all.jar"))][0] | dl?)
+            // ([.[] | select((.name | endswith(".jar"))
                               and (.name | endswith("-javadoc.jar") | not)
-                              and (.name | endswith("-sources.jar") | not))][0]?.browser_download_url
-             // [.[] | select(.name | endswith(".jar"))][0]?.browser_download_url
-             // empty)')
+                              and (.name | endswith("-sources.jar") | not))][0] | dl?)
+            // ([.[] | select(.name | endswith(".jar"))][0] | dl?)
+            // empty')
           if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
             echo "::error::No .jar asset found on release $TAG"
             exit 1
