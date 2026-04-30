@@ -397,15 +397,20 @@ public class DLPixelClassifier implements PixelClassifier {
 
         try {
             // Determine reflection padding.
-            // Interior tiles: expanded image = tileSize, no reflection needed
-            // (model sees real neighboring image data on all sides).
-            // Edge tiles: expanded < tileSize, use reflection padding so the
-            // model always gets >= tileSize input for consistent predictions.
+            // Interior tiles: expanded image >= tileSize, no reflection
+            // needed (model sees real neighboring image data on all sides).
+            // Edge tiles: expanded < tileSize, reflection-pad by *exactly*
+            // the deficit needed to reach tileSize, NOT by the full
+            // inputPadding. The earlier code padded by inputPadding (e.g.
+            // 64) regardless of how much was actually missing -- a tile
+            // clipped to 448 then got padded to 448 + 2*64 = 576, which
+            // overshoots the model's static 512x512 input and triggers an
+            // ONNXRuntime InvalidArgument deep in inference.
             int expandedW = tileImage.getWidth();
             int expandedH = tileImage.getHeight();
             int tileSize = inferenceConfig.getTileSize();
-            int reflectionPadding = (expandedW >= tileSize && expandedH >= tileSize)
-                    ? 0 : inputPadding;
+            int reflectionPadding = computeEdgeReflectionPadding(
+                    expandedW, expandedH, tileSize);
             PixelInferenceResult result = backend.runPixelInferenceBinary(
                     modelDirPath, rawBytes, List.of(tileId),
                     tileImage.getHeight(), tileImage.getWidth(), numChannels,
@@ -957,8 +962,8 @@ public class DLPixelClassifier implements PixelClassifier {
         int expandedW = tileImage.getWidth();
         int expandedH = tileImage.getHeight();
         int tileSize = inferenceConfig.getTileSize();
-        int reflectionPadding = (expandedW >= tileSize && expandedH >= tileSize)
-                ? 0 : inputPadding;
+        int reflectionPadding = computeEdgeReflectionPadding(
+                expandedW, expandedH, tileSize);
 
         PixelInferenceResult result = backend.runPixelInferenceBinary(
                 modelDirPath, rawBytes, List.of(tileId),
@@ -1004,6 +1009,36 @@ public class DLPixelClassifier implements PixelClassifier {
             }
         }
         return cropped;
+    }
+
+    /**
+     * Reflection-pad an edge tile by exactly the deficit needed to bring
+     * its smaller dimension up to {@code tileSize}, expressed as a
+     * symmetric per-side amount. Returns {@code 0} when both dimensions
+     * already meet or exceed {@code tileSize} (interior tile).
+     * <p>
+     * Uses ceiling division so we never undershoot: an odd deficit (e.g.
+     * 33 pixels) rounds up to {@code 17} per side, which yields a tile of
+     * {@code expanded + 34 = tileSize + 1}. A 1-pixel overshoot is
+     * absorbed by the Python defensive crop in
+     * {@code _infer_batch_spatial}, so the model still gets exactly its
+     * baked-in input shape.
+     * <p>
+     * Previously this returned {@code inputPadding} (e.g. 64) as a fixed
+     * per-side amount whenever the expanded read fell short of
+     * {@code tileSize}. That over-padded clipped edge tiles -- e.g. a
+     * 448-pixel-wide read got padded to {@code 448 + 2*64 = 576},
+     * overshooting a 512x512 model and causing ONNXRuntime to reject the
+     * input.
+     */
+    static int computeEdgeReflectionPadding(int expandedW, int expandedH,
+                                             int tileSize) {
+        if (expandedW >= tileSize && expandedH >= tileSize) {
+            return 0;
+        }
+        int deficit = Math.max(tileSize - expandedW, tileSize - expandedH);
+        if (deficit <= 0) return 0;
+        return (deficit + 1) / 2;
     }
 
     /**
