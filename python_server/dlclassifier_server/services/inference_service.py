@@ -1635,3 +1635,127 @@ class InferenceService:
         self._compiled_models.clear()
         self._cleanup_after_inference()
         logger.info("Model cache cleared")
+
+    def calibrate_batchnorm(
+        self,
+        model_path: str,
+        tile_paths: List[str],
+        output_dir: str,
+        input_config: Dict[str, Any],
+        batch_size: int = 16,
+    ) -> str:
+        """Recompute BatchNorm running stats on tiles from a target image.
+
+        Domain-shift adaptation (AdaBN): when an image batch is acquired
+        under different conditions (white balance, exposure, sensor
+        gain) than the training data, the encoder's BatchNorm running
+        means/variances are calibrated to the training distribution.
+        Running forward passes in BN-train mode on a sample of target
+        tiles updates those running stats to the new acquisition,
+        usually closing most of the cross-batch performance gap with
+        zero retraining.
+
+        Args:
+            model_path: Path to the source model directory (must
+                contain model.pt + metadata.json).
+            tile_paths: Paths to image tiles sampled from the target
+                domain. ~200-500 typically sufficient.
+            output_dir: New model directory; the calibrated model.pt
+                and a copy of metadata.json (with `calibrated_from`
+                set) are saved here.
+            input_config: Same input_config used for inference; tells
+                the loader how to normalize.
+            batch_size: Tiles per forward pass. Default 16 fits 24 GB
+                VRAM at 512 px tiles for SMP-resnet34. Lower if OOM.
+
+        Returns:
+            Absolute path to the calibrated model.pt.
+        """
+        import shutil
+        from torch.nn.modules.batchnorm import _BatchNorm
+
+        src = Path(model_path)
+        dst = Path(output_dir)
+        dst.mkdir(parents=True, exist_ok=True)
+
+        # Load PyTorch state_dict into a fresh model so the running
+        # stats we mutate are not the cached compiled-model copy.
+        # Reuse the existing _load_model machinery, but force a fresh
+        # load by clearing the cache for this model.
+        self._model_cache.pop(str(src), None)
+        self._compiled_models.discard(str(src))
+        model_type, model = self._load_model(
+            str(src), compile_model=False)
+        if model_type != "pytorch":
+            raise RuntimeError(
+                "AdaBN requires a PyTorch model; got %s. ONNX models "
+                "do not expose BN running stats for in-place update -- "
+                "load the .pt source instead." % model_type)
+
+        # All BN modules in train mode (running stats update via
+        # forward pass), everything else in eval (frozen layers etc.).
+        n_bn = 0
+        for m in model.modules():
+            if isinstance(m, _BatchNorm):
+                m.train()
+                n_bn += 1
+            else:
+                m.eval()
+        if n_bn == 0:
+            logger.warning(
+                "Source model has no BatchNorm layers; AdaBN will be "
+                "a no-op. Save anyway so the user gets the expected "
+                "_adabn artifact.")
+        logger.info(
+            "AdaBN: %d BatchNorm modules set to train mode, %d tiles "
+            "in calibration set, batch_size=%d",
+            n_bn, len(tile_paths), batch_size)
+
+        # Stream tiles in batches; no_grad so we do not update weights.
+        # The forward pass updates BN running_mean/running_var via the
+        # standard EMA -- momentum default 0.1 means each batch nudges
+        # the running stat 10% toward the batch stat.
+        with torch.no_grad():
+            buf = []
+            for tp in tile_paths:
+                arr = self._load_tile_data(tp)
+                arr = self._normalize(arr, input_config)
+                t = torch.from_numpy(np.ascontiguousarray(
+                    np.transpose(arr, (2, 0, 1)) if arr.ndim == 3
+                    else arr[None, ...]
+                )).float().to(self.device)
+                buf.append(t)
+                if len(buf) >= batch_size:
+                    batch = torch.stack(buf, dim=0)
+                    model(batch)
+                    buf = []
+            if buf:
+                batch = torch.stack(buf, dim=0)
+                model(batch)
+
+        # Save new state dict + metadata copy with provenance field.
+        torch.save(model.state_dict(), str(dst / "model.pt"))
+        meta_src = src / "metadata.json"
+        if meta_src.exists():
+            with open(meta_src, "r", encoding="utf-8") as fh:
+                meta = json.load(fh)
+            meta["calibrated_from"] = src.name
+            meta["id"] = dst.name
+            meta["name"] = (meta.get("name", src.name) + " (AdaBN)")
+            with open(dst / "metadata.json", "w", encoding="utf-8") as fh:
+                json.dump(meta, fh, indent=2)
+        else:
+            logger.warning(
+                "Source model has no metadata.json; calibrated model "
+                "will lack provenance + class info. Copy manually.")
+        # Copy ONNX variants too if present, because downstream
+        # inference might prefer them; without recalibration they
+        # still carry the old BN stats but the user can convert.
+        for fname in ("model.onnx", "model_static.onnx",
+                      "model_static_bn.onnx"):
+            f = src / fname
+            if f.exists():
+                shutil.copy2(f, dst / fname)
+
+        logger.info("AdaBN calibration saved to %s", dst)
+        return str(dst / "model.pt")

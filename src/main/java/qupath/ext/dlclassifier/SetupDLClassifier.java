@@ -34,6 +34,7 @@ import qupath.ext.dlclassifier.service.warnings.InteractionWarningRegistration;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
+import qupath.ext.dlclassifier.ui.AdaBNDialog;
 import qupath.ext.dlclassifier.ui.MAEPretrainingDialog;
 import qupath.ext.dlclassifier.ui.SSLPretrainingDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
@@ -533,6 +534,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         sslPretrainOption.setOnAction(e -> startSSLPretraining());
         sslPretrainOption.disableProperty().bind(environmentReady.not());
 
+        MenuItem calibrateBNOption = new MenuItem("Calibrate model to current image...");
+        TooltipHelper.installOnMenuItem(calibrateBNOption,
+                "AdaBN (Adaptive Batch Normalization).\n" +
+                "Recomputes BatchNorm running statistics on tiles sampled\n" +
+                "from the current image. Saves a new model with '_adabn'\n" +
+                "suffix; the original is preserved. No retraining or labels\n" +
+                "required -- closes most cross-acquisition performance gap.");
+        calibrateBNOption.setOnAction(e -> startAdaBNCalibration());
+        calibrateBNOption.disableProperty().bind(environmentReady.not());
+
         // Rebuild DL Environment - always visible so users can fix broken environments
         MenuItem rebuildItem = new MenuItem(res.getString("menu.rebuildEnvironment"));
         TooltipHelper.installOnMenuItem(rebuildItem,
@@ -591,13 +602,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         if (showSslOption) {
             utilitiesMenu.getItems().addAll(pythonConsoleOption, whereFilesOption,
                     systemInfoOption, new SeparatorMenuItem(),
-                    freeGpuOption, maePretrainOption, sslPretrainOption, cleanUpOption,
+                    freeGpuOption, maePretrainOption, sslPretrainOption,
+                    calibrateBNOption, cleanUpOption,
                     loadIssuesOption,
                     new SeparatorMenuItem(), rebuildItem);
         } else {
             utilitiesMenu.getItems().addAll(pythonConsoleOption, whereFilesOption,
                     systemInfoOption, new SeparatorMenuItem(),
-                    freeGpuOption, maePretrainOption, cleanUpOption,
+                    freeGpuOption, maePretrainOption,
+                    calibrateBNOption, cleanUpOption,
                     loadIssuesOption,
                     new SeparatorMenuItem(), rebuildItem);
         }
@@ -1966,6 +1979,204 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         if (cap > 0 && totalTiles > cap) {
             capTilesTotal(tempDir, cap, progress);
         }
+    }
+
+    /**
+     * Launches AdaBN ('Calibrate model to current image').
+     * <p>
+     * Samples N random tiles from the currently-open image at the model's
+     * training tile size, then calls {@code calibrate_batchnorm} on the
+     * Python side to recompute BN running stats. Saves a new model with
+     * the {@code _adabn} suffix; the source model is untouched.
+     */
+    private void startAdaBNCalibration() {
+        QuPathGUI qupath = QuPathGUI.getInstance();
+        ImageData<BufferedImage> imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showWarningNotification(EXTENSION_NAME,
+                    "AdaBN needs an open image to sample tiles from.");
+            return;
+        }
+
+        var configOpt = AdaBNDialog.showDialog();
+        if (configOpt.isEmpty()) return;
+        AdaBNDialog.AdaBNConfig adaConfig = configOpt.get();
+
+        ClassifierBackend backend = BackendFactory.getBackend();
+        if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "AdaBN requires the Appose backend.");
+            return;
+        }
+
+        ModelManager modelManager = new ModelManager();
+        ClassifierMetadata classifier = modelManager.loadClassifier(adaConfig.classifierId());
+        if (classifier == null) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Could not load classifier metadata for "
+                            + adaConfig.classifierId());
+            return;
+        }
+        java.util.Optional<Path> modelFile = modelManager.getModelPath(adaConfig.classifierId());
+        if (modelFile.isEmpty()) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Could not locate model files for " + classifier.getName());
+            return;
+        }
+        Path sourceModelDir = modelFile.get().getParent();
+
+        // Tile size: prefer trainingTileSizePx (post-0.7.9), fall back to inputWidth.
+        int tileSize = classifier.getTrainingTileSizePx() > 0
+                ? classifier.getTrainingTileSizePx()
+                : classifier.getInputWidth();
+        if (tileSize <= 0) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Classifier metadata has no usable tile size.");
+            return;
+        }
+
+        // Output directory: parallel to source, '<id>_adabn' (deduped if exists).
+        Path adaOutputDir = sourceModelDir.resolveSibling(
+                sourceModelDir.getFileName().toString() + "_adabn");
+        int dedupe = 1;
+        while (Files.exists(adaOutputDir)) {
+            adaOutputDir = sourceModelDir.resolveSibling(
+                    sourceModelDir.getFileName().toString() + "_adabn_" + (++dedupe));
+        }
+        final Path outputDirFinal = adaOutputDir;
+
+        // Reconstruct ChannelConfiguration from metadata (mirrors DLClassifierScripts).
+        ChannelConfiguration channelConfig = ChannelConfiguration.builder()
+                .selectedChannels(
+                        java.util.stream.IntStream.range(0, classifier.getInputChannels())
+                                .boxed().toList())
+                .channelNames(classifier.getExpectedChannelNames().isEmpty()
+                        ? List.of("Red", "Green", "Blue")
+                        : classifier.getExpectedChannelNames())
+                .bitDepth(classifier.getBitDepthTrained())
+                .normalizationStrategy(classifier.getNormalizationStrategy())
+                .build();
+        Map<String, Object> inputConfig = ApposeClassifierBackend.buildInputConfig(channelConfig);
+
+        // Temp tile dir
+        final Path tempTileDir;
+        try {
+            String exportDirPref = DLClassifierPreferences.getTrainingExportDir();
+            if (exportDirPref != null && !exportDirPref.isEmpty()) {
+                Path exportBase = Path.of(exportDirPref);
+                Files.createDirectories(exportBase);
+                tempTileDir = Files.createTempDirectory(exportBase, "adabn-tiles-");
+            } else {
+                tempTileDir = Files.createTempDirectory("adabn-tiles-");
+            }
+        } catch (IOException ex) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Cannot create temp tile directory: " + ex.getMessage());
+            return;
+        }
+
+        Dialogs.showInfoNotification(EXTENSION_NAME,
+                "Calibrating " + classifier.getName() + " on " + adaConfig.nTiles()
+                        + " tiles. This runs in the background.");
+
+        Thread worker = new Thread(() -> {
+            try {
+                qupath.lib.images.servers.ImageServer<BufferedImage> server =
+                        imageData.getServer();
+                int imgW = server.getWidth();
+                int imgH = server.getHeight();
+                if (imgW < tileSize || imgH < tileSize) {
+                    throw new IOException("Image (" + imgW + "x" + imgH
+                            + ") is smaller than the model's tile size ("
+                            + tileSize + "). AdaBN cannot proceed.");
+                }
+
+                java.util.Random rng = new java.util.Random();
+                List<String> tilePaths = new java.util.ArrayList<>();
+                int written = 0;
+                int attempts = 0;
+                int maxAttempts = adaConfig.nTiles() * 3;
+                while (written < adaConfig.nTiles() && attempts < maxAttempts) {
+                    attempts++;
+                    int x = rng.nextInt(imgW - tileSize + 1);
+                    int y = rng.nextInt(imgH - tileSize + 1);
+                    qupath.lib.regions.RegionRequest request =
+                            qupath.lib.regions.RegionRequest.createInstance(
+                                    server.getPath(), 1.0,
+                                    x, y, tileSize, tileSize, 0, 0);
+                    BufferedImage tile;
+                    try {
+                        tile = server.readRegion(request);
+                    } catch (IOException ioe) {
+                        logger.debug("Skipping tile at {},{}: {}", x, y, ioe.toString());
+                        continue;
+                    }
+                    if (tile == null
+                            || tile.getWidth() != tileSize
+                            || tile.getHeight() != tileSize) {
+                        continue;
+                    }
+                    String fname = String.format("tile_%05d.tif", written);
+                    Path tilePath = tempTileDir.resolve(fname);
+                    try {
+                        int numBands = tile.getRaster().getNumBands();
+                        int dataType = tile.getRaster().getDataBuffer().getDataType();
+                        if (numBands <= 4
+                                && dataType == java.awt.image.DataBuffer.TYPE_BYTE) {
+                            javax.imageio.ImageIO.write(tile, "TIFF", tilePath.toFile());
+                        } else {
+                            Path rawPath = tempTileDir.resolve(
+                                    String.format("tile_%05d.raw", written));
+                            qupath.ext.dlclassifier.utilities.AnnotationExtractor
+                                    .writeRawFloat(
+                                            qupath.ext.dlclassifier.utilities
+                                                    .BitDepthConverter.toFloatArray(tile),
+                                            rawPath);
+                            tilePath = rawPath;
+                        }
+                    } catch (IOException ioe) {
+                        logger.warn("Failed to write tile {}: {}", written, ioe.toString());
+                        continue;
+                    }
+                    tilePaths.add(tilePath.toAbsolutePath().toString());
+                    written++;
+                }
+
+                if (tilePaths.size() < 16) {
+                    throw new IOException("Only " + tilePaths.size()
+                            + " usable tiles extracted (needed at least 16). "
+                            + "Image may be too small or unreadable.");
+                }
+
+                logger.info("AdaBN: extracted {} tiles into {}; calling backend",
+                        tilePaths.size(), tempTileDir);
+
+                String savedPath = apposeBackend.calibrateBatchnorm(
+                        sourceModelDir.toAbsolutePath().toString(),
+                        tilePaths,
+                        outputDirFinal.toAbsolutePath().toString(),
+                        inputConfig,
+                        16);
+
+                Platform.runLater(() ->
+                        Dialogs.showInfoNotification(EXTENSION_NAME,
+                                "AdaBN calibration complete: "
+                                        + outputDirFinal.getFileName()
+                                        + ". Refresh the model list to see it."));
+                logger.info("AdaBN saved to {}", savedPath);
+            } catch (Exception ex) {
+                logger.error("AdaBN calibration failed", ex);
+                Platform.runLater(() ->
+                        Dialogs.showErrorNotification(EXTENSION_NAME,
+                                "AdaBN failed: " + ex.getMessage()));
+            } finally {
+                try {
+                    deleteRecursive(tempTileDir);
+                } catch (IOException ignored) {}
+            }
+        }, "DLClassifier-AdaBN");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private static void deleteRecursive(Path root) throws IOException {

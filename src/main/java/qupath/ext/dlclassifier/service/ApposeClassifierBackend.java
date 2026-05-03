@@ -167,6 +167,57 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
     }
 
+    /**
+     * Run AdaBN calibration: forward-pass tiles from a target image
+     * through the model in BatchNorm-train mode so the running mean/
+     * variance statistics adapt to the new acquisition's pixel
+     * distribution. Result is a new model with `_adabn` suffix; the
+     * source model is left untouched.
+     *
+     * @param modelPath   absolute path to source model directory
+     * @param tilePaths   absolute paths to tiles sampled from target
+     *                    image (typically 100 - 500)
+     * @param outputDir   destination directory for the calibrated
+     *                    model.pt + metadata.json
+     * @param inputConfig same input_config used at inference (channels,
+     *                    normalization). Re-uses
+     *                    {@link #buildInputConfig(ChannelConfiguration)}
+     *                    on the caller side.
+     * @return absolute path to the saved calibrated model.pt
+     * @throws IOException on Appose failure or Python exception
+     */
+    public String calibrateBatchnorm(
+            String modelPath,
+            List<String> tilePaths,
+            String outputDir,
+            Map<String, Object> inputConfig,
+            int batchSize) throws IOException {
+        Map<String, Object> inputs = new LinkedHashMap<>();
+        inputs.put("model_path", modelPath);
+        inputs.put("tile_paths", tilePaths);
+        inputs.put("output_dir", outputDir);
+        inputs.put("input_config", inputConfig);
+        inputs.put("batch_size", batchSize);
+        try {
+            Task task = ApposeService.getInstance()
+                    .runTask("calibrate_batchnorm", inputs);
+            boolean success = Boolean.TRUE.equals(task.outputs.get("success"));
+            String message = String.valueOf(task.outputs.get("message"));
+            String savedPath = String.valueOf(
+                    task.outputs.getOrDefault("output_path", ""));
+            if (!success) {
+                throw new IOException("AdaBN failed: " + message);
+            }
+            logger.info("AdaBN: {}", message);
+            return savedPath;
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException(
+                    "Appose AdaBN call failed: " + e.getMessage(), e);
+        }
+    }
+
     // ==================== Training ====================
 
     @Override

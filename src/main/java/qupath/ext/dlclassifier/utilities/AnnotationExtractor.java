@@ -1536,7 +1536,7 @@ public class AnnotationExtractor {
      * @param outPath output file path
      * @throws IOException if writing fails
      */
-    static void writeRawFloat(float[][][] data, Path outPath) throws IOException {
+    public static void writeRawFloat(float[][][] data, Path outPath) throws IOException {
         int h = data.length;
         int w = data[0].length;
         int c = data[0][0].length;
