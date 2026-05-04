@@ -667,15 +667,18 @@ public class LayerFreezePanel extends VBox {
             nameLabel = new Label();
             nameLabel.setStyle("-fx-font-weight: bold;");
 
-            HBox detailBox = new HBox(10);
             paramsLabel = new Label();
             paramsLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 11px;");
             descLabel = new Label();
             descLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 11px;");
-            descLabel.setMaxWidth(300);
-            detailBox.getChildren().addAll(paramsLabel, descLabel);
+            // Description gets its own row inside the VBox and wraps to the
+            // available cell width. The previous layout placed it next to
+            // paramsLabel inside an HBox with a 300px maxWidth, which clipped
+            // the description after about six words.
+            descLabel.setWrapText(true);
+            descLabel.setMaxWidth(Double.MAX_VALUE);
 
-            textBox.getChildren().addAll(nameLabel, detailBox);
+            textBox.getChildren().addAll(nameLabel, paramsLabel, descLabel);
             HBox.setHgrow(textBox, Priority.ALWAYS);
 
             container.getChildren().addAll(freezeCheck, depthIndicator, textBox);
