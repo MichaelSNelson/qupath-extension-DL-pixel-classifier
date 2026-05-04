@@ -489,7 +489,10 @@ public class TrainingDialog {
             scrollPane.setFitToWidth(true);
             scrollPane.setMaxHeight(Double.MAX_VALUE);
             scrollPane.setPrefHeight(advancedMode.get() ? 700 : 650);
-            scrollPane.setPrefWidth(550);
+            // 680 instead of 550: the Retraining preset combo's longest item
+            // ("Keep basics, retrain upper layers -- medium dataset (500-5000)")
+            // gets clipped at the previous width.
+            scrollPane.setPrefWidth(680);
 
             // Resize dialog when toggling modes
             advancedMode.addListener((obs, wasAdvanced, isAdvanced) -> {

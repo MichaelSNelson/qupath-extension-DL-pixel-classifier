@@ -95,6 +95,9 @@ public class LayerFreezePanel extends VBox {
                 "Custom"
         );
         presetCombo.setValue("Keep basics, retrain upper layers -- medium dataset (500-5000)");
+        // Wide enough that the longest preset string is never clipped, even
+        // if the parent dialog is shrunk by the user.
+        presetCombo.setMinWidth(480);
         presetCombo.setOnAction(e -> applyPreset());
         TooltipHelper.install(presetCombo,
                 "How much of the pretrained model to keep vs. retrain on your data.\n\n" +
