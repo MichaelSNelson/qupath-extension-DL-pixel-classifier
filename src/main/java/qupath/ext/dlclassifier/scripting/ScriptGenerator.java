@@ -1,12 +1,19 @@
 package qupath.ext.dlclassifier.scripting;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.InferenceConfig.ApplicationScope;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -14,11 +21,20 @@ import java.util.stream.Collectors;
  * <p>
  * Scripts are designed to be pasted into QuPath's Script Editor and run
  * independently, without requiring the GUI dialogs.
+ * <p>
+ * Emission policy: every Builder method that the dialogs populate is
+ * emittable here. Some fields are always emitted (so the script reflects
+ * user intent verbatim and round-trips through edits), some only when the
+ * value is non-default and meaningful, and some only when relevant to
+ * other choices (e.g. focal gamma is only meaningful when the loss is
+ * focal). The exact rules are documented inline next to each helper.
  *
  * @author UW-LOCI
  * @since 0.1.0
  */
 public class ScriptGenerator {
+
+    private static final Logger logger = LoggerFactory.getLogger(ScriptGenerator.class);
 
     private ScriptGenerator() {
         // Utility class
@@ -30,6 +46,8 @@ public class ScriptGenerator {
     private static String getExtensionVersion() {
         return qupath.ext.dlclassifier.service.ApposeService.DL_SERVER_VERSION;
     }
+
+    // ==================== Inference Script ====================
 
     /**
      * Generates a Groovy inference script from the current dialog settings.
@@ -44,6 +62,7 @@ public class ScriptGenerator {
                                                   InferenceConfig config,
                                                   ChannelConfiguration channelConfig,
                                                   ApplicationScope scope) {
+        EmissionStats stats = new EmissionStats();
         StringBuilder sb = new StringBuilder();
 
         appendLine(sb, "/**");
@@ -64,17 +83,10 @@ public class ScriptGenerator {
         // Configure inference
         appendLine(sb, "// Configure inference");
         appendLine(sb, "def inferenceConfig = InferenceConfig.builder()");
-        appendLine(sb, "        .tileSize(" + config.getTileSize() + ")");
-        appendLine(sb, "        .overlap(" + config.getOverlap() + ")");
-        appendLine(sb, "        .blendMode(InferenceConfig.BlendMode." + config.getBlendMode().name() + ")");
-        appendLine(sb, "        .outputType(InferenceConfig.OutputType." + config.getOutputType().name() + ")");
-        if (config.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
-            appendLine(sb, "        .objectType(InferenceConfig.OutputObjectType." + config.getObjectType().name() + ")");
-            appendLine(sb, "        .minObjectSize(" + config.getMinObjectSizeMicrons() + ")");
-            appendLine(sb, "        .holeFilling(" + config.getHoleFillingMicrons() + ")");
-            appendLine(sb, "        .smoothing(" + config.getBoundarySmoothing() + ")");
-        }
-        appendLine(sb, "        .useGPU(" + config.isUseGPU() + ")");
+        appendInferenceTilingFields(sb, config, stats);
+        appendInferenceOutputFields(sb, config, stats);
+        appendInferenceSmoothingFields(sb, config, stats);
+        appendInferenceStrategyFields(sb, config, stats);
         appendLine(sb, "        .build()");
         appendLine(sb, "");
 
@@ -121,8 +133,15 @@ public class ScriptGenerator {
         appendLine(sb, "    println \"WARNING: ${result.message()}\"");
         appendLine(sb, "}");
 
+        logger.info("Generated inference script for classifier '{}' (scope={}): emitted {} fields, skipped {} fields",
+                classifierId, scope, stats.emitted, stats.skipped);
+        if (logger.isDebugEnabled() && !stats.skippedNames.isEmpty()) {
+            logger.debug("Inference script skipped fields: {}", stats.skippedNames);
+        }
         return sb.toString();
     }
+
+    // ==================== Training Script ====================
 
     /**
      * Generates a Groovy training script from the current dialog settings.
@@ -139,6 +158,7 @@ public class ScriptGenerator {
                                                  TrainingConfig config,
                                                  ChannelConfiguration channelConfig,
                                                  List<String> selectedClasses) {
+        EmissionStats stats = new EmissionStats();
         StringBuilder sb = new StringBuilder();
 
         appendLine(sb, "/**");
@@ -152,84 +172,16 @@ public class ScriptGenerator {
         // Configure training
         appendLine(sb, "// Configure training");
         appendLine(sb, "def trainingConfig = TrainingConfig.builder()");
-        appendLine(sb, "        .classifierType(" + quote(config.getModelType()) + ")");
-        appendLine(sb, "        .backbone(" + quote(config.getBackbone()) + ")");
-        appendLine(sb, "        .epochs(" + config.getEpochs() + ")");
-        appendLine(sb, "        .batchSize(" + config.getBatchSize() + ")");
-        appendLine(sb, "        .learningRate(" + config.getLearningRate() + ")");
-        appendLine(sb, "        .validationSplit(" + config.getValidationSplit() + ")");
-        appendLine(sb, "        .tileSize(" + config.getTileSize() + ")");
-        appendLine(sb, "        .overlap(" + config.getOverlap() + ")");
-        appendLine(sb, "        .usePretrainedWeights(" + config.isUsePretrainedWeights() + ")");
-        appendLine(sb, "        .schedulerType(" + quote(config.getSchedulerType()) + ")");
-        appendLine(sb, "        .lossFunction(" + quote(config.getLossFunction()) + ")");
-        appendLine(sb, "        .earlyStoppingMetric(" + quote(config.getEarlyStoppingMetric()) + ")");
-        appendLine(sb, "        .earlyStoppingPatience(" + config.getEarlyStoppingPatience() + ")");
-        appendLine(sb, "        .mixedPrecision(" + config.isMixedPrecision() + ")");
-        appendLine(sb, "        .downsample(" + config.getDownsample() + ")");
-        if (config.getContextScale() > 1) {
-            appendLine(sb, "        .contextScale(" + config.getContextScale() + ")");
-        }
-        if (config.getLineStrokeWidth() > 0) {
-            appendLine(sb, "        .lineStrokeWidth(" + config.getLineStrokeWidth() + ")");
-        }
-        if (config.getWeightDecay() > 0) {
-            appendLine(sb, "        .weightDecay(" + config.getWeightDecay() + ")");
-        }
-        if (config.getDiscriminativeLrRatio() != 0.1) {
-            appendLine(sb, "        .discriminativeLrRatio(" + config.getDiscriminativeLrRatio() + ")");
-        }
-        if (config.getSeed() != null) {
-            appendLine(sb, "        .seed(" + config.getSeed() + ")");
-        }
-        if (config.getFocusClass() != null) {
-            appendLine(sb, "        .focusClass(" + quote(config.getFocusClass()) + ")");
-            if (config.getFocusClassMinIoU() > 0) {
-                appendLine(sb, "        .focusClassMinIoU(" + config.getFocusClassMinIoU() + ")");
-            }
-        }
-
-        // Intensity augmentation mode
-        if (config.getIntensityAugMode() != null
-                && !"none".equals(config.getIntensityAugMode())) {
-            appendLine(sb, "        .intensityAugMode("
-                    + quote(config.getIntensityAugMode()) + ")");
-        }
-
-        // Augmentation config
-        Map<String, Boolean> augConfig = config.getAugmentationConfig();
-        if (augConfig != null && !augConfig.isEmpty()) {
-            appendLine(sb, "        .augmentation([");
-            int i = 0;
-            for (Map.Entry<String, Boolean> entry : augConfig.entrySet()) {
-                String comma = (i < augConfig.size() - 1) ? "," : "";
-                appendLine(sb, "            " + quote(entry.getKey()) + ": " + entry.getValue() + comma);
-                i++;
-            }
-            appendLine(sb, "        ])");
-        }
-
-        // Advanced augmentation strength/probability parameters
-        Map<String, Object> augParams = config.getAugmentationParams();
-        if (augParams != null && !augParams.isEmpty()) {
-            appendLine(sb, "        .augmentationParams([");
-            int i = 0;
-            for (Map.Entry<String, Object> entry : augParams.entrySet()) {
-                String comma = (i < augParams.size() - 1) ? "," : "";
-                Object v = entry.getValue();
-                String rendered = (v instanceof Number) ? v.toString() : quote(String.valueOf(v));
-                appendLine(sb, "            " + quote(entry.getKey()) + ": " + rendered + comma);
-                i++;
-            }
-            appendLine(sb, "        ])");
-        }
-
-        // Frozen layers
-        List<String> frozenLayers = config.getFrozenLayers();
-        if (frozenLayers != null && !frozenLayers.isEmpty()) {
-            appendLine(sb, "        .frozenLayers(" + formatStringList(frozenLayers) + ")");
-        }
-
+        appendArchitectureFields(sb, config, stats);
+        appendDurationFields(sb, config, stats);
+        appendBatchAndTileFields(sb, config, stats);
+        appendLearningRateFields(sb, config, stats);
+        appendLossAndOhemFields(sb, config, stats);
+        appendAugmentationFields(sb, config, stats);
+        appendPerformanceFields(sb, config, stats);
+        appendTransferLearningFields(sb, config, stats);
+        appendFocusClassFields(sb, config, stats);
+        appendReproducibilityFields(sb, config, stats);
         appendLine(sb, "        .build()");
         appendLine(sb, "");
 
@@ -262,10 +214,410 @@ public class ScriptGenerator {
         appendLine(sb, "    println \"Training failed: ${result.message()}\"");
         appendLine(sb, "}");
 
+        logger.info("Generated training script for classifier '{}' (type={}): emitted {} fields, skipped {} fields",
+                classifierName, config.getModelType(), stats.emitted, stats.skipped);
+        if (logger.isDebugEnabled() && !stats.skippedNames.isEmpty()) {
+            logger.debug("Training script skipped fields: {}", stats.skippedNames);
+        }
         return sb.toString();
     }
 
-    // ==================== Helper Methods ====================
+    // ==================== Training Field Groups ====================
+
+    /**
+     * Group A: Architecture and backbone. classifierType and backbone are
+     * always emitted; handlerParameters only when non-empty (architecture-
+     * specific UI controls such as MuViT model_config / patch_size).
+     */
+    private static void appendArchitectureFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Architecture & Backbone ---");
+        emit(sb, stats, "classifierType", "        .classifierType(" + quote(config.getModelType()) + ")");
+        emit(sb, stats, "backbone", "        .backbone(" + quote(config.getBackbone()) + ")");
+
+        Map<String, Object> handlerParams = config.getHandlerParameters();
+        if (handlerParams != null && !handlerParams.isEmpty()) {
+            emit(sb, stats, "handlerParameters", buildMapLiteral("        .handlerParameters", handlerParams));
+        } else {
+            skip(stats, "handlerParameters");
+        }
+    }
+
+    /**
+     * Group B: Training duration, early stopping, progressive resize, and
+     * pretrained model path. epochs / earlyStoppingMetric / earlyStoppingPatience
+     * are always emitted. progressiveResize is emitted only when true (default
+     * false). pretrainedModelPath is emitted only when set.
+     */
+    private static void appendDurationFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Training Duration & Checkpointing ---");
+        emit(sb, stats, "epochs", "        .epochs(" + config.getEpochs() + ")");
+        emit(sb, stats, "earlyStoppingMetric", "        .earlyStoppingMetric(" + quote(config.getEarlyStoppingMetric()) + ")");
+        emit(sb, stats, "earlyStoppingPatience", "        .earlyStoppingPatience(" + config.getEarlyStoppingPatience() + ")");
+
+        // Emit only when true; default false and emitting "false" adds noise.
+        if (config.isProgressiveResize()) {
+            emit(sb, stats, "progressiveResize", "        .progressiveResize(true)");
+        } else {
+            skip(stats, "progressiveResize");
+        }
+
+        // Emit only when explicitly set (non-null, non-empty path).
+        String pretrainedPath = config.getPretrainedModelPath();
+        if (pretrainedPath != null && !pretrainedPath.isEmpty()) {
+            emit(sb, stats, "pretrainedModelPath", "        .pretrainedModelPath(" + quote(pretrainedPath) + ")");
+        } else {
+            skip(stats, "pretrainedModelPath");
+        }
+    }
+
+    /**
+     * Group C: Batch size, gradient accumulation, tile geometry, downsample,
+     * whole-image mode, and training pixel size. Core sizing fields are
+     * always emitted. gradientAccumulationSteps is emitted only when > 1
+     * (default 1). wholeImage is emitted only when true (default false).
+     * trainingPixelSizeMicrons is emitted only when finite (NaN means the
+     * project is uncalibrated and the field carries no useful value).
+     */
+    private static void appendBatchAndTileFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Batch, Memory & Tile Geometry ---");
+        emit(sb, stats, "batchSize", "        .batchSize(" + config.getBatchSize() + ")");
+
+        // Default 1 means "no accumulation" -- only meaningful when > 1.
+        if (config.getGradientAccumulationSteps() > 1) {
+            emit(sb, stats, "gradientAccumulationSteps",
+                    "        .gradientAccumulationSteps(" + config.getGradientAccumulationSteps() + ")");
+        } else {
+            skip(stats, "gradientAccumulationSteps");
+        }
+
+        emit(sb, stats, "tileSize", "        .tileSize(" + config.getTileSize() + ")");
+        emit(sb, stats, "overlap", "        .overlap(" + config.getOverlap() + ")");
+        emit(sb, stats, "downsample", "        .downsample(" + formatDouble(config.getDownsample()) + ")");
+
+        if (config.isWholeImage()) {
+            emit(sb, stats, "wholeImage", "        .wholeImage(true)");
+        } else {
+            skip(stats, "wholeImage");
+        }
+
+        // NaN means uncalibrated project; emitting it would just confuse the script.
+        double trainingMpp = config.getTrainingPixelSizeMicrons();
+        if (Double.isFinite(trainingMpp)) {
+            emit(sb, stats, "trainingPixelSizeMicrons",
+                    "        .trainingPixelSizeMicrons(" + formatDouble(trainingMpp) + ")");
+        } else {
+            skip(stats, "trainingPixelSizeMicrons");
+        }
+    }
+
+    /**
+     * Group D: Learning rate, discriminative-LR ratio, weight decay, LR
+     * Finder, fused optimizer, and scheduler type. All emitted unconditionally
+     * for round-trip clarity: the user might choose any of them on purpose
+     * even when the value matches the default, and a script that omits them
+     * silently picks up whatever default is current at run time.
+     */
+    private static void appendLearningRateFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Learning Rate & Optimizer ---");
+        emit(sb, stats, "learningRate", "        .learningRate(" + formatDouble(config.getLearningRate()) + ")");
+
+        // Always emit: the previous "only when != 0.1" was clever but lost
+        // user intent when they kept the default and later wanted to tweak.
+        emit(sb, stats, "discriminativeLrRatio",
+                "        .discriminativeLrRatio(" + formatDouble(config.getDiscriminativeLrRatio()) + ")");
+
+        // Always emit weightDecay: 0 is a legitimate user choice and the
+        // builder default is 0.01, so the previous "> 0" gate was incorrect.
+        emit(sb, stats, "weightDecay", "        .weightDecay(" + formatDouble(config.getWeightDecay()) + ")");
+
+        emit(sb, stats, "useLrFinder", "        .useLrFinder(" + config.isUseLrFinder() + ")");
+        emit(sb, stats, "fusedOptimizer", "        .fusedOptimizer(" + config.isFusedOptimizer() + ")");
+        emit(sb, stats, "schedulerType", "        .schedulerType(" + quote(config.getSchedulerType()) + ")");
+    }
+
+    /**
+     * Group E: Loss function and OHEM-related parameters. lossFunction is
+     * always emitted. focalGamma is emitted only when the loss is focal-based;
+     * boundarySigma / boundaryWMin only when the loss is boundary-based.
+     * OHEM ratio fields are emitted only when OHEM is actually doing
+     * something (ratio &lt; 1.0 or schedule is not "fixed").
+     */
+    private static void appendLossAndOhemFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Loss & OHEM ---");
+        String loss = config.getLossFunction();
+        emit(sb, stats, "lossFunction", "        .lossFunction(" + quote(loss) + ")");
+
+        // focalGamma is only meaningful for focal-family losses ("focal", "focal_dice").
+        if (loss != null && loss.contains("focal")) {
+            emit(sb, stats, "focalGamma", "        .focalGamma(" + formatDouble(config.getFocalGamma()) + ")");
+        } else {
+            skip(stats, "focalGamma");
+        }
+
+        // boundarySigma / boundaryWMin only matter for boundary-weighted losses
+        // ("boundary_ce", "boundary_ce_dice"). Always emit them when relevant
+        // so that user-tuned values like sigma=2 do not get silently reverted
+        // to the default 3.0 when the script runs.
+        if (loss != null && loss.contains("boundary")) {
+            emit(sb, stats, "boundarySigma",
+                    "        .boundarySigma(" + formatDouble(config.getBoundarySigma()) + ")");
+            emit(sb, stats, "boundaryWMin",
+                    "        .boundaryWMin(" + formatDouble(config.getBoundaryWMin()) + ")");
+        } else {
+            skip(stats, "boundarySigma");
+            skip(stats, "boundaryWMin");
+        }
+
+        // OHEM is disabled at the default ratio of 1.0 with schedule "fixed".
+        // Only emit when the user has actually engaged it.
+        boolean ohemActive = config.getOhemHardRatio() < 1.0
+                || !"fixed".equals(config.getOhemSchedule());
+        if (ohemActive) {
+            emit(sb, stats, "ohemHardRatio",
+                    "        .ohemHardRatio(" + formatDouble(config.getOhemHardRatio()) + ")");
+            emit(sb, stats, "ohemHardRatioStart",
+                    "        .ohemHardRatioStart(" + formatDouble(config.getOhemHardRatioStart()) + ")");
+            emit(sb, stats, "ohemSchedule",
+                    "        .ohemSchedule(" + quote(config.getOhemSchedule()) + ")");
+        } else {
+            skip(stats, "ohemHardRatio");
+            skip(stats, "ohemHardRatioStart");
+            skip(stats, "ohemSchedule");
+        }
+
+        // ohemAdaptiveFloor: opt-in strategy switch; emit only when true.
+        if (config.isOhemAdaptiveFloor()) {
+            emit(sb, stats, "ohemAdaptiveFloor", "        .ohemAdaptiveFloor(true)");
+        } else {
+            skip(stats, "ohemAdaptiveFloor");
+        }
+    }
+
+    /**
+     * Group F: Augmentation flags, advanced augmentation parameters,
+     * intensity augmentation mode, multi-scale context, line stroke width,
+     * and class weight multipliers. All emitted only when non-default.
+     */
+    private static void appendAugmentationFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Augmentation & Preprocessing ---");
+
+        Map<String, Boolean> augConfig = config.getAugmentationConfig();
+        if (augConfig != null && !augConfig.isEmpty()) {
+            emit(sb, stats, "augmentation", buildMapLiteral("        .augmentation", augConfig));
+        } else {
+            skip(stats, "augmentation");
+        }
+
+        Map<String, Object> augParams = config.getAugmentationParams();
+        if (augParams != null && !augParams.isEmpty()) {
+            emit(sb, stats, "augmentationParams", buildMapLiteral("        .augmentationParams", augParams));
+        } else {
+            skip(stats, "augmentationParams");
+        }
+
+        // intensityAugMode default is "none"; only emit when the user picked
+        // brightfield or fluorescence.
+        String intensityMode = config.getIntensityAugMode();
+        if (intensityMode != null && !"none".equals(intensityMode)) {
+            emit(sb, stats, "intensityAugMode", "        .intensityAugMode(" + quote(intensityMode) + ")");
+        } else {
+            skip(stats, "intensityAugMode");
+        }
+
+        if (config.getContextScale() > 1) {
+            emit(sb, stats, "contextScale", "        .contextScale(" + config.getContextScale() + ")");
+        } else {
+            skip(stats, "contextScale");
+        }
+
+        if (config.getLineStrokeWidth() > 0) {
+            emit(sb, stats, "lineStrokeWidth", "        .lineStrokeWidth(" + config.getLineStrokeWidth() + ")");
+        } else {
+            skip(stats, "lineStrokeWidth");
+        }
+
+        Map<String, Double> classWeights = config.getClassWeightMultipliers();
+        if (classWeights != null && !classWeights.isEmpty()) {
+            emit(sb, stats, "classWeightMultipliers",
+                    buildMapLiteral("        .classWeightMultipliers", classWeights));
+        } else {
+            skip(stats, "classWeightMultipliers");
+        }
+    }
+
+    /**
+     * Group G: Performance and precision toggles. mixedPrecision is always
+     * emitted (the default is true and turning it off is a meaningful
+     * decision). gpuAugmentation, useTorchCompile are emitted only when
+     * true (off by default and platform-dependent). dataLoaderWorkers is
+     * emitted only when non-zero (default 0). inMemoryDataset is always
+     * emitted to keep the user's explicit choice ("auto", "on", or "off").
+     */
+    private static void appendPerformanceFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Performance & Precision ---");
+        emit(sb, stats, "mixedPrecision", "        .mixedPrecision(" + config.isMixedPrecision() + ")");
+
+        if (config.isGpuAugmentation()) {
+            emit(sb, stats, "gpuAugmentation", "        .gpuAugmentation(true)");
+        } else {
+            skip(stats, "gpuAugmentation");
+        }
+
+        if (config.isUseTorchCompile()) {
+            emit(sb, stats, "useTorchCompile", "        .useTorchCompile(true)");
+        } else {
+            skip(stats, "useTorchCompile");
+        }
+
+        if (config.getDataLoaderWorkers() != 0) {
+            emit(sb, stats, "dataLoaderWorkers",
+                    "        .dataLoaderWorkers(" + config.getDataLoaderWorkers() + ")");
+        } else {
+            skip(stats, "dataLoaderWorkers");
+        }
+
+        // Always emit: "auto", "on", "off" are all meaningful explicit choices.
+        emit(sb, stats, "inMemoryDataset", "        .inMemoryDataset(" + quote(config.getInMemoryDataset()) + ")");
+    }
+
+    /**
+     * Group H: Transfer learning toggles. usePretrainedWeights is always
+     * emitted. freezeEncoderLayers is emitted only when > 0; frozenLayers
+     * only when non-empty.
+     */
+    private static void appendTransferLearningFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Transfer Learning & Layer Freezing ---");
+        emit(sb, stats, "usePretrainedWeights",
+                "        .usePretrainedWeights(" + config.isUsePretrainedWeights() + ")");
+
+        if (config.getFreezeEncoderLayers() > 0) {
+            emit(sb, stats, "freezeEncoderLayers",
+                    "        .freezeEncoderLayers(" + config.getFreezeEncoderLayers() + ")");
+        } else {
+            skip(stats, "freezeEncoderLayers");
+        }
+
+        List<String> frozenLayers = config.getFrozenLayers();
+        if (frozenLayers != null && !frozenLayers.isEmpty()) {
+            emit(sb, stats, "frozenLayers", "        .frozenLayers(" + formatStringList(frozenLayers) + ")");
+        } else {
+            skip(stats, "frozenLayers");
+        }
+    }
+
+    /**
+     * Group I: Focus class for best-model selection. focusClass is emitted
+     * only when set; focusClassMinIoU is nested inside that block and
+     * emitted only when > 0.
+     */
+    private static void appendFocusClassFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Focus Class ---");
+        String focusClass = config.getFocusClass();
+        if (focusClass != null && !focusClass.isEmpty()) {
+            emit(sb, stats, "focusClass", "        .focusClass(" + quote(focusClass) + ")");
+            if (config.getFocusClassMinIoU() > 0) {
+                emit(sb, stats, "focusClassMinIoU",
+                        "        .focusClassMinIoU(" + formatDouble(config.getFocusClassMinIoU()) + ")");
+            } else {
+                skip(stats, "focusClassMinIoU");
+            }
+        } else {
+            skip(stats, "focusClass");
+            skip(stats, "focusClassMinIoU");
+        }
+    }
+
+    /**
+     * Group J: Reproducibility and split integrity. seed is emitted only
+     * when set (null = non-deterministic). hasPerImageSplitRoles is emitted
+     * only when true (default false). validationSplit is always emitted.
+     */
+    private static void appendReproducibilityFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Reproducibility & Integrity ---");
+        if (config.getSeed() != null) {
+            emit(sb, stats, "seed", "        .seed(" + config.getSeed() + ")");
+        } else {
+            skip(stats, "seed");
+        }
+
+        if (config.isHasPerImageSplitRoles()) {
+            emit(sb, stats, "hasPerImageSplitRoles", "        .hasPerImageSplitRoles(true)");
+        } else {
+            skip(stats, "hasPerImageSplitRoles");
+        }
+
+        emit(sb, stats, "validationSplit",
+                "        .validationSplit(" + formatDouble(config.getValidationSplit()) + ")");
+    }
+
+    // ==================== Inference Field Groups ====================
+
+    /**
+     * Inference group A: Tile geometry and blend mode. All emitted always.
+     */
+    private static void appendInferenceTilingFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Tiling & Geometry ---");
+        emit(sb, stats, "tileSize", "        .tileSize(" + config.getTileSize() + ")");
+        emit(sb, stats, "overlap", "        .overlap(" + config.getOverlap() + ")");
+        emit(sb, stats, "blendMode",
+                "        .blendMode(InferenceConfig.BlendMode." + config.getBlendMode().name() + ")");
+    }
+
+    /**
+     * Inference group B: Output type and (when OBJECTS) the per-object
+     * post-processing parameters. outputType is always emitted; the OBJECTS
+     * sub-block is gated on outputType so it does not appear for
+     * MEASUREMENTS / OVERLAY / RENDERED_OVERLAY.
+     */
+    private static void appendInferenceOutputFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Output Configuration ---");
+        emit(sb, stats, "outputType",
+                "        .outputType(InferenceConfig.OutputType." + config.getOutputType().name() + ")");
+
+        if (config.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
+            emit(sb, stats, "objectType",
+                    "        .objectType(InferenceConfig.OutputObjectType." + config.getObjectType().name() + ")");
+            emit(sb, stats, "minObjectSize",
+                    "        .minObjectSize(" + formatDouble(config.getMinObjectSizeMicrons()) + ")");
+            emit(sb, stats, "holeFilling",
+                    "        .holeFilling(" + formatDouble(config.getHoleFillingMicrons()) + ")");
+            emit(sb, stats, "boundarySmoothing",
+                    "        .smoothing(" + formatDouble(config.getBoundarySmoothing()) + ")");
+        } else {
+            skip(stats, "objectType");
+            skip(stats, "minObjectSize");
+            skip(stats, "holeFilling");
+            skip(stats, "boundarySmoothing");
+        }
+    }
+
+    /**
+     * Inference group C: Overlay smoothing and compact argmax output toggle.
+     * Both always emitted to round-trip user intent.
+     */
+    private static void appendInferenceSmoothingFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Smoothing & Output Format ---");
+        emit(sb, stats, "overlaySmoothingSigma",
+                "        .overlaySmoothingSigma(" + formatDouble(config.getOverlaySmoothingSigma()) + ")");
+        emit(sb, stats, "useCompactArgmaxOutput",
+                "        .useCompactArgmaxOutput(" + config.isUseCompactArgmaxOutput() + ")");
+    }
+
+    /**
+     * Inference group D: Inference strategy and memory toggles. useGPU,
+     * useTTA, multiPassAveraging, and maxTilesInMemory all emitted always.
+     */
+    private static void appendInferenceStrategyFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
+        appendLine(sb, "        // --- Inference Strategy ---");
+        emit(sb, stats, "useGPU", "        .useGPU(" + config.isUseGPU() + ")");
+        emit(sb, stats, "useTTA", "        .useTTA(" + config.isUseTTA() + ")");
+        emit(sb, stats, "multiPassAveraging",
+                "        .multiPassAveraging(" + config.isMultiPassAveraging() + ")");
+        emit(sb, stats, "maxTilesInMemory",
+                "        .maxTilesInMemory(" + config.getMaxTilesInMemory() + ")");
+    }
+
+    // ==================== Channel Config ====================
 
     private static void appendChannelConfig(StringBuilder sb, ChannelConfiguration channelConfig) {
         appendLine(sb, "// Configure channels");
@@ -277,6 +629,133 @@ public class ScriptGenerator {
                 + channelConfig.getNormalizationStrategy().name() + ")");
         appendLine(sb, "        .build()");
         appendLine(sb, "");
+    }
+
+    // ==================== Helper Methods ====================
+
+    /**
+     * Emits a single Builder line and increments the per-script "emitted"
+     * counter. Field name is recorded for telemetry/log analysis.
+     */
+    private static void emit(StringBuilder sb, EmissionStats stats, String fieldName, String line) {
+        appendLine(sb, line);
+        stats.emitted++;
+        stats.emittedNames.add(fieldName);
+    }
+
+    /**
+     * Records that a field was intentionally skipped (default-valued or
+     * gated off). Increments the counter and records the field name.
+     */
+    private static void skip(EmissionStats stats, String fieldName) {
+        stats.skipped++;
+        stats.skippedNames.add(fieldName);
+    }
+
+    /**
+     * Builds a multi-line Groovy map literal of the form:
+     * <pre>
+     * {builderPrefix}([
+     *     "key1": value1,
+     *     "key2": value2
+     * ])
+     * </pre>
+     * Iteration order is whatever the source map provides. The configs
+     * normalize to LinkedHashMap so order is deterministic per input;
+     * any unordered map is wrapped in a TreeMap-by-key fallback so two
+     * runs of the generator on the same config produce byte-identical
+     * scripts.
+     */
+    private static String buildMapLiteral(String builderPrefix, Map<String, ?> map) {
+        StringBuilder lines = new StringBuilder();
+        lines.append(builderPrefix).append("([\n");
+        Map<String, ?> ordered = ensureDeterministicOrder(map);
+        int i = 0;
+        int size = ordered.size();
+        for (Map.Entry<String, ?> entry : ordered.entrySet()) {
+            String comma = (i < size - 1) ? "," : "";
+            lines.append("            ")
+                    .append(quote(entry.getKey()))
+                    .append(": ")
+                    .append(formatMapValue(entry.getValue()))
+                    .append(comma)
+                    .append("\n");
+            i++;
+        }
+        lines.append("        ])");
+        return lines.toString();
+    }
+
+    /**
+     * Returns the input map directly when it already has a stable iteration
+     * order (LinkedHashMap or any SortedMap); otherwise copies entries into
+     * a TreeMap so emission order is reproducible.
+     */
+    private static Map<String, ?> ensureDeterministicOrder(Map<String, ?> map) {
+        if (map instanceof LinkedHashMap || map instanceof java.util.SortedMap) {
+            return map;
+        }
+        return new TreeMap<>(map);
+    }
+
+    /**
+     * Renders a single map value for a Groovy literal. Numbers go in
+     * locale-safe form, booleans as lowercase keywords, strings quoted,
+     * everything else falls back to quoted toString().
+     */
+    private static String formatMapValue(Object value) {
+        if (value == null) return "null";
+        if (value instanceof Boolean) return value.toString();
+        if (value instanceof Double || value instanceof Float) {
+            return formatDouble(((Number) value).doubleValue());
+        }
+        if (value instanceof Number) return value.toString();
+        return quote(String.valueOf(value));
+    }
+
+    /**
+     * Formats a double for Groovy with locale-safe decimal separator.
+     * Uses %g for compact representation across small (1e-6) and large
+     * values, and strips trailing zeros / spurious exponents that %g
+     * sometimes adds.
+     */
+    private static String formatDouble(double value) {
+        if (Double.isNaN(value)) return "Double.NaN";
+        if (Double.isInfinite(value)) {
+            return value > 0 ? "Double.POSITIVE_INFINITY" : "Double.NEGATIVE_INFINITY";
+        }
+        // %.6g gives 6 significant digits without locale-specific separators.
+        String s = String.format(Locale.ROOT, "%.6g", value);
+        return cleanupNumberString(s);
+    }
+
+    /**
+     * Cleans a printf %g result: trims trailing zeros after the decimal
+     * point, drops a trailing dot, and normalizes the exponent.
+     */
+    private static String cleanupNumberString(String s) {
+        // Split off any exponent, clean the mantissa, reattach.
+        int ePos = -1;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == 'e' || c == 'E') {
+                ePos = i;
+                break;
+            }
+        }
+        String mantissa = ePos < 0 ? s : s.substring(0, ePos);
+        String exponent = ePos < 0 ? "" : s.substring(ePos);
+        if (mantissa.indexOf('.') >= 0) {
+            int end = mantissa.length();
+            while (end > 1 && mantissa.charAt(end - 1) == '0') {
+                end--;
+            }
+            if (end > 1 && mantissa.charAt(end - 1) == '.') {
+                end--;
+            }
+            mantissa = mantissa.substring(0, end);
+        }
+        return mantissa + exponent;
     }
 
     private static void appendLine(StringBuilder sb, String line) {
@@ -315,5 +794,17 @@ public class ScriptGenerator {
         return items.stream()
                 .map(String::valueOf)
                 .collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /**
+     * Tracks per-script emission counts for log telemetry. A field is
+     * "emitted" when its Builder method appears in the generated script
+     * and "skipped" when intentionally omitted by emission policy.
+     */
+    private static final class EmissionStats {
+        int emitted = 0;
+        int skipped = 0;
+        final List<String> emittedNames = new ArrayList<>();
+        final List<String> skippedNames = new ArrayList<>();
     }
 }
