@@ -725,6 +725,14 @@ public class ScriptGenerator {
     /**
      * Emits inference {@code tileSize}, {@code overlap}, and {@code blendMode}.
      * All three are core geometry and always meaningful; emitted always.
+     * <p>
+     * {@code overlapPercent} is intentionally NOT emitted: the
+     * {@link InferenceConfig.Builder#overlapPercent} setter recomputes
+     * {@code overlap = round(tileSize * percent / 100)}, so emitting it
+     * alongside {@code overlap} would be redundant at best (and could
+     * silently override the explicit pixel value if the two disagree
+     * after a tileSize edit). The pixel value is the source of truth in
+     * the generated script.
      */
     private static void appendInferenceTilingFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Tiling & Geometry ---");
