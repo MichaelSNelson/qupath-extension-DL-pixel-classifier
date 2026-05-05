@@ -21,6 +21,17 @@ The fastest way to create a script:
 3. Paste into QuPath's Script Editor (**Automate > Show script editor**)
 4. Modify as needed for batch use
 
+As of 0.7.9 the generated script round-trips every dialog setting that the
+training and inference workflows accept, including loss-function-specific
+parameters (focal gamma, boundary sigma / floor weight), OHEM ratios and
+schedule, gradient accumulation, mixed precision, fused optimizer, LR
+Finder, GPU augmentation, torch.compile, in-memory dataset mode, the
+pretrained model path, and inference-side TTA / multi-pass averaging /
+overlay smoothing. Earlier versions silently dropped some of these and
+fell back to defaults when the script was run later -- if you have a
+script generated before 0.7.9, regenerate it from the dialog so the
+emitted settings match what the GUI ran.
+
 ## Simple API
 
 ### Load a classifier
