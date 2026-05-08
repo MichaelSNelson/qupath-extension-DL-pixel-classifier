@@ -5,6 +5,13 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
@@ -12,15 +19,6 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.projects.Project;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.stream.Stream;
 
 /**
  * Manages classifier persistence and loading.
@@ -81,18 +79,16 @@ public class ModelManager {
         }
 
         try (Stream<Path> paths = Files.list(dir)) {
-            paths.filter(Files::isDirectory)
-                    .forEach(classifierDir -> {
-                        try {
-                            ClassifierMetadata metadata = loadMetadata(classifierDir);
-                            if (metadata != null) {
-                                classifiers.add(metadata);
-                            }
-                        } catch (Exception e) {
-                            logger.warn("Failed to load classifier from {}: {}",
-                                    classifierDir, e.getMessage());
-                        }
-                    });
+            paths.filter(Files::isDirectory).forEach(classifierDir -> {
+                try {
+                    ClassifierMetadata metadata = loadMetadata(classifierDir);
+                    if (metadata != null) {
+                        classifiers.add(metadata);
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to load classifier from {}: {}", classifierDir, e.getMessage());
+                }
+            });
         } catch (IOException e) {
             logger.warn("Failed to list classifiers in {}: {}", dir, e.getMessage());
         }
@@ -110,9 +106,8 @@ public class ModelManager {
         // Try project first
         Project<?> project = QuPathGUI.getInstance().getProject();
         if (project != null) {
-            Path projectDir = project.getPath().getParent()
-                    .resolve(CLASSIFIERS_DIR)
-                    .resolve(classifierId);
+            Path projectDir =
+                    project.getPath().getParent().resolve(CLASSIFIERS_DIR).resolve(classifierId);
             if (Files.exists(projectDir)) {
                 return loadMetadata(projectDir);
             }
@@ -164,8 +159,7 @@ public class ModelManager {
             if (createdAt == null) {
                 try {
                     createdAt = LocalDateTime.ofInstant(
-                            Files.getLastModifiedTime(metadataPath).toInstant(),
-                            java.time.ZoneId.systemDefault());
+                            Files.getLastModifiedTime(metadataPath).toInstant(), java.time.ZoneId.systemDefault());
                 } catch (Exception e) {
                     logger.debug("Could not read file modification time: {}", e.getMessage());
                 }
@@ -175,19 +169,27 @@ public class ModelManager {
             String modelType = arch.has("type") ? arch.get("type").getAsString() : "unknown";
             String backbone = arch.has("backbone") ? arch.get("backbone").getAsString() : "";
             int inputWidth = arch.has("input_width") ? arch.get("input_width").getAsInt() : 512;
-            int inputHeight = arch.has("input_height") ? arch.get("input_height").getAsInt() : 512;
-            int inputChannels = arch.has("input_channels") ? arch.get("input_channels").getAsInt() : 3;
+            int inputHeight =
+                    arch.has("input_height") ? arch.get("input_height").getAsInt() : 512;
+            int inputChannels =
+                    arch.has("input_channels") ? arch.get("input_channels").getAsInt() : 3;
             double downsample = arch.has("downsample") ? arch.get("downsample").getAsDouble() : 1.0;
-            int contextScale = arch.has("context_scale") ? arch.get("context_scale").getAsInt() : 1;
+            int contextScale =
+                    arch.has("context_scale") ? arch.get("context_scale").getAsInt() : 1;
             // effective_input_channels (v0.3.8+) is the actual model input size including
             // context channel doubling. If present, validate it matches our computation.
             if (arch.has("effective_input_channels")) {
                 int effective = arch.get("effective_input_channels").getAsInt();
                 int computed = contextScale > 1 ? inputChannels * 2 : inputChannels;
                 if (effective != computed) {
-                    logger.warn("effective_input_channels={} in metadata doesn't match "
-                            + "computed value {} (input_channels={}, context_scale={}). "
-                            + "Using metadata value.", effective, computed, inputChannels, contextScale);
+                    logger.warn(
+                            "effective_input_channels={} in metadata doesn't match "
+                                    + "computed value {} (input_channels={}, context_scale={}). "
+                                    + "Using metadata value.",
+                            effective,
+                            computed,
+                            inputChannels,
+                            contextScale);
                     // Override inputChannels so getEffectiveInputChannels() returns
                     // the correct value: effective = inputChannels * 2 when contextScale > 1,
                     // so inputChannels = effective / 2; when contextScale == 1,
@@ -197,17 +199,18 @@ public class ModelManager {
             }
 
             // Channel config
-            JsonObject chanConfig = obj.has("channel_config") ?
-                    obj.getAsJsonObject("channel_config") : new JsonObject();
+            JsonObject chanConfig =
+                    obj.has("channel_config") ? obj.getAsJsonObject("channel_config") : new JsonObject();
             List<String> channelNames = new ArrayList<>();
             if (chanConfig.has("expected_channels")) {
-                chanConfig.getAsJsonArray("expected_channels")
-                        .forEach(e -> channelNames.add(e.getAsString()));
+                chanConfig.getAsJsonArray("expected_channels").forEach(e -> channelNames.add(e.getAsString()));
             }
-            String normStrategy = chanConfig.has("normalization_strategy") ?
-                    chanConfig.get("normalization_strategy").getAsString() : "PERCENTILE_99";
-            int bitDepth = chanConfig.has("bit_depth_trained") ?
-                    chanConfig.get("bit_depth_trained").getAsInt() : 8;
+            String normStrategy = chanConfig.has("normalization_strategy")
+                    ? chanConfig.get("normalization_strategy").getAsString()
+                    : "PERCENTILE_99";
+            int bitDepth = chanConfig.has("bit_depth_trained")
+                    ? chanConfig.get("bit_depth_trained").getAsInt()
+                    : 8;
 
             // Classes
             List<ClassifierMetadata.ClassInfo> classes = new ArrayList<>();
@@ -217,8 +220,7 @@ public class ModelManager {
                     classes.add(new ClassifierMetadata.ClassInfo(
                             c.get("index").getAsInt(),
                             c.get("name").getAsString(),
-                            c.has("color") ? c.get("color").getAsString() : "#808080"
-                    ));
+                            c.has("color") ? c.get("color").getAsString() : "#808080"));
                 });
             }
 
@@ -229,10 +231,13 @@ public class ModelManager {
             double finalAccuracy = 0.0;
             if (obj.has("training")) {
                 JsonObject train = obj.getAsJsonObject("training");
-                trainingImageName = train.has("image_name") ? train.get("image_name").getAsString() : "";
+                trainingImageName =
+                        train.has("image_name") ? train.get("image_name").getAsString() : "";
                 trainingEpochs = train.has("epochs") ? train.get("epochs").getAsInt() : 0;
                 finalLoss = train.has("final_loss") ? train.get("final_loss").getAsDouble() : 0.0;
-                finalAccuracy = train.has("final_accuracy") ? train.get("final_accuracy").getAsDouble() : 0.0;
+                finalAccuracy = train.has("final_accuracy")
+                        ? train.get("final_accuracy").getAsDouble()
+                        : 0.0;
             }
 
             // Parse training settings (full hyperparameters, may be absent in older models)
@@ -269,8 +274,7 @@ public class ModelManager {
                             try {
                                 statMap.put(key, statObj.get(key).getAsDouble());
                             } catch (NumberFormatException | IllegalStateException e) {
-                                logger.debug("Skipping non-numeric normalization stat '{}': {}",
-                                        key, e.getMessage());
+                                logger.debug("Skipping non-numeric normalization stat '{}': {}", key, e.getMessage());
                             }
                         }
                         normalizationStats.add(statMap);
@@ -307,18 +311,15 @@ public class ModelManager {
                     builder.trainingPixelSizeMicrons(
                             obj.get("training_pixel_size_um").getAsDouble());
                 } catch (NumberFormatException | IllegalStateException e) {
-                    logger.debug("Could not parse training_pixel_size_um: {}",
-                            e.getMessage());
+                    logger.debug("Could not parse training_pixel_size_um: {}", e.getMessage());
                 }
             }
             if (obj.has("training_tile_size_px")
                     && obj.get("training_tile_size_px").isJsonPrimitive()) {
                 try {
-                    builder.trainingTileSizePx(
-                            obj.get("training_tile_size_px").getAsInt());
+                    builder.trainingTileSizePx(obj.get("training_tile_size_px").getAsInt());
                 } catch (NumberFormatException | IllegalStateException e) {
-                    logger.debug("Could not parse training_tile_size_px: {}",
-                            e.getMessage());
+                    logger.debug("Could not parse training_tile_size_px: {}", e.getMessage());
                 }
             }
             if (createdAt != null) {
@@ -357,8 +358,9 @@ public class ModelManager {
      * @return path to the saved classifier
      * @throws IOException if saving fails
      */
-    public Path saveClassifier(ClassifierMetadata metadata, Path modelPath,
-            boolean toProject, boolean filesAlreadyInPlace) throws IOException {
+    public Path saveClassifier(
+            ClassifierMetadata metadata, Path modelPath, boolean toProject, boolean filesAlreadyInPlace)
+            throws IOException {
         // Determine target directory
         Path targetDir;
         if (toProject) {
@@ -366,9 +368,7 @@ public class ModelManager {
             if (project == null) {
                 throw new IOException("No project is open");
             }
-            targetDir = project.getPath().getParent()
-                    .resolve(CLASSIFIERS_DIR)
-                    .resolve(metadata.getId());
+            targetDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR).resolve(metadata.getId());
         } else {
             targetDir = userClassifiersDir.resolve(metadata.getId());
         }
@@ -395,8 +395,7 @@ public class ModelManager {
                 }
             } else {
                 // Copy single file
-                Files.copy(modelPath, targetDir.resolve(modelPath.getFileName()),
-                        StandardCopyOption.REPLACE_EXISTING);
+                Files.copy(modelPath, targetDir.resolve(modelPath.getFileName()), StandardCopyOption.REPLACE_EXISTING);
             }
         }
 
@@ -466,9 +465,8 @@ public class ModelManager {
         // Try project first
         Project<?> project = QuPathGUI.getInstance().getProject();
         if (project != null) {
-            Path projectDir = project.getPath().getParent()
-                    .resolve(CLASSIFIERS_DIR)
-                    .resolve(classifierId);
+            Path projectDir =
+                    project.getPath().getParent().resolve(CLASSIFIERS_DIR).resolve(classifierId);
             if (deleteDirectory(projectDir)) {
                 return true;
             }
@@ -488,14 +486,13 @@ public class ModelManager {
         }
 
         try (Stream<Path> paths = Files.walk(dir)) {
-            paths.sorted(Comparator.reverseOrder())
-                    .forEach(p -> {
-                        try {
-                            Files.delete(p);
-                        } catch (IOException e) {
-                            logger.warn("Failed to delete {}: {}", p, e.getMessage());
-                        }
-                    });
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    logger.warn("Failed to delete {}: {}", p, e.getMessage());
+                }
+            });
             return true;
         } catch (IOException e) {
             logger.error("Failed to delete directory {}: {}", dir, e.getMessage());
@@ -526,15 +523,12 @@ public class ModelManager {
             throw new IOException("No project is open");
         }
 
-        Path targetDir = project.getPath().getParent()
-                .resolve(CLASSIFIERS_DIR)
-                .resolve(metadata.getId());
+        Path targetDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR).resolve(metadata.getId());
 
         // Check for existing classifier with the same ID
         if (Files.exists(targetDir)) {
             logger.warn("Classifier with ID '{}' already exists at {}", metadata.getId(), targetDir);
-            throw new IOException(
-                    "A classifier with ID '" + metadata.getId() + "' already exists in this project.");
+            throw new IOException("A classifier with ID '" + metadata.getId() + "' already exists in this project.");
         }
 
         // Copy all files from extracted directory to target
@@ -568,8 +562,7 @@ public class ModelManager {
         // Try project -- direct directory name match
         Project<?> project = QuPathGUI.getInstance().getProject();
         if (project != null) {
-            Path classifiersDir = project.getPath().getParent()
-                    .resolve(CLASSIFIERS_DIR);
+            Path classifiersDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR);
             Path projectDir = classifiersDir.resolve(classifierId);
             Optional<Path> modelPath = findModelFile(projectDir);
             if (modelPath.isPresent()) {
@@ -615,7 +608,8 @@ public class ModelManager {
                     if (obj.has("id") && targetId.equals(obj.get("id").getAsString())) {
                         return findModelFile(dir);
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
         } catch (IOException e) {
             logger.debug("Failed to scan classifiers dir: {}", e.getMessage());

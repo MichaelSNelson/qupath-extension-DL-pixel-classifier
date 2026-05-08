@@ -1,11 +1,10 @@
 package qupath.ext.dlclassifier.utilities;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.Raster;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Converts images between different bit depths and data types.
@@ -43,8 +42,7 @@ public class BitDepthConverter {
         DataBuffer dataBuffer = raster.getDataBuffer();
         int dataType = dataBuffer.getDataType();
 
-        logger.debug("Converting image {}x{} with {} bands, data type={}",
-                width, height, numBands, dataType);
+        logger.debug("Converting image {}x{} with {} bands, data type={}", width, height, numBands, dataType);
 
         switch (dataType) {
             case DataBuffer.TYPE_BYTE -> extractByte(raster, result, width, height, numBands);
@@ -62,8 +60,7 @@ public class BitDepthConverter {
     /**
      * Extracts data from byte (8-bit) raster.
      */
-    private static void extractByte(Raster raster, float[][][] result,
-                                    int width, int height, int numBands) {
+    private static void extractByte(Raster raster, float[][][] result, int width, int height, int numBands) {
         int[] pixel = new int[numBands];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -78,8 +75,7 @@ public class BitDepthConverter {
     /**
      * Extracts data from unsigned short (12/16-bit) raster.
      */
-    private static void extractUShort(Raster raster, float[][][] result,
-                                      int width, int height, int numBands) {
+    private static void extractUShort(Raster raster, float[][][] result, int width, int height, int numBands) {
         int[] pixel = new int[numBands];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -94,8 +90,7 @@ public class BitDepthConverter {
     /**
      * Extracts data from signed short raster.
      */
-    private static void extractShort(Raster raster, float[][][] result,
-                                     int width, int height, int numBands) {
+    private static void extractShort(Raster raster, float[][][] result, int width, int height, int numBands) {
         int[] pixel = new int[numBands];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -110,8 +105,7 @@ public class BitDepthConverter {
     /**
      * Extracts data from int raster.
      */
-    private static void extractInt(Raster raster, float[][][] result,
-                                   int width, int height, int numBands) {
+    private static void extractInt(Raster raster, float[][][] result, int width, int height, int numBands) {
         int[] pixel = new int[numBands];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -126,8 +120,7 @@ public class BitDepthConverter {
     /**
      * Extracts data from float raster.
      */
-    private static void extractFloat(Raster raster, float[][][] result,
-                                     int width, int height, int numBands) {
+    private static void extractFloat(Raster raster, float[][][] result, int width, int height, int numBands) {
         float[] pixel = new float[numBands];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -140,8 +133,7 @@ public class BitDepthConverter {
     /**
      * Extracts data from double raster.
      */
-    private static void extractDouble(Raster raster, float[][][] result,
-                                      int width, int height, int numBands) {
+    private static void extractDouble(Raster raster, float[][][] result, int width, int height, int numBands) {
         double[] pixel = new double[numBands];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -257,9 +249,7 @@ public class BitDepthConverter {
         // ITU-R BT.601 luminance formula
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                result[y][x][0] = 0.299f * data[y][x][0] +
-                        0.587f * data[y][x][1] +
-                        0.114f * data[y][x][2];
+                result[y][x][0] = 0.299f * data[y][x][0] + 0.587f * data[y][x][1] + 0.114f * data[y][x][2];
             }
         }
 

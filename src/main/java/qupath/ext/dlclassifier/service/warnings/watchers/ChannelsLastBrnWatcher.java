@@ -1,11 +1,9 @@
 package qupath.ext.dlclassifier.service.warnings.watchers;
 
+import java.util.Map;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.service.warnings.InferenceWarning;
-import qupath.ext.dlclassifier.service.warnings.InteractionWarning;
-
-import java.util.Map;
 
 /**
  * Fires when the loaded model is known to contain BatchRenorm

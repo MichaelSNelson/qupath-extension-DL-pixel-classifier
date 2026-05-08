@@ -1,15 +1,14 @@
 package qupath.ext.dlclassifier.service;
 
-import qupath.lib.classifiers.pixel.PixelClassifier;
-import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
-import qupath.lib.images.ImageData;
-import qupath.lib.regions.RegionRequest;
-
 import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
 import java.awt.image.WritableRaster;
 import java.io.IOException;
 import java.util.List;
+import qupath.lib.classifiers.pixel.PixelClassifier;
+import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
+import qupath.lib.images.ImageData;
+import qupath.lib.regions.RegionRequest;
 
 /**
  * A {@link PixelClassifier} that serves pre-computed, blended classification
@@ -38,9 +37,7 @@ public class PrecomputedPixelClassifier implements PixelClassifier {
      * @param width     width of the classMap (pixels at inference resolution)
      * @param height    height of the classMap (pixels at inference resolution)
      */
-    public record ClassifiedRegion(byte[][] classMap,
-                                    int offsetX, int offsetY,
-                                    int width, int height) {}
+    public record ClassifiedRegion(byte[][] classMap, int offsetX, int offsetY, int width, int height) {}
 
     private final List<ClassifiedRegion> regions;
     private final PixelClassifierMetadata metadata;
@@ -53,9 +50,8 @@ public class PrecomputedPixelClassifier implements PixelClassifier {
      * @param metadata   pixel classifier metadata for QuPath's overlay system
      * @param colorModel color model mapping class indices to display colors
      */
-    public PrecomputedPixelClassifier(List<ClassifiedRegion> regions,
-                                       PixelClassifierMetadata metadata,
-                                       IndexColorModel colorModel) {
+    public PrecomputedPixelClassifier(
+            List<ClassifiedRegion> regions, PixelClassifierMetadata metadata, IndexColorModel colorModel) {
         this.regions = List.copyOf(regions);
         this.metadata = metadata;
         this.colorModel = colorModel;
@@ -67,14 +63,13 @@ public class PrecomputedPixelClassifier implements PixelClassifier {
     }
 
     @Override
-    public BufferedImage applyClassification(ImageData<BufferedImage> imageData,
-                                              RegionRequest request) throws IOException {
+    public BufferedImage applyClassification(ImageData<BufferedImage> imageData, RegionRequest request)
+            throws IOException {
         // Output tile dimensions in downsampled pixel space
         int outW = (int) Math.max(1, Math.round(request.getWidth() / request.getDownsample()));
         int outH = (int) Math.max(1, Math.round(request.getHeight() / request.getDownsample()));
 
-        BufferedImage result = new BufferedImage(outW, outH,
-                BufferedImage.TYPE_BYTE_INDEXED, colorModel);
+        BufferedImage result = new BufferedImage(outW, outH, BufferedImage.TYPE_BYTE_INDEXED, colorModel);
         WritableRaster raster = result.getRaster();
 
         // For each pre-computed region, check overlap with this tile request
@@ -82,10 +77,8 @@ public class PrecomputedPixelClassifier implements PixelClassifier {
             // Intersection in full-res coordinates
             int interLeft = Math.max(request.getX(), region.offsetX);
             int interTop = Math.max(request.getY(), region.offsetY);
-            int interRight = Math.min(request.getX() + request.getWidth(),
-                    region.offsetX + region.width);
-            int interBottom = Math.min(request.getY() + request.getHeight(),
-                    region.offsetY + region.height);
+            int interRight = Math.min(request.getX() + request.getWidth(), region.offsetX + region.width);
+            int interBottom = Math.min(request.getY() + request.getHeight(), region.offsetY + region.height);
 
             if (interLeft >= interRight || interTop >= interBottom) continue;
 

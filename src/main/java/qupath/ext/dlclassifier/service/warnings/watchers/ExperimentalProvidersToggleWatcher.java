@@ -1,7 +1,6 @@
 package qupath.ext.dlclassifier.service.warnings.watchers;
 
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
-import qupath.ext.dlclassifier.service.warnings.InteractionWarning;
 import qupath.ext.dlclassifier.service.warnings.PreferenceWarning;
 
 /**
@@ -16,8 +15,7 @@ import qupath.ext.dlclassifier.service.warnings.PreferenceWarning;
  * inference (close + reopen the overlay, or use the "Reload all
  * models" action once E.4 ships).
  */
-public final class ExperimentalProvidersToggleWatcher
-        implements PreferenceWarning {
+public final class ExperimentalProvidersToggleWatcher implements PreferenceWarning {
 
     public static final String ID = "experimental-providers-toggle";
 
@@ -57,7 +55,6 @@ public final class ExperimentalProvidersToggleWatcher
         // The watcher is invoked from a preference-change listener.
         // It fires unconditionally when invoked -- the listener
         // itself already knows a toggle just happened.
-        return DLClassifierPreferences.isExperimentalTensorRT()
-                || DLClassifierPreferences.isExperimentalInt8();
+        return DLClassifierPreferences.isExperimentalTensorRT() || DLClassifierPreferences.isExperimentalInt8();
     }
 }

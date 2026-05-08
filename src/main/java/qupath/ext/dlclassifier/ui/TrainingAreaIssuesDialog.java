@@ -1,6 +1,15 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
+import javafx.beans.binding.StringBinding;
 import javafx.beans.property.*;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
@@ -21,30 +30,20 @@ import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import javafx.beans.binding.Bindings;
-import javafx.beans.binding.StringBinding;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.AnnotationAdjuster;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.TrainingIssuesOverlayController;
 import qupath.ext.dlclassifier.service.TrainingIssuesOverlayController.OverlayMode;
 import qupath.ext.dlclassifier.service.TrainingIssuesSessionStore;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.images.ImageData;
-import qupath.lib.gui.viewer.overlays.BufferedImageOverlay;
-import qupath.lib.regions.ImagePlane;
-import qupath.lib.regions.ImageRegion;
 import qupath.fx.dialogs.Dialogs;
+import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.OverlayOptions;
 import qupath.lib.gui.viewer.QuPathViewer;
-
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import qupath.lib.gui.viewer.overlays.BufferedImageOverlay;
+import qupath.lib.images.ImageData;
+import qupath.lib.regions.ImagePlane;
+import qupath.lib.regions.ImageRegion;
 
 /**
  * Modeless dialog showing per-tile evaluation results from post-training analysis.
@@ -82,8 +81,7 @@ public class TrainingAreaIssuesDialog {
     // TODO(0.4.x): Once this viewer overlay is validated on Windows, remove
     // the inner JavaFX preview pane (tileImageView/disagreeImageView) -- the
     // viewer overlay supersedes it. Tracked in claude-reports/TODO_LIST.md.
-    private final TrainingIssuesOverlayController overlayController =
-            new TrainingIssuesOverlayController();
+    private final TrainingIssuesOverlayController overlayController = new TrainingIssuesOverlayController();
 
     // Preview pane components
     private final ImageView tileImageView;
@@ -124,13 +122,14 @@ public class TrainingAreaIssuesDialog {
      * @param patchSize      training patch size in pixels (at the downsampled resolution)
      * @param classColors    map of class name to packed RGB color, or null
      */
-    public TrainingAreaIssuesDialog(String classifierName,
-                                    ClassifierMetadata classifierMetadata,
-                                    Path modelDir,
-                                    List<ClassifierClient.TileEvaluationResult> results,
-                                    double downsample,
-                                    int patchSize,
-                                    Map<String, Integer> classColors) {
+    public TrainingAreaIssuesDialog(
+            String classifierName,
+            ClassifierMetadata classifierMetadata,
+            Path modelDir,
+            List<ClassifierClient.TileEvaluationResult> results,
+            double downsample,
+            int patchSize,
+            Map<String, Integer> classColors) {
         this.classifierName = classifierName;
         this.classifierMetadata = classifierMetadata;
         this.modelDir = modelDir;
@@ -156,11 +155,9 @@ public class TrainingAreaIssuesDialog {
 
         // Summary label
         long highLoss = results.stream().filter(r -> r.loss() > 1.0).count();
-        summaryLabel = new Label(String.format(
-                "%d tiles evaluated | %d with loss > 1.0", results.size(), highLoss));
+        summaryLabel = new Label(String.format("%d tiles evaluated | %d with loss > 1.0", results.size(), highLoss));
         summaryLabel.setStyle("-fx-font-weight: bold;");
-        summaryLabel.setTooltip(TooltipHelper.create(
-                "Total tiles evaluated and count of tiles with high loss.\n"
+        summaryLabel.setTooltip(TooltipHelper.create("Total tiles evaluated and count of tiles with high loss.\n"
                 + "Tiles are sorted by loss (worst first) to help find\n"
                 + "annotation errors and hard cases."));
 
@@ -168,18 +165,21 @@ public class TrainingAreaIssuesDialog {
         ComboBox<String> splitFilter = new ComboBox<>();
         splitFilter.getItems().addAll("All", "Train", "Val");
         splitFilter.setValue("All");
-        splitFilter.setTooltip(TooltipHelper.create(
-                "Filter tiles by dataset split.\n"
+        splitFilter.setTooltip(TooltipHelper.create("Filter tiles by dataset split.\n"
                 + "Val tiles are more diagnostic -- high loss there\n"
                 + "suggests annotation problems, not just overfitting."));
 
         // Size the slider range to the actual loss distribution in the data
         // rather than a fixed [0, 10]. When a reload replaces the rows the
         // range is recomputed via updateThresholdSliderRange().
-        double dataMinLoss = results.stream().mapToDouble(
-                ClassifierClient.TileEvaluationResult::loss).min().orElse(0.0);
-        double dataMaxLoss = results.stream().mapToDouble(
-                ClassifierClient.TileEvaluationResult::loss).max().orElse(1.0);
+        double dataMinLoss = results.stream()
+                .mapToDouble(ClassifierClient.TileEvaluationResult::loss)
+                .min()
+                .orElse(0.0);
+        double dataMaxLoss = results.stream()
+                .mapToDouble(ClassifierClient.TileEvaluationResult::loss)
+                .max()
+                .orElse(1.0);
         if (dataMaxLoss <= dataMinLoss) {
             dataMaxLoss = dataMinLoss + 1.0;
         }
@@ -190,15 +190,13 @@ public class TrainingAreaIssuesDialog {
         thresholdSlider.setMajorTickUnit(Math.max(span / 4.0, 0.01));
         thresholdSlider.setMinorTickCount(1);
         thresholdSlider.setPrefWidth(200);
-        thresholdSlider.setTooltip(TooltipHelper.create(
-                "Show only tiles with loss above this threshold.\n"
+        thresholdSlider.setTooltip(TooltipHelper.create("Show only tiles with loss above this threshold.\n"
                 + "Range auto-sized to this dataset's min/max loss.\n"
                 + "Increase to focus on the most problematic tiles."));
         this.thresholdSliderRef = thresholdSlider;
 
         Label thresholdLabel = new Label(String.format("Min Loss: %.2f", dataMinLoss));
-        thresholdLabel.setTooltip(TooltipHelper.create(
-                "Show only tiles with loss above this threshold.\n"
+        thresholdLabel.setTooltip(TooltipHelper.create("Show only tiles with loss above this threshold.\n"
                 + "Increase to focus on the most problematic tiles."));
         thresholdSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             thresholdLabel.setText(String.format("Min Loss: %.2f", newVal.doubleValue()));
@@ -206,15 +204,11 @@ public class TrainingAreaIssuesDialog {
         });
         this.thresholdLabelRef = thresholdLabel;
 
-        splitFilter.setOnAction(e -> updateFilter(splitFilter.getValue(),
-                thresholdSlider.getValue()));
+        splitFilter.setOnAction(e -> updateFilter(splitFilter.getValue(), thresholdSlider.getValue()));
 
         Label filterLabel = new Label("Filter:");
-        filterLabel.setTooltip(TooltipHelper.create(
-                "Filter tiles by dataset split and minimum loss threshold."));
-        HBox filterBox = new HBox(10,
-                filterLabel, splitFilter,
-                thresholdLabel, thresholdSlider);
+        filterLabel.setTooltip(TooltipHelper.create("Filter tiles by dataset split and minimum loss threshold."));
+        HBox filterBox = new HBox(10, filterLabel, splitFilter, thresholdLabel, thresholdSlider);
         filterBox.setAlignment(Pos.CENTER_LEFT);
 
         // Table
@@ -222,8 +216,7 @@ public class TrainingAreaIssuesDialog {
         sortedRows.comparatorProperty().bind(table.comparatorProperty());
         table.setItems(sortedRows);
         table.setTooltip(TooltipHelper.create(
-                "Click a row to navigate to that tile in the viewer\n"
-                + "and see the loss heatmap preview."));
+                "Click a row to navigate to that tile in the viewer\n" + "and see the loss heatmap preview."));
 
         TableColumn<TileRow, String> imageCol = new TableColumn<>("Image");
         imageCol.setCellValueFactory(new PropertyValueFactory<>("sourceImage"));
@@ -255,14 +248,21 @@ public class TrainingAreaIssuesDialog {
 
         // Add column tooltips via graphic labels
         setColumnTooltip(imageCol, "Source image this tile was extracted from.");
-        setColumnTooltip(splitCol, "Train or Val split. High-loss Val tiles\nare the best candidates for annotation review.");
-        setColumnTooltip(lossCol, "Per-tile loss value. Higher = model struggled more.\nSort by this column to find the worst tiles.");
-        setColumnTooltip(disagreeCol, "Percentage of pixels where the model's\nprediction differs from the ground truth annotation.");
-        setColumnTooltip(iouCol, "Mean Intersection-over-Union across all\nclasses present in this tile (higher is better).");
-        setColumnTooltip(worstClassCol, "Class with the lowest IoU in this tile.\nShows which class the model is struggling with\nand how poorly it performed (IoU score).");
+        setColumnTooltip(
+                splitCol, "Train or Val split. High-loss Val tiles\nare the best candidates for annotation review.");
+        setColumnTooltip(
+                lossCol,
+                "Per-tile loss value. Higher = model struggled more.\nSort by this column to find the worst tiles.");
+        setColumnTooltip(
+                disagreeCol,
+                "Percentage of pixels where the model's\nprediction differs from the ground truth annotation.");
+        setColumnTooltip(
+                iouCol, "Mean Intersection-over-Union across all\nclasses present in this tile (higher is better).");
+        setColumnTooltip(
+                worstClassCol,
+                "Class with the lowest IoU in this tile.\nShows which class the model is struggling with\nand how poorly it performed (IoU score).");
 
-        table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol,
-                iouCol, worstClassCol));
+        table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol, iouCol, worstClassCol));
         table.getSortOrder().add(lossCol);
 
         // Single-click navigates to tile, updates the inner preview pane, and
@@ -318,8 +318,7 @@ public class TrainingAreaIssuesDialog {
         // Zoom slider
         Label zoomLabel = new Label("Zoom: 1x");
         zoomLabel.setTooltip(TooltipHelper.create(
-                "Zoom level for the preview pane.\n"
-                + "Higher zoom helps identify which pixels have high loss."));
+                "Zoom level for the preview pane.\n" + "Higher zoom helps identify which pixels have high loss."));
         Slider zoomSlider = new Slider(1, 8, 1);
         zoomSlider.setShowTickLabels(true);
         zoomSlider.setShowTickMarks(true);
@@ -327,8 +326,7 @@ public class TrainingAreaIssuesDialog {
         zoomSlider.setMinorTickCount(0);
         zoomSlider.setSnapToTicks(true);
         zoomSlider.setPrefWidth(200);
-        zoomSlider.setTooltip(TooltipHelper.create(
-                "Zoom into the preview to see loss details at higher resolution.\n"
+        zoomSlider.setTooltip(TooltipHelper.create("Zoom into the preview to see loss details at higher resolution.\n"
                 + "Use the scrollbars or drag to pan when zoomed in.\n"
                 + "Helps identify which specific pixels have high loss."));
         zoomSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
@@ -351,15 +349,13 @@ public class TrainingAreaIssuesDialog {
         disagreeImageView.setFitHeight(256);
 
         Label opacityLabel = new Label("Overlay: 60%");
-        opacityLabel.setTooltip(TooltipHelper.create(
-                "Overlay transparency. Lower shows more of the original tile;\n"
+        opacityLabel.setTooltip(TooltipHelper.create("Overlay transparency. Lower shows more of the original tile;\n"
                 + "higher shows more of the loss/disagreement overlay."));
         Slider opacitySlider = new Slider(0, 100, 60);
         opacitySlider.setPrefWidth(200);
         opacitySlider.setShowTickLabels(true);
         opacitySlider.setMajorTickUnit(25);
-        opacitySlider.setTooltip(TooltipHelper.create(
-                "Adjust the overlay transparency.\n"
+        opacitySlider.setTooltip(TooltipHelper.create("Adjust the overlay transparency.\n"
                 + "Lower values show more of the original tile;\n"
                 + "higher values show more of the loss/disagreement overlay."));
         opacitySlider.valueProperty().addListener((obs, oldVal, newVal) -> {
@@ -378,8 +374,7 @@ public class TrainingAreaIssuesDialog {
         overlaySelector = new ComboBox<>();
         overlaySelector.getItems().addAll(OVERLAY_LOSS_HEATMAP, OVERLAY_DISAGREEMENT);
         overlaySelector.setValue(OVERLAY_LOSS_HEATMAP);
-        overlaySelector.setTooltip(TooltipHelper.create(
-                "Loss Heatmap: per-pixel loss intensity (blue=low, red=high).\n"
+        overlaySelector.setTooltip(TooltipHelper.create("Loss Heatmap: per-pixel loss intensity (blue=low, red=high).\n"
                 + "Disagreement: colored pixels where model prediction\n"
                 + "differs from the ground truth annotation."));
         overlaySelector.setOnAction(e -> {
@@ -403,9 +398,15 @@ public class TrainingAreaIssuesDialog {
         // Annotation adjustment panel (collapsible)
         TitledPane adjustmentPane = buildAnnotationAdjustmentPane();
 
-        VBox previewPane = new VBox(8, titleBar, previewScroll,
-                zoomLabel, zoomSlider,
-                opacityLabel, opacitySlider, legendBox,
+        VBox previewPane = new VBox(
+                8,
+                titleBar,
+                previewScroll,
+                zoomLabel,
+                zoomSlider,
+                opacityLabel,
+                opacitySlider,
+                legendBox,
                 adjustmentPane);
         previewPane.setPadding(new Insets(10, 0, 0, 10));
         previewPane.setAlignment(Pos.TOP_CENTER);
@@ -423,16 +424,15 @@ public class TrainingAreaIssuesDialog {
         // unavailable (e.g. sessions opened outside the training workflow
         // without sufficient context).
         Button saveSessionButton = new Button("Save Session...");
-        saveSessionButton.setTooltip(TooltipHelper.create(
-                "Persist the current list of tiles and their PNG assets under\n"
-                + "the classifier's model directory so this analysis can be\n"
-                + "reopened without re-running evaluation."));
+        saveSessionButton.setTooltip(
+                TooltipHelper.create("Persist the current list of tiles and their PNG assets under\n"
+                        + "the classifier's model directory so this analysis can be\n"
+                        + "reopened without re-running evaluation."));
         saveSessionButton.setOnAction(e -> saveCurrentSession());
 
         Button loadSessionButton = new Button("Load Session...");
         loadSessionButton.setTooltip(TooltipHelper.create(
-                "Reopen a previously saved Training Area Issues session\n"
-                + "for this classifier."));
+                "Reopen a previously saved Training Area Issues session\n" + "for this classifier."));
         loadSessionButton.setOnAction(e -> loadSavedSessionInteractive());
 
         boolean sessionsAvailable = classifierMetadata != null && modelDir != null;
@@ -443,8 +443,7 @@ public class TrainingAreaIssuesDialog {
         sessionBar.setAlignment(Pos.CENTER_LEFT);
 
         // Layout: table on left, preview on right
-        VBox tablePane = new VBox(10, summaryLabel, warningBanner, filterBox,
-                table, statusLabel, sessionBar);
+        VBox tablePane = new VBox(10, summaryLabel, warningBanner, filterBox, table, statusLabel, sessionBar);
         tablePane.setPadding(new Insets(15));
         VBox.setVgrow(table, Priority.ALWAYS);
         HBox.setHgrow(tablePane, Priority.ALWAYS);
@@ -493,7 +492,8 @@ public class TrainingAreaIssuesDialog {
             TileRow selected = table.getSelectionModel().getSelectedItem();
             if (selected == null) return;
             String newName = newData.getServer() != null
-                    ? newData.getServer().getMetadata().getName() : null;
+                    ? newData.getServer().getMetadata().getName()
+                    : null;
             if (newName == null) return;
             if (!newName.equals(selected.getSourceImage())) {
                 Platform.runLater(() -> table.getSelectionModel().clearSelection());
@@ -532,8 +532,7 @@ public class TrainingAreaIssuesDialog {
 
         long visible = filteredRows.size();
         long highLoss = filteredRows.stream().filter(r -> r.getLoss() > 1.0).count();
-        summaryLabel.setText(String.format(
-                "%d tiles shown | %d with loss > 1.0", visible, highLoss));
+        summaryLabel.setText(String.format("%d tiles shown | %d with loss > 1.0", visible, highLoss));
     }
 
     private void navigateToTile(TileRow row) {
@@ -547,7 +546,8 @@ public class TrainingAreaIssuesDialog {
         if (project != null && targetImageName != null && !targetImageName.isEmpty()) {
             var currentImageData = qupath.getImageData();
             String currentImageName = currentImageData != null
-                    ? currentImageData.getServer().getMetadata().getName() : null;
+                    ? currentImageData.getServer().getMetadata().getName()
+                    : null;
             boolean needsSwitch = !targetImageName.equals(currentImageName);
 
             if (needsSwitch) {
@@ -595,8 +595,7 @@ public class TrainingAreaIssuesDialog {
      */
     private void saveCurrentSession() {
         if (classifierMetadata == null || modelDir == null) {
-            Dialogs.showErrorMessage("Save Session",
-                    "Sessions require a classifier and model directory.");
+            Dialogs.showErrorMessage("Save Session", "Sessions require a classifier and model directory.");
             return;
         }
         // Save the CURRENT (filtered+sorted) or FULL result set? Use the full
@@ -607,12 +606,7 @@ public class TrainingAreaIssuesDialog {
             sourceResults.add(row.toResult());
         }
         TrainingIssuesSessionStore.saveWithConfirmation(
-                stage,
-                classifierMetadata,
-                modelDir,
-                downsample,
-                patchSize,
-                sourceResults);
+                stage, classifierMetadata, modelDir, downsample, patchSize, sourceResults);
     }
 
     /**
@@ -626,36 +620,31 @@ public class TrainingAreaIssuesDialog {
         List<TrainingIssuesSessionStore.SessionInfo> sessions =
                 TrainingIssuesSessionStore.listSessions(classifierMetadata, modelDir);
         if (sessions.isEmpty()) {
-            Dialogs.showMessageDialog("Load Session",
-                    "No saved sessions exist for classifier '"
-                    + classifierMetadata.getName() + "'.");
+            Dialogs.showMessageDialog(
+                    "Load Session", "No saved sessions exist for classifier '" + classifierMetadata.getName() + "'.");
             return;
         }
         TrainingIssuesSessionStore.SessionInfo info = Dialogs.showChoiceDialog(
-                "Load Training Area Issues",
-                "Choose a saved session to load:",
-                sessions,
-                sessions.get(0));
+                "Load Training Area Issues", "Choose a saved session to load:", sessions, sessions.get(0));
         if (info == null) {
             return;
         }
         if (info.stale()) {
-            boolean proceed = Dialogs.showConfirmDialog("Stale session",
+            boolean proceed = Dialogs.showConfirmDialog(
+                    "Stale session",
                     "This session was saved against a different build of the "
-                    + "same classifier (" + info.stalenessReason()
-                    + ").\nResults may not reflect the current model.\n\nOpen anyway?");
+                            + "same classifier (" + info.stalenessReason()
+                            + ").\nResults may not reflect the current model.\n\nOpen anyway?");
             if (!proceed) {
                 return;
             }
         }
         try {
-            TrainingIssuesSessionStore.LoadedSession loaded =
-                    TrainingIssuesSessionStore.load(info.dir());
+            TrainingIssuesSessionStore.LoadedSession loaded = TrainingIssuesSessionStore.load(info.dir());
             applyLoadedSession(loaded);
         } catch (Exception e) {
             logger.error("Failed to load session {}", info.dir(), e);
-            Dialogs.showErrorMessage("Load Session",
-                    "Failed to load session: " + e.getMessage());
+            Dialogs.showErrorMessage("Load Session", "Failed to load session: " + e.getMessage());
         }
     }
 
@@ -671,10 +660,9 @@ public class TrainingAreaIssuesDialog {
             allRows.add(new TileRow(r));
         }
         long highLoss = allRows.stream().filter(r -> r.getLoss() > 1.0).count();
-        summaryLabel.setText(String.format(
-                "%d tiles loaded | %d with loss > 1.0", allRows.size(), highLoss));
-        stage.setTitle("Training Area Issues - " + classifierName
-                + " (session " + loaded.info().sessionId() + ")");
+        summaryLabel.setText(String.format("%d tiles loaded | %d with loss > 1.0", allRows.size(), highLoss));
+        stage.setTitle("Training Area Issues - " + classifierName + " (session "
+                + loaded.info().sessionId() + ")");
         rescaleThresholdSlider();
     }
 
@@ -698,41 +686,35 @@ public class TrainingAreaIssuesDialog {
      * session, without re-running tile evaluation. Returns false if no
      * session could be opened (no metadata, no sessions, user cancelled, etc.).
      */
-    public static boolean openSavedSessionFromDisk(ClassifierMetadata metadata,
-                                                   Path modelDir) {
+    public static boolean openSavedSessionFromDisk(ClassifierMetadata metadata, Path modelDir) {
         if (metadata == null || modelDir == null) {
-            Dialogs.showErrorMessage("Load Session",
-                    "Classifier metadata and model directory are required.");
+            Dialogs.showErrorMessage("Load Session", "Classifier metadata and model directory are required.");
             return false;
         }
         List<TrainingIssuesSessionStore.SessionInfo> sessions =
                 TrainingIssuesSessionStore.listSessions(metadata, modelDir);
         if (sessions.isEmpty()) {
-            Dialogs.showMessageDialog("Load Session",
-                    "No saved sessions exist for classifier '"
-                    + metadata.getName() + "'.");
+            Dialogs.showMessageDialog(
+                    "Load Session", "No saved sessions exist for classifier '" + metadata.getName() + "'.");
             return false;
         }
         TrainingIssuesSessionStore.SessionInfo info = Dialogs.showChoiceDialog(
-                "Load Training Area Issues",
-                "Choose a saved session to load:",
-                sessions,
-                sessions.get(0));
+                "Load Training Area Issues", "Choose a saved session to load:", sessions, sessions.get(0));
         if (info == null) {
             return false;
         }
         if (info.stale()) {
-            boolean proceed = Dialogs.showConfirmDialog("Stale session",
+            boolean proceed = Dialogs.showConfirmDialog(
+                    "Stale session",
                     "This session was saved against a different build of the "
-                    + "same classifier (" + info.stalenessReason()
-                    + ").\nResults may not reflect the current model.\n\nOpen anyway?");
+                            + "same classifier (" + info.stalenessReason()
+                            + ").\nResults may not reflect the current model.\n\nOpen anyway?");
             if (!proceed) {
                 return false;
             }
         }
         try {
-            TrainingIssuesSessionStore.LoadedSession loaded =
-                    TrainingIssuesSessionStore.load(info.dir());
+            TrainingIssuesSessionStore.LoadedSession loaded = TrainingIssuesSessionStore.load(info.dir());
             Map<String, Integer> classColors = new LinkedHashMap<>();
             if (metadata.getClasses() != null) {
                 for (var c : metadata.getClasses()) {
@@ -750,14 +732,13 @@ public class TrainingAreaIssuesDialog {
                     loaded.downsample(),
                     loaded.patchSize(),
                     classColors);
-            dialog.stage.setTitle("Training Area Issues - " + metadata.getName()
-                    + " (session " + info.sessionId() + ")");
+            dialog.stage.setTitle(
+                    "Training Area Issues - " + metadata.getName() + " (session " + info.sessionId() + ")");
             dialog.show();
             return true;
         } catch (Exception e) {
             logger.error("Failed to load session {}", info.dir(), e);
-            Dialogs.showErrorMessage("Load Session",
-                    "Failed to load session: " + e.getMessage());
+            Dialogs.showErrorMessage("Load Session", "Failed to load session: " + e.getMessage());
             return false;
         }
     }
@@ -784,8 +765,7 @@ public class TrainingAreaIssuesDialog {
     private Label buildOverlayWarningBanner() {
         Label banner = new Label();
         banner.setWrapText(true);
-        banner.setStyle(
-                "-fx-background-color: #fff3cd;"
+        banner.setStyle("-fx-background-color: #fff3cd;"
                 + " -fx-text-fill: #664d03;"
                 + " -fx-border-color: #e5c97a;"
                 + " -fx-border-width: 1;"
@@ -800,23 +780,26 @@ public class TrainingAreaIssuesDialog {
         }
 
         OverlayOptions opts = qupath.getOverlayOptions();
-        StringBinding message = Bindings.createStringBinding(() -> {
-            float opacity = opts.opacityProperty().get();
-            boolean show = opts.showPixelClassificationProperty().get();
-            StringBuilder sb = new StringBuilder();
-            if (!show) {
-                sb.append("Pixel classification display is OFF. "
-                        + "Enable via View > Show pixel classification.");
-            }
-            if (opacity < 0.10f) {
-                if (sb.length() > 0) sb.append('\n');
-                sb.append(String.format(
-                        "Overlay opacity is %.0f%% - heatmap will be hard to see. "
-                        + "Raise opacity via View > Overlay slider.",
-                        opacity * 100.0));
-            }
-            return sb.toString();
-        }, opts.opacityProperty(), opts.showPixelClassificationProperty());
+        StringBinding message = Bindings.createStringBinding(
+                () -> {
+                    float opacity = opts.opacityProperty().get();
+                    boolean show = opts.showPixelClassificationProperty().get();
+                    StringBuilder sb = new StringBuilder();
+                    if (!show) {
+                        sb.append("Pixel classification display is OFF. "
+                                + "Enable via View > Show pixel classification.");
+                    }
+                    if (opacity < 0.10f) {
+                        if (sb.length() > 0) sb.append('\n');
+                        sb.append(String.format(
+                                "Overlay opacity is %.0f%% - heatmap will be hard to see. "
+                                        + "Raise opacity via View > Overlay slider.",
+                                opacity * 100.0));
+                    }
+                    return sb.toString();
+                },
+                opts.opacityProperty(),
+                opts.showPixelClassificationProperty());
 
         banner.textProperty().bind(message);
         banner.visibleProperty().bind(message.isNotEmpty());
@@ -843,9 +826,7 @@ public class TrainingAreaIssuesDialog {
     // ==================== Preview Pane ====================
 
     private void updatePreview(TileRow row) {
-        tileImageView.setImage(
-                loadPreviewImage(row.getTileImagePath(), "tile", row.getFilename(),
-                        row.getSplit()));
+        tileImageView.setImage(loadPreviewImage(row.getTileImagePath(), "tile", row.getFilename(), row.getSplit()));
         updateOverlayImage(row);
     }
 
@@ -859,8 +840,7 @@ public class TrainingAreaIssuesDialog {
             overlayPath = row.getDisagreementImagePath();
             overlayKind = "disagreement";
         }
-        disagreeImageView.setImage(
-                loadPreviewImage(overlayPath, overlayKind, row.getFilename(), row.getSplit()));
+        disagreeImageView.setImage(loadPreviewImage(overlayPath, overlayKind, row.getFilename(), row.getSplit()));
     }
 
     /**
@@ -876,21 +856,18 @@ public class TrainingAreaIssuesDialog {
      */
     private Image loadPreviewImage(String path, String kind, String filename, String split) {
         if (path == null || path.isEmpty()) {
-            logger.warn("No {} PNG path for row (tile={}, split={})",
-                    kind, filename, split);
+            logger.warn("No {} PNG path for row (tile={}, split={})", kind, filename, split);
             return null;
         }
         try {
             File file = new File(path);
             if (!file.exists()) {
-                logger.warn("Preview {} PNG not found: {} (tile={})",
-                        kind, path, filename);
+                logger.warn("Preview {} PNG not found: {} (tile={})", kind, path, filename);
                 return null;
             }
             long size = file.length();
             if (size == 0) {
-                logger.warn("Preview {} PNG is zero bytes: {} (tile={})",
-                        kind, path, filename);
+                logger.warn("Preview {} PNG is zero bytes: {} (tile={})", kind, path, filename);
                 return null;
             }
             Image image = new Image(file.toURI().toString());
@@ -899,8 +876,12 @@ public class TrainingAreaIssuesDialog {
             // in the log instead of a blank preview pane.
             if (image.isError()) {
                 Throwable cause = image.getException();
-                logger.warn("JavaFX failed to decode {} PNG {} (size={} bytes, tile={}): {}",
-                        kind, path, size, filename,
+                logger.warn(
+                        "JavaFX failed to decode {} PNG {} (size={} bytes, tile={}): {}",
+                        kind,
+                        path,
+                        size,
+                        filename,
                         cause != null ? cause.getMessage() : "unknown");
                 return null;
             }
@@ -955,8 +936,7 @@ public class TrainingAreaIssuesDialog {
         gradientBar.setPrefHeight(14);
         gradientBar.setPrefWidth(200);
         gradientBar.setMaxWidth(200);
-        gradientBar.setStyle(
-                "-fx-background-color: linear-gradient(to right, #0000FF, #FFFF00, #FF0000);"
+        gradientBar.setStyle("-fx-background-color: linear-gradient(to right, #0000FF, #FFFF00, #FF0000);"
                 + " -fx-border-color: #666; -fx-border-width: 0.5;");
 
         Label lowLabel = new Label("Low");
@@ -983,8 +963,7 @@ public class TrainingAreaIssuesDialog {
         // Confidence threshold slider
         Label confLabel = new Label("Confidence: 80%");
         confLabel.setStyle("-fx-font-size: 11px;");
-        confLabel.setTooltip(TooltipHelper.create(
-                "Minimum model confidence to accept a prediction.\n"
+        confLabel.setTooltip(TooltipHelper.create("Minimum model confidence to accept a prediction.\n"
                 + "Higher = more conservative (only fix obvious errors).\n"
                 + "0.80 is a good starting point."));
         confidenceSlider = new Slider(0.50, 0.99, 0.80);
@@ -994,8 +973,7 @@ public class TrainingAreaIssuesDialog {
         confidenceSlider.setMinorTickCount(1);
         confidenceSlider.setBlockIncrement(0.05);
         confidenceSlider.setPrefWidth(250);
-        confidenceSlider.setTooltip(TooltipHelper.create(
-                "Minimum model confidence to accept a prediction.\n"
+        confidenceSlider.setTooltip(TooltipHelper.create("Minimum model confidence to accept a prediction.\n"
                 + "Higher = more conservative (only fix obvious errors).\n"
                 + "Lower = more aggressive (change more borders).\n"
                 + "0.80 is a good starting point."));
@@ -1008,8 +986,7 @@ public class TrainingAreaIssuesDialog {
         previewCheckBox = new CheckBox("Preview changes before applying");
         previewCheckBox.setSelected(true);
         previewCheckBox.setStyle("-fx-font-size: 11px;");
-        previewCheckBox.setTooltip(TooltipHelper.create(
-                "When checked, clicking 'Adjust' will first show\n"
+        previewCheckBox.setTooltip(TooltipHelper.create("When checked, clicking 'Adjust' will first show\n"
                 + "a preview overlay of which pixels would change.\n"
                 + "You can then confirm or cancel."));
 
@@ -1017,8 +994,7 @@ public class TrainingAreaIssuesDialog {
         adjustButton = new Button("Adjust annotations in current tile");
         adjustButton.setMaxWidth(Double.MAX_VALUE);
         adjustButton.setDisable(true);
-        adjustButton.setTooltip(TooltipHelper.create(
-                "Modify annotations within this tile so they match\n"
+        adjustButton.setTooltip(TooltipHelper.create("Modify annotations within this tile so they match\n"
                 + "the model's predictions where the model is confident.\n"
                 + "Annotations OUTSIDE the tile boundary are not touched."));
         adjustButton.setOnAction(e -> handleAdjustAction());
@@ -1029,9 +1005,8 @@ public class TrainingAreaIssuesDialog {
         cancelPreviewButton.setStyle("-fx-font-size: 11px;");
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);
-        cancelPreviewButton.setTooltip(TooltipHelper.create(
-                "Cancel the current adjustment preview\n"
-                + "and return to normal view."));
+        cancelPreviewButton.setTooltip(
+                TooltipHelper.create("Cancel the current adjustment preview\n" + "and return to normal view."));
         cancelPreviewButton.setOnAction(e -> cancelPendingPreview());
 
         // Undo button
@@ -1040,8 +1015,7 @@ public class TrainingAreaIssuesDialog {
         undoButton.setDisable(true);
         undoButton.setStyle("-fx-font-size: 11px;");
         undoButton.setTooltip(TooltipHelper.create(
-                "Reverses the most recent annotation adjustment,\n"
-                + "restoring the original annotations."));
+                "Reverses the most recent annotation adjustment,\n" + "restoring the original annotations."));
         undoButton.setOnAction(e -> handleUndoAction());
 
         // Status label
@@ -1049,10 +1023,14 @@ public class TrainingAreaIssuesDialog {
         adjustStatusLabel.setWrapText(true);
         adjustStatusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
 
-        VBox content = new VBox(6,
-                confLabel, confidenceSlider,
+        VBox content = new VBox(
+                6,
+                confLabel,
+                confidenceSlider,
                 previewCheckBox,
-                adjustButton, cancelPreviewButton, undoButton,
+                adjustButton,
+                cancelPreviewButton,
+                undoButton,
                 adjustStatusLabel);
         content.setPadding(new Insets(8));
 
@@ -1074,8 +1052,7 @@ public class TrainingAreaIssuesDialog {
                 adjustStatusLabel.setText("Select a tile to enable adjustment");
             } else {
                 adjustStatusLabel.setText(
-                        "No prediction data for this tile.\n"
-                        + "Re-run evaluation to generate prediction maps.");
+                        "No prediction data for this tile.\n" + "Re-run evaluation to generate prediction maps.");
             }
             return;
         }
@@ -1126,10 +1103,12 @@ public class TrainingAreaIssuesDialog {
         if (pendingPreview != null) {
             boolean confirmed = Dialogs.showConfirmDialog(
                     "Apply Annotation Adjustment",
-                    String.format("%d pixels will be changed.\n\n"
-                            + "This modifies annotations within this tile only.\n"
-                            + "Use 'Undo last adjustment' to reverse.\n\n"
-                            + "Apply?", pendingPreview.totalChangedPixels()));
+                    String.format(
+                            "%d pixels will be changed.\n\n"
+                                    + "This modifies annotations within this tile only.\n"
+                                    + "Use 'Undo last adjustment' to reverse.\n\n"
+                                    + "Apply?",
+                            pendingPreview.totalChangedPixels()));
             if (!confirmed) {
                 cancelPendingPreview();
                 return;
@@ -1165,27 +1144,23 @@ public class TrainingAreaIssuesDialog {
                     classColors);
 
             if (preview.totalChangedPixels() == 0) {
-                adjustStatusLabel.setText(
-                        "No changes needed at this confidence threshold.\n"
+                adjustStatusLabel.setText("No changes needed at this confidence threshold.\n"
                         + "Try lowering the threshold to include more pixels.");
                 return;
             }
 
             // Build summary of proposed changes
             StringBuilder changeSummary = new StringBuilder();
-            changeSummary.append(String.format("%d pixels would change:\n",
-                    preview.totalChangedPixels()));
+            changeSummary.append(String.format("%d pixels would change:\n", preview.totalChangedPixels()));
             for (Map.Entry<String, Integer> entry : preview.changesPerClass().entrySet()) {
-                changeSummary.append(String.format("  %s: %d pixels\n",
-                        entry.getKey(), entry.getValue()));
+                changeSummary.append(String.format("  %s: %d pixels\n", entry.getKey(), entry.getValue()));
             }
 
             if (previewCheckBox.isSelected()) {
                 // Show preview overlay on the viewer
                 pendingPreview = preview;
                 showAdjustmentPreviewOverlay(viewer, row, preview.previewImage());
-                adjustStatusLabel.setText(changeSummary
-                        + "\nPreview shown on viewer.");
+                adjustStatusLabel.setText(changeSummary + "\nPreview shown on viewer.");
                 adjustButton.setText("Apply previewed adjustment");
                 cancelPreviewButton.setVisible(true);
                 cancelPreviewButton.setManaged(true);
@@ -1196,9 +1171,9 @@ public class TrainingAreaIssuesDialog {
             boolean confirmed = Dialogs.showConfirmDialog(
                     "Adjust Annotations",
                     changeSummary
-                    + "\nThis will modify annotations within this tile only.\n"
-                    + "Annotations outside the tile boundary are preserved.\n\n"
-                    + "Continue?");
+                            + "\nThis will modify annotations within this tile only.\n"
+                            + "Annotations outside the tile boundary are preserved.\n\n"
+                            + "Continue?");
             if (!confirmed) {
                 adjustStatusLabel.setText("Adjustment cancelled");
                 return;
@@ -1216,16 +1191,16 @@ public class TrainingAreaIssuesDialog {
      * Called when the adjust button is clicked while a preview is pending
      * (second click in preview flow), or called directly when preview is off.
      */
-    private void applyAdjustmentFromPreview(QuPathViewer viewer, TileRow row,
-                                             AnnotationAdjuster.PreviewResult preview) {
+    private void applyAdjustmentFromPreview(
+            QuPathViewer viewer, TileRow row, AnnotationAdjuster.PreviewResult preview) {
         // Clear any preview overlay before applying
         overlayController.clear();
 
-        AnnotationAdjuster.AdjustmentResult result = annotationAdjuster.applyAdjustment(
-                viewer, row.getX(), row.getY(), preview.adjustedMask());
+        AnnotationAdjuster.AdjustmentResult result =
+                annotationAdjuster.applyAdjustment(viewer, row.getX(), row.getY(), preview.adjustedMask());
 
-        adjustStatusLabel.setText(result.summary()
-                + String.format("\n(%d pixels changed)", preview.totalChangedPixels()));
+        adjustStatusLabel.setText(
+                result.summary() + String.format("\n(%d pixels changed)", preview.totalChangedPixels()));
         undoButton.setDisable(false);
         pendingPreview = null;
         adjustButton.setText("Adjust annotations in current tile");
@@ -1239,19 +1214,20 @@ public class TrainingAreaIssuesDialog {
     /**
      * Shows the adjustment preview as a temporary viewer overlay.
      */
-    private void showAdjustmentPreviewOverlay(QuPathViewer viewer, TileRow row,
-                                               BufferedImage previewImage) {
+    private void showAdjustmentPreviewOverlay(QuPathViewer viewer, TileRow row, BufferedImage previewImage) {
         int regionSize = (int) (patchSize * downsample);
         ImageRegion region = ImageRegion.createInstance(
-                row.getX(), row.getY(), regionSize, regionSize,
+                row.getX(),
+                row.getY(),
+                regionSize,
+                regionSize,
                 ImagePlane.getDefaultPlane().getZ(),
                 ImagePlane.getDefaultPlane().getT());
 
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) return;
 
-        BufferedImageOverlay overlay = new BufferedImageOverlay(
-                qupath.getOverlayOptions(), region, previewImage);
+        BufferedImageOverlay overlay = new BufferedImageOverlay(qupath.getOverlayOptions(), region, previewImage);
 
         Platform.runLater(() -> {
             viewer.setCustomPixelLayerOverlay(overlay);
@@ -1332,9 +1308,8 @@ public class TrainingAreaIssuesDialog {
             this.loss = new SimpleDoubleProperty(result.loss());
             this.disagreementPct = new SimpleDoubleProperty(result.disagreementPct());
             this.meanIoU = new SimpleDoubleProperty(result.meanIoU());
-            this.perClassIoU = result.perClassIoU() != null
-                    ? new LinkedHashMap<>(result.perClassIoU())
-                    : new LinkedHashMap<>();
+            this.perClassIoU =
+                    result.perClassIoU() != null ? new LinkedHashMap<>(result.perClassIoU()) : new LinkedHashMap<>();
             this.x = new SimpleIntegerProperty(result.x());
             this.y = new SimpleIntegerProperty(result.y());
             this.filename = new SimpleStringProperty(result.filename());
@@ -1359,47 +1334,106 @@ public class TrainingAreaIssuesDialog {
                     }
                 }
             }
-            this.worstClass = new SimpleStringProperty(
-                    worst.isEmpty() ? "" : String.format("%s (IoU %.3f)", worst, worstIoU));
+            this.worstClass =
+                    new SimpleStringProperty(worst.isEmpty() ? "" : String.format("%s (IoU %.3f)", worst, worstIoU));
         }
 
-        public String getSourceImage() { return sourceImage.get(); }
-        public StringProperty sourceImageProperty() { return sourceImage; }
+        public String getSourceImage() {
+            return sourceImage.get();
+        }
 
-        public String getSourceImageId() { return sourceImageId.get(); }
+        public StringProperty sourceImageProperty() {
+            return sourceImage;
+        }
 
-        public String getSplit() { return split.get(); }
-        public StringProperty splitProperty() { return split; }
+        public String getSourceImageId() {
+            return sourceImageId.get();
+        }
 
-        public double getLoss() { return loss.get(); }
-        public DoubleProperty lossProperty() { return loss; }
+        public String getSplit() {
+            return split.get();
+        }
 
-        public double getDisagreementPct() { return disagreementPct.get(); }
-        public DoubleProperty disagreementPctProperty() { return disagreementPct; }
+        public StringProperty splitProperty() {
+            return split;
+        }
 
-        public double getMeanIoU() { return meanIoU.get(); }
-        public DoubleProperty meanIoUProperty() { return meanIoU; }
+        public double getLoss() {
+            return loss.get();
+        }
 
-        public String getWorstClass() { return worstClass.get(); }
-        public StringProperty worstClassProperty() { return worstClass; }
+        public DoubleProperty lossProperty() {
+            return loss;
+        }
 
-        public int getX() { return x.get(); }
-        public int getY() { return y.get(); }
+        public double getDisagreementPct() {
+            return disagreementPct.get();
+        }
 
-        public String getFilename() { return filename.get(); }
+        public DoubleProperty disagreementPctProperty() {
+            return disagreementPct;
+        }
 
-        public String getDisagreementImagePath() { return disagreementImagePath.get(); }
-        public String getLossHeatmapPath() { return lossHeatmapPath.get(); }
-        public String getTileImagePath() { return tileImagePath.get(); }
-        public String getPredictionMapPath() { return predictionMapPath.get(); }
-        public String getConfidenceMapPath() { return confidenceMapPath.get(); }
-        public String getGroundTruthMaskPath() { return groundTruthMaskPath.get(); }
+        public double getMeanIoU() {
+            return meanIoU.get();
+        }
+
+        public DoubleProperty meanIoUProperty() {
+            return meanIoU;
+        }
+
+        public String getWorstClass() {
+            return worstClass.get();
+        }
+
+        public StringProperty worstClassProperty() {
+            return worstClass;
+        }
+
+        public int getX() {
+            return x.get();
+        }
+
+        public int getY() {
+            return y.get();
+        }
+
+        public String getFilename() {
+            return filename.get();
+        }
+
+        public String getDisagreementImagePath() {
+            return disagreementImagePath.get();
+        }
+
+        public String getLossHeatmapPath() {
+            return lossHeatmapPath.get();
+        }
+
+        public String getTileImagePath() {
+            return tileImagePath.get();
+        }
+
+        public String getPredictionMapPath() {
+            return predictionMapPath.get();
+        }
+
+        public String getConfidenceMapPath() {
+            return confidenceMapPath.get();
+        }
+
+        public String getGroundTruthMaskPath() {
+            return groundTruthMaskPath.get();
+        }
 
         /** Whether this tile has prediction/confidence/gt maps for annotation adjustment. */
         public boolean hasPredictionData() {
-            return getPredictionMapPath() != null && !getPredictionMapPath().isEmpty()
-                    && getConfidenceMapPath() != null && !getConfidenceMapPath().isEmpty()
-                    && getGroundTruthMaskPath() != null && !getGroundTruthMaskPath().isEmpty();
+            return getPredictionMapPath() != null
+                    && !getPredictionMapPath().isEmpty()
+                    && getConfidenceMapPath() != null
+                    && !getConfidenceMapPath().isEmpty()
+                    && getGroundTruthMaskPath() != null
+                    && !getGroundTruthMaskPath().isEmpty();
         }
 
         /**
@@ -1425,15 +1459,33 @@ public class TrainingAreaIssuesDialog {
                     getTileImagePath(),
                     getPredictionMapPath(),
                     getConfidenceMapPath(),
-                    getGroundTruthMaskPath()
-            );
+                    getGroundTruthMaskPath());
         }
 
         // TileRowData (for TrainingIssuesOverlayController)
-        @Override public int x() { return getX(); }
-        @Override public int y() { return getY(); }
-        @Override public String filename() { return getFilename(); }
-        @Override public String lossHeatmapPath() { return getLossHeatmapPath(); }
-        @Override public String disagreementImagePath() { return getDisagreementImagePath(); }
+        @Override
+        public int x() {
+            return getX();
+        }
+
+        @Override
+        public int y() {
+            return getY();
+        }
+
+        @Override
+        public String filename() {
+            return getFilename();
+        }
+
+        @Override
+        public String lossHeatmapPath() {
+            return getLossHeatmapPath();
+        }
+
+        @Override
+        public String disagreementImagePath() {
+            return getDisagreementImagePath();
+        }
     }
 }

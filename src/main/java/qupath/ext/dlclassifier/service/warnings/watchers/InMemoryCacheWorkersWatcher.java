@@ -1,7 +1,6 @@
 package qupath.ext.dlclassifier.service.warnings.watchers;
 
 import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.service.warnings.InteractionWarning;
 import qupath.ext.dlclassifier.service.warnings.TrainingWarning;
 
 /**
@@ -26,8 +25,7 @@ public final class InMemoryCacheWorkersWatcher implements TrainingWarning {
 
     @Override
     public String getTitle() {
-        return "In-memory cache active: DataLoader workers "
-                + "will be set to 0";
+        return "In-memory cache active: DataLoader workers " + "will be set to 0";
     }
 
     @Override

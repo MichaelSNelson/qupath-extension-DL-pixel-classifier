@@ -1,5 +1,11 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.awt.image.BufferedImage;
+import java.awt.image.Raster;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.analysis.images.ContourTracing;
@@ -15,13 +21,6 @@ import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.interfaces.ROI;
-
-import java.awt.image.BufferedImage;
-import java.awt.image.Raster;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.function.Consumer;
 
 /**
  * Generates coarse "Tissue" annotations on whole-slide images so that the
@@ -130,16 +129,14 @@ public final class TissueDetectionUtility {
         if (progress != null) {
             progress.accept(String.format(
                     "Tissue detection complete: %d annotation(s) across %d image(s)%s",
-                    totalAnnotations, total - failed,
-                    failed > 0 ? ", " + failed + " image(s) failed (see log)" : ""));
+                    totalAnnotations, total - failed, failed > 0 ? ", " + failed + " image(s) failed (see log)" : ""));
         }
         return totalAnnotations;
     }
 
     private static int detectTissueForEntry(
-            ProjectImageEntry<BufferedImage> entry,
-            PathClass tissueClass,
-            TissueDetectionParams params) throws Exception {
+            ProjectImageEntry<BufferedImage> entry, PathClass tissueClass, TissueDetectionParams params)
+            throws Exception {
 
         ImageData<BufferedImage> imageData = entry.readImageData();
         try {
@@ -150,12 +147,11 @@ public final class TissueDetectionUtility {
 
             // Clamp requested downsample to something the server can actually
             // deliver without blowing memory on huge slides.
-            RegionRequest region = RegionRequest.createInstance(
-                    server.getPath(), downsample, 0, 0, fullW, fullH);
+            RegionRequest region = RegionRequest.createInstance(server.getPath(), downsample, 0, 0, fullW, fullH);
             BufferedImage thumbnail = server.readRegion(region);
             if (thumbnail == null) {
-                logger.warn("Server returned null thumbnail for '{}' at downsample {}",
-                        entry.getImageName(), downsample);
+                logger.warn(
+                        "Server returned null thumbnail for '{}' at downsample {}", entry.getImageName(), downsample);
                 return 0;
             }
 
@@ -211,8 +207,13 @@ public final class TissueDetectionUtility {
             } else {
                 int otsu = otsuThreshold(gray);
                 threshold = Math.max(params.otsuMin, Math.min(params.otsuMax, otsu));
-                logger.debug("Otsu threshold for '{}': {} (clamped to [{}, {}] = {})",
-                        entry.getImageName(), otsu, params.otsuMin, params.otsuMax, threshold);
+                logger.debug(
+                        "Otsu threshold for '{}': {} (clamped to [{}, {}] = {})",
+                        entry.getImageName(),
+                        otsu,
+                        params.otsuMin,
+                        params.otsuMax,
+                        threshold);
             }
 
             // Binarise.
@@ -263,8 +264,10 @@ public final class TissueDetectionUtility {
                 newAnnotations.add(PathObjects.createAnnotationObject(comp, tissueClass));
             }
             if (newAnnotations.isEmpty()) {
-                logger.info("Tissue detected on '{}' but all components below minimum area ({} um^2)",
-                        entry.getImageName(), params.minAreaMicronsSq);
+                logger.info(
+                        "Tissue detected on '{}' but all components below minimum area ({} um^2)",
+                        entry.getImageName(),
+                        params.minAreaMicronsSq);
                 return 0;
             }
 
@@ -289,7 +292,8 @@ public final class TissueDetectionUtility {
             if (imageData.getServer() != null) {
                 try {
                     imageData.getServer().close();
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
         }
     }
@@ -388,7 +392,10 @@ public final class TissueDetectionUtility {
                     int yy = Math.max(0, Math.min(h - 1, y + dy));
                     for (int dx = -1; dx <= 1; dx++) {
                         int xx = Math.max(0, Math.min(w - 1, x + dx));
-                        if (src[yy * w + xx] < 0.5f) { v = 0.0f; break; }
+                        if (src[yy * w + xx] < 0.5f) {
+                            v = 0.0f;
+                            break;
+                        }
                     }
                 }
                 dst[y * w + x] = v;
@@ -404,7 +411,10 @@ public final class TissueDetectionUtility {
                     int yy = Math.max(0, Math.min(h - 1, y + dy));
                     for (int dx = -1; dx <= 1; dx++) {
                         int xx = Math.max(0, Math.min(w - 1, x + dx));
-                        if (src[yy * w + xx] > 0.5f) { v = 1.0f; break; }
+                        if (src[yy * w + xx] > 0.5f) {
+                            v = 1.0f;
+                            break;
+                        }
                     }
                 }
                 dst[y * w + x] = v;

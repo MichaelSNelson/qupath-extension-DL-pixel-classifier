@@ -1,16 +1,15 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.interfaces.ROI;
-
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Processes images into tiles for deep learning inference.
@@ -61,8 +60,12 @@ public class TileProcessor {
         this.blendMode = config.getBlendMode();
         this.maxTilesInMemory = config.getMaxTilesInMemory();
 
-        logger.info("TileProcessor initialized: size={}, overlap={}, downsample={}, blend={}",
-                tileSize, overlap, downsample, blendMode);
+        logger.info(
+                "TileProcessor initialized: size={}, overlap={}, downsample={}, blend={}",
+                tileSize,
+                overlap,
+                downsample,
+                blendMode);
     }
 
     /**
@@ -73,8 +76,7 @@ public class TileProcessor {
      * @param blendMode        blend mode for boundaries
      * @param maxTilesInMemory max tiles to keep in memory
      */
-    public TileProcessor(int tileSize, int overlap,
-                         InferenceConfig.BlendMode blendMode, int maxTilesInMemory) {
+    public TileProcessor(int tileSize, int overlap, InferenceConfig.BlendMode blendMode, int maxTilesInMemory) {
         this.tileSize = tileSize;
         this.overlap = overlap;
         this.downsample = 1.0;
@@ -95,8 +97,7 @@ public class TileProcessor {
                 (int) roi.getBoundsY(),
                 (int) roi.getBoundsWidth(),
                 (int) roi.getBoundsHeight(),
-                server
-        );
+                server);
     }
 
     /**
@@ -113,8 +114,7 @@ public class TileProcessor {
      * @param server the image server
      * @return list of tile specifications
      */
-    public List<TileSpec> generateTiles(int x, int y, int width, int height,
-                                        ImageServer<BufferedImage> server) {
+    public List<TileSpec> generateTiles(int x, int y, int width, int height, ImageServer<BufferedImage> server) {
         List<TileSpec> tiles = new ArrayList<>();
 
         int stepSize = tileSize - overlap;
@@ -131,8 +131,13 @@ public class TileProcessor {
         int serverWidth = (int) (server.getWidth() / downsample);
         int serverHeight = (int) (server.getHeight() / downsample);
 
-        logger.debug("Generating tiles: grid {}x{}, step={}, image={}x{}",
-                nCols, nRows, stepSize, serverWidth, serverHeight);
+        logger.debug(
+                "Generating tiles: grid {}x{}, step={}, image={}x{}",
+                nCols,
+                nRows,
+                stepSize,
+                serverWidth,
+                serverHeight);
 
         int tileIndex = 0;
         for (int row = 0; row < nRows; row++) {
@@ -213,20 +218,30 @@ public class TileProcessor {
                 // Create tile spec with full edge information
                 TileSpec spec = new TileSpec(
                         tileIndex,
-                        tileX, tileY,
-                        tileSize, tileSize,
-                        row, actualCol,
-                        validX, validY,
-                        validWidth, validHeight,
-                        isEdgeTile, edgeFlags
-                );
+                        tileX,
+                        tileY,
+                        tileSize,
+                        tileSize,
+                        row,
+                        actualCol,
+                        validX,
+                        validY,
+                        validWidth,
+                        validHeight,
+                        isEdgeTile,
+                        edgeFlags);
                 tiles.add(spec);
                 tileIndex++;
             }
         }
 
-        logger.info("Generated {} tiles for region {}x{} at ({},{}), {} edge tiles",
-                tiles.size(), width, height, x, y,
+        logger.info(
+                "Generated {} tiles for region {}x{} at ({},{}), {} edge tiles",
+                tiles.size(),
+                width,
+                height,
+                x,
+                y,
                 tiles.stream().filter(TileSpec::isEdgeTile).count());
 
         return tiles;
@@ -247,12 +262,8 @@ public class TileProcessor {
         int fullResW = (int) (spec.width() * downsample);
         int fullResH = (int) (spec.height() * downsample);
 
-        RegionRequest request = RegionRequest.createInstance(
-                server.getPath(),
-                downsample,
-                fullResX, fullResY,
-                fullResW, fullResH
-        );
+        RegionRequest request =
+                RegionRequest.createInstance(server.getPath(), downsample, fullResX, fullResY, fullResW, fullResH);
 
         return server.readRegion(request);
     }
@@ -302,8 +313,7 @@ public class TileProcessor {
         int margin = overlap;
         for (int y = 0; y < tileSize; y++) {
             for (int x = 0; x < tileSize; x++) {
-                boolean inCenter = x >= margin && x < tileSize - margin
-                                && y >= margin && y < tileSize - margin;
+                boolean inCenter = x >= margin && x < tileSize - margin && y >= margin && y < tileSize - margin;
                 weights[y][x] = inCenter ? 1.0f : 0.0f;
             }
         }
@@ -363,10 +373,8 @@ public class TileProcessor {
      * @param numClasses   number of classification classes
      * @return merged probability map [height][width][numClasses]
      */
-    public float[][][] mergeTileResults(List<TileSpec> tiles,
-                                        List<float[][][]> tileResults,
-                                        int outputWidth, int outputHeight,
-                                        int numClasses) {
+    public float[][][] mergeTileResults(
+            List<TileSpec> tiles, List<float[][][]> tileResults, int outputWidth, int outputHeight, int numClasses) {
         // Output arrays
         float[][][] output = new float[outputHeight][outputWidth][numClasses];
         float[][] weightSum = new float[outputHeight][outputWidth];
@@ -416,8 +424,7 @@ public class TileProcessor {
      * @param probabilityMap merged probability map [height][width][numClasses]
      * @param classificationMap argmax classification map [height][width] with class indices
      */
-    public record MergedResult(float[][][] probabilityMap, int[][] classificationMap) {
-    }
+    public record MergedResult(float[][][] probabilityMap, int[][] classificationMap) {}
 
     /**
      * Merges overlapping tile results into complete probability and classification maps.
@@ -439,10 +446,8 @@ public class TileProcessor {
      * @param numClasses   number of classification classes
      * @return MergedResult containing both probability map and classification map
      */
-    public MergedResult mergeTileResultsComplete(List<TileSpec> tiles,
-                                                  List<float[][][]> tileResults,
-                                                  int outputWidth, int outputHeight,
-                                                  int numClasses) {
+    public MergedResult mergeTileResultsComplete(
+            List<TileSpec> tiles, List<float[][][]> tileResults, int outputWidth, int outputHeight, int numClasses) {
         // Merge probabilities first
         float[][][] probMap = mergeTileResults(tiles, tileResults, outputWidth, outputHeight, numClasses);
 
@@ -482,11 +487,14 @@ public class TileProcessor {
      * @param numClasses   number of classification classes
      * @return MergedResult containing both probability map and classification map
      */
-    public MergedResult mergeTileResultsWithEdgeHandling(List<TileSpec> tiles,
-                                                          List<float[][][]> tileResults,
-                                                          int regionX, int regionY,
-                                                          int regionWidth, int regionHeight,
-                                                          int numClasses) {
+    public MergedResult mergeTileResultsWithEdgeHandling(
+            List<TileSpec> tiles,
+            List<float[][][]> tileResults,
+            int regionX,
+            int regionY,
+            int regionWidth,
+            int regionHeight,
+            int numClasses) {
         // Output arrays (relative to region, not image)
         float[][][] output = new float[regionHeight][regionWidth][numClasses];
         float[][] weightSum = new float[regionHeight][regionWidth];
@@ -623,6 +631,7 @@ public class TileProcessor {
      * Edge flags for tiles at image boundaries.
      */
     public static final int EDGE_TOP = 1;
+
     public static final int EDGE_RIGHT = 2;
     public static final int EDGE_BOTTOM = 4;
     public static final int EDGE_LEFT = 8;
@@ -648,18 +657,26 @@ public class TileProcessor {
      * @param edgeFlags   bitmask of which edges touch boundaries (EDGE_TOP, EDGE_RIGHT, etc.)
      */
     public record TileSpec(
-            int index, int x, int y, int width, int height, int row, int col,
-            int validX, int validY, int validWidth, int validHeight,
-            boolean isEdgeTile, int edgeFlags
-    ) {
+            int index,
+            int x,
+            int y,
+            int width,
+            int height,
+            int row,
+            int col,
+            int validX,
+            int validY,
+            int validWidth,
+            int validHeight,
+            boolean isEdgeTile,
+            int edgeFlags) {
 
         /**
          * Legacy constructor for backward compatibility.
          * Creates a non-edge tile where the entire tile is valid.
          */
         public TileSpec(int index, int x, int y, int width, int height, int row, int col) {
-            this(index, x, y, width, height, row, col,
-                    0, 0, width, height, false, 0);
+            this(index, x, y, width, height, row, col, 0, 0, width, height, false, 0);
         }
 
         /**

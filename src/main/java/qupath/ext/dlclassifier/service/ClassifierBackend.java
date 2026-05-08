@@ -1,15 +1,14 @@
 package qupath.ext.dlclassifier.service;
 
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.model.TrainingConfig;
-
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.TrainingConfig;
 
 /**
  * Backend interface for the DL classification service.
@@ -69,7 +68,8 @@ public interface ClassifierBackend {
             Path trainingDataPath,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException;
+            Consumer<String> jobIdCallback)
+            throws IOException;
 
     /**
      * Pauses a running training job at the end of the current epoch.
@@ -102,7 +102,8 @@ public interface ClassifierBackend {
             Integer batchSize,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException;
+            Consumer<String> jobIdCallback)
+            throws IOException;
 
     /**
      * Finalizes training from a saved checkpoint by restoring the best model
@@ -123,8 +124,8 @@ public interface ClassifierBackend {
      * @return training result with the saved model path and best metrics
      * @throws IOException if finalization fails
      */
-    default ClassifierClient.TrainingResult finalizeTraining(String checkpointPath,
-            String modelOutputDir) throws IOException {
+    default ClassifierClient.TrainingResult finalizeTraining(String checkpointPath, String modelOutputDir)
+            throws IOException {
         return finalizeTraining(checkpointPath);
     }
 
@@ -161,7 +162,8 @@ public interface ClassifierBackend {
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
             Path outputDir,
-            int reflectionPadding) throws IOException;
+            int reflectionPadding)
+            throws IOException;
 
     /**
      * Runs pixel-level inference using base64/file-path tile transfer.
@@ -181,7 +183,8 @@ public interface ClassifierBackend {
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
             Path outputDir,
-            int reflectionPadding) throws IOException;
+            int reflectionPadding)
+            throws IOException;
 
     /**
      * Runs batch inference using binary tile transfer.
@@ -207,7 +210,8 @@ public interface ClassifierBackend {
             int numChannels,
             String dtype,
             ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig) throws IOException;
+            InferenceConfig inferenceConfig)
+            throws IOException;
 
     /**
      * Runs batch inference using base64/file-path tile transfer.
@@ -223,7 +227,8 @@ public interface ClassifierBackend {
             String modelPath,
             List<ClassifierClient.TileData> tiles,
             ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig) throws IOException;
+            InferenceConfig inferenceConfig)
+            throws IOException;
 
     // ==================== Evaluation ====================
 
@@ -252,7 +257,8 @@ public interface ClassifierBackend {
             List<String> classNames,
             Map<String, Integer> classColors,
             Consumer<ClassifierClient.EvaluationProgress> progressCallback,
-            Supplier<Boolean> cancelledCheck) throws IOException;
+            Supplier<Boolean> cancelledCheck)
+            throws IOException;
 
     // ==================== Pretrained Model Info ====================
 
@@ -267,8 +273,7 @@ public interface ClassifierBackend {
      * @throws IOException if communication fails
      */
     List<ClassifierClient.LayerInfo> getModelLayers(
-            String architecture, String encoder,
-            int numChannels, int numClasses) throws IOException;
+            String architecture, String encoder, int numChannels, int numClasses) throws IOException;
 
     /**
      * Gets recommended freeze settings for a dataset size.
@@ -278,6 +283,5 @@ public interface ClassifierBackend {
      * @return map of depth to freeze recommendation
      * @throws IOException if communication fails
      */
-    Map<Integer, Boolean> getFreezeRecommendations(
-            String datasetSize, String encoder) throws IOException;
+    Map<Integer, Boolean> getFreezeRecommendations(String datasetSize, String encoder) throws IOException;
 }

@@ -8,6 +8,8 @@ plugins {
     id("com.gradleup.shadow") version "8.3.5"
     // QuPath Gradle extension convention plugin
     id("qupath-conventions")
+    // Auto-formatting (palantirJavaFormat) -- gates the build via `check`
+    id("com.diffplug.spotless") version "7.0.2"
     // Static bug detection
     id("com.github.spotbugs") version "6.5.0"
 }
@@ -124,6 +126,18 @@ tasks.test {
         "--add-modules", "javafx.base,javafx.graphics,javafx.controls",
         "--add-opens", "javafx.graphics/javafx.stage=ALL-UNNAMED"
     )
+}
+
+// ---------------------------------------------------------------------------
+// Spotless -- auto-formatting (gates the build via `check`)
+// ---------------------------------------------------------------------------
+spotless {
+    java {
+        target("src/**/*.java")
+        palantirJavaFormat("2.90.0")
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
 }
 
 // ---------------------------------------------------------------------------

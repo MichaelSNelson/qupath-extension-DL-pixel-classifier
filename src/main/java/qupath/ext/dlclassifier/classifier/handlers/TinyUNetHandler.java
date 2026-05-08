@@ -1,11 +1,5 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
-import qupath.ext.dlclassifier.classifier.ClassifierHandler;
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.model.TrainingConfig;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -13,6 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import qupath.ext.dlclassifier.classifier.ClassifierHandler;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.TrainingConfig;
 
 /**
  * Handler for the Tiny UNet architecture -- a lightweight, fast-to-train
@@ -44,35 +43,26 @@ import java.util.Set;
 public class TinyUNetHandler implements ClassifierHandler {
 
     /** Size presets (re-using the "backbone" combo for architecture sizing). */
-    public static final List<String> BACKBONES = List.of(
-            "tiny-16x4",
-            "nano-8x3",
-            "compact-16x3",
-            "small-24x4"
-    );
+    public static final List<String> BACKBONES = List.of("tiny-16x4", "nano-8x3", "compact-16x3", "small-24x4");
 
     private static final Map<String, String> BACKBONE_DISPLAY_NAMES = Map.of(
-            "tiny-16x4",    "Tiny (default, ~138k params)",
-            "nano-8x3",     "Nano (~10k params, 2-class tasks)",
+            "tiny-16x4", "Tiny (default, ~138k params)",
+            "nano-8x3", "Nano (~10k params, 2-class tasks)",
             "compact-16x3", "Compact (~36k params, shallow)",
-            "small-24x4",   "Small (~305k params, extra capacity)"
-    );
+            "small-24x4", "Small (~305k params, extra capacity)");
 
     /** Decoded (base, depth) per preset. */
     private static final Map<String, int[]> BACKBONE_DIMS = Map.of(
-            "tiny-16x4",    new int[]{16, 4},
-            "nano-8x3",     new int[]{8,  3},
-            "compact-16x3", new int[]{16, 3},
-            "small-24x4",   new int[]{24, 4}
-    );
+            "tiny-16x4", new int[] {16, 4},
+            "nano-8x3", new int[] {8, 3},
+            "compact-16x3", new int[] {16, 3},
+            "small-24x4", new int[] {24, 4});
 
     /**
      * Tile sizes must be divisible by 2**depth. Max depth across presets is 4,
      * so all listed sizes are divisible by 16.
      */
-    public static final List<Integer> TILE_SIZES = List.of(
-            128, 192, 256, 384, 512
-    );
+    public static final List<Integer> TILE_SIZES = List.of(128, 192, 256, 384, 512);
 
     @Override
     public String getType() {
@@ -160,8 +150,7 @@ public class TinyUNetHandler implements ClassifierHandler {
         int numChannels = channelConfig.getNumChannels();
         if (numChannels < getMinChannels()) {
             return Optional.of(String.format(
-                    "Tiny UNet requires at least %d channel(s), but %d selected",
-                    getMinChannels(), numChannels));
+                    "Tiny UNet requires at least %d channel(s), but %d selected", getMinChannels(), numChannels));
         }
         if (numChannels > getMaxChannels()) {
             return Optional.of(String.format(
@@ -179,9 +168,7 @@ public class TinyUNetHandler implements ClassifierHandler {
         params.put("architecture", "tiny-unet");
         params.put("available_backbones", BACKBONES);
 
-        String backbone = config != null && config.getBackbone() != null
-                ? config.getBackbone()
-                : "tiny-16x4";
+        String backbone = config != null && config.getBackbone() != null ? config.getBackbone() : "tiny-16x4";
         int[] dims = BACKBONE_DIMS.getOrDefault(backbone, BACKBONE_DIMS.get("tiny-16x4"));
         params.put("backbone", backbone);
         params.put("base", dims[0]);
@@ -214,11 +201,9 @@ public class TinyUNetHandler implements ClassifierHandler {
     }
 
     @Override
-    public ClassifierMetadata buildMetadata(TrainingConfig config,
-                                            ChannelConfiguration channelConfig,
-                                            List<String> classNames) {
-        String timestamp = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+    public ClassifierMetadata buildMetadata(
+            TrainingConfig config, ChannelConfiguration channelConfig, List<String> classNames) {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         String id = String.format("tinyunet_%s_%s", config.getBackbone(), timestamp);
 
         ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
@@ -226,9 +211,7 @@ public class TinyUNetHandler implements ClassifierHandler {
                 .name(String.format("Tiny UNet %s Classifier", config.getBackbone()))
                 .description(String.format(
                         "Tiny UNet (%s), %d channels, %d classes",
-                        config.getBackbone(),
-                        channelConfig.getNumChannels(),
-                        classNames.size()))
+                        config.getBackbone(), channelConfig.getNumChannels(), classNames.size()))
                 .modelType("tiny-unet")
                 .backbone(config.getBackbone())
                 .inputSize(config.getTileSize(), config.getTileSize())
@@ -247,16 +230,7 @@ public class TinyUNetHandler implements ClassifierHandler {
     }
 
     private String getDefaultColor(int index) {
-        String[] colors = {
-                "#808080",
-                "#FF0000",
-                "#00FF00",
-                "#0000FF",
-                "#FFFF00",
-                "#FF00FF",
-                "#00FFFF",
-                "#FFA500"
-        };
+        String[] colors = {"#808080", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500"};
         return colors[index % colors.length];
     }
 }

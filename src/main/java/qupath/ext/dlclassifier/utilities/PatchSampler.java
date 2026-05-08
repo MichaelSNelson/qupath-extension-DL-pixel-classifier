@@ -1,11 +1,10 @@
 package qupath.ext.dlclassifier.utilities;
 
-import qupath.lib.roi.interfaces.ROI;
-
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import qupath.lib.roi.interfaces.ROI;
 
 /**
  * Static utility methods for generating patch locations from annotations.
@@ -70,8 +69,7 @@ public final class PatchSampler {
      * @return deduplicated list of patch locations in full-resolution coordinates
      */
     public static List<PatchLocation> generatePatchLocations(
-            List<AnnotationGeometry> annotations, int patchSize, double downsample,
-            int imgW, int imgH) {
+            List<AnnotationGeometry> annotations, int patchSize, double downsample, int imgW, int imgH) {
         Set<String> locationKeys = new HashSet<>();
         List<PatchLocation> locations = new ArrayList<>();
 
@@ -146,9 +144,8 @@ public final class PatchSampler {
 
         if (roiPoints.isEmpty()) {
             // Fallback: use center of bounding box
-            points.add(new double[]{
-                    roi.getBoundsX() + roi.getBoundsWidth() / 2,
-                    roi.getBoundsY() + roi.getBoundsHeight() / 2
+            points.add(new double[] {
+                roi.getBoundsX() + roi.getBoundsWidth() / 2, roi.getBoundsY() + roi.getBoundsHeight() / 2
             });
             return points;
         }
@@ -169,14 +166,14 @@ public final class PatchSampler {
                 double t = (double) s / numSamples;
                 double x = x1 + t * (x2 - x1);
                 double y = y1 + t * (y2 - y1);
-                points.add(new double[]{x, y});
+                points.add(new double[] {x, y});
             }
         }
 
         // Also add the last point
         if (!roiPoints.isEmpty()) {
             qupath.lib.geom.Point2 last = roiPoints.get(roiPoints.size() - 1);
-            points.add(new double[]{last.getX(), last.getY()});
+            points.add(new double[] {last.getX(), last.getY()});
         }
 
         return points;

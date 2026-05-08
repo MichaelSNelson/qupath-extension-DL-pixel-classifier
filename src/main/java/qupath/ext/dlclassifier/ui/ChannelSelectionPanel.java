@@ -1,5 +1,10 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.awt.image.BufferedImage;
+import java.util.*;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.FXCollections;
@@ -8,7 +13,6 @@ import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
-import javafx.scene.control.Tooltip;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
@@ -18,13 +22,6 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageChannel;
 import qupath.lib.images.servers.ImageServer;
-
-import java.awt.image.BufferedImage;
-import java.util.*;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 /**
  * Reusable panel for selecting and configuring image channels.
@@ -79,29 +76,29 @@ public class ChannelSelectionPanel extends VBox {
         availableList.setCellFactory(lv -> new ChannelListCell());
         availableList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         availableList.setPrefHeight(150);
-        TooltipHelper.install(availableList,
-                "Image channels available for selection.\n" +
-                "Multi-select with Ctrl+click or Shift+click.");
+        TooltipHelper.install(
+                availableList,
+                "Image channels available for selection.\n" + "Multi-select with Ctrl+click or Shift+click.");
 
         // Selected channels list
         selectedList = new ListView<>();
         selectedList.setCellFactory(lv -> new ChannelListCell());
         selectedList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         selectedList.setPrefHeight(150);
-        TooltipHelper.install(selectedList,
-                "Channels that will be used as model input.\n" +
-                "Order matters: must match the order used during training.\n" +
-                "For RGB brightfield images, use Red/Green/Blue in order.\n" +
-                "For fluorescence, select only the channels relevant to your task.");
+        TooltipHelper.install(
+                selectedList,
+                "Channels that will be used as model input.\n"
+                        + "Order matters: must match the order used during training.\n"
+                        + "For RGB brightfield images, use Red/Green/Blue in order.\n"
+                        + "For fluorescence, select only the channels relevant to your task.");
 
         // ---- Search/filter toolbar (hidden for small channel counts) ----
         searchField = new TextField();
         searchField.setPromptText("Filter channels...");
         searchField.setPrefWidth(180);
         HBox.setHgrow(searchField, Priority.ALWAYS);
-        TooltipHelper.install(searchField,
-                "Type to filter channels by name or index.\n" +
-                "Case-insensitive substring match.");
+        TooltipHelper.install(
+                searchField, "Type to filter channels by name or index.\n" + "Case-insensitive substring match.");
 
         searchField.textProperty().addListener((obs, old, text) -> {
             filteredAvailableList.setPredicate(item -> {
@@ -114,8 +111,7 @@ public class ChannelSelectionPanel extends VBox {
 
         Button selectAllVisibleBtn = new Button("Select All");
         selectAllVisibleBtn.setMinWidth(75);
-        TooltipHelper.install(selectAllVisibleBtn,
-                "Add all visible (filtered) channels to selected list");
+        TooltipHelper.install(selectAllVisibleBtn, "Add all visible (filtered) channels to selected list");
         selectAllVisibleBtn.setOnAction(e -> addAllVisibleChannels());
 
         Button selectNoneBtn = new Button("Select None");
@@ -125,9 +121,9 @@ public class ChannelSelectionPanel extends VBox {
 
         Button matchPatternBtn = new Button("Match Pattern...");
         matchPatternBtn.setMinWidth(110);
-        TooltipHelper.install(matchPatternBtn,
-                "Open a dialog to select channels by regex pattern.\n" +
-                "Examples: CD\\d+, DAPI|CK.*");
+        TooltipHelper.install(
+                matchPatternBtn,
+                "Open a dialog to select channels by regex pattern.\n" + "Examples: CD\\d+, DAPI|CK.*");
         matchPatternBtn.setOnAction(e -> showPatternSelectDialog());
 
         searchToolbar = new HBox(8, searchField, selectAllVisibleBtn, selectNoneBtn, matchPatternBtn);
@@ -183,35 +179,35 @@ public class ChannelSelectionPanel extends VBox {
         listsBox.setAlignment(Pos.CENTER);
 
         // Normalization settings
-        normalizationCombo = new ComboBox<>(FXCollections.observableArrayList(
-                ChannelConfiguration.NormalizationStrategy.values()));
+        normalizationCombo =
+                new ComboBox<>(FXCollections.observableArrayList(ChannelConfiguration.NormalizationStrategy.values()));
         normalizationCombo.setValue(ChannelConfiguration.NormalizationStrategy.PERCENTILE_99);
-        TooltipHelper.install(normalizationCombo,
-                "Per-channel intensity normalization before model input:\n\n" +
-                "PERCENTILE_99 (recommended): Scale using 1st/99th percentiles.\n" +
-                "  Robust to outliers and hot pixels. Best for most images.\n\n" +
-                "MIN_MAX: Scale to [0,1] using channel min/max values.\n" +
-                "  Sensitive to outliers -- a single bright pixel affects the range.\n\n" +
-                "Z_SCORE: Subtract mean, divide by std deviation.\n" +
-                "  Common in deep learning; centers data around zero.\n\n" +
-                "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit).\n" +
-                "  Useful when consistent intensity scaling is required across images.");
+        TooltipHelper.install(
+                normalizationCombo,
+                "Per-channel intensity normalization before model input:\n\n"
+                        + "PERCENTILE_99 (recommended): Scale using 1st/99th percentiles.\n"
+                        + "  Robust to outliers and hot pixels. Best for most images.\n\n"
+                        + "MIN_MAX: Scale to [0,1] using channel min/max values.\n"
+                        + "  Sensitive to outliers -- a single bright pixel affects the range.\n\n"
+                        + "Z_SCORE: Subtract mean, divide by std deviation.\n"
+                        + "  Common in deep learning; centers data around zero.\n\n"
+                        + "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit).\n"
+                        + "  Useful when consistent intensity scaling is required across images.");
 
         // Per-channel normalization toggle (hidden for small channel counts)
         perChannelNormCheck = new CheckBox("Per-channel normalization (normalize each channel independently)");
         perChannelNormCheck.setSelected(true);
-        TooltipHelper.install(perChannelNormCheck,
-                "When enabled, each channel is normalized independently\n" +
-                "using its own statistics. Recommended for fluorescence images\n" +
-                "where channels have different intensity ranges.\n\n" +
-                "When disabled, the same normalization range is applied\n" +
-                "across all channels (typical for brightfield RGB).");
+        TooltipHelper.install(
+                perChannelNormCheck,
+                "When enabled, each channel is normalized independently\n"
+                        + "using its own statistics. Recommended for fluorescence images\n"
+                        + "where channels have different intensity ranges.\n\n"
+                        + "When disabled, the same normalization range is applied\n"
+                        + "across all channels (typical for brightfield RGB).");
         perChannelNormCheck.setVisible(false);
         perChannelNormCheck.setManaged(false);
 
-        HBox normBox = new HBox(10,
-                new Label("Normalization:"),
-                normalizationCombo);
+        HBox normBox = new HBox(10, new Label("Normalization:"), normalizationCombo);
         normBox.setAlignment(Pos.CENTER_LEFT);
 
         // Status label
@@ -272,16 +268,13 @@ public class ChannelSelectionPanel extends VBox {
      * @return channel configuration based on current selections
      */
     public ChannelConfiguration getChannelConfiguration() {
-        List<Integer> indices = selectedList.getItems().stream()
-                .map(ChannelItem::index)
-                .collect(Collectors.toList());
+        List<Integer> indices =
+                selectedList.getItems().stream().map(ChannelItem::index).collect(Collectors.toList());
 
-        List<String> names = selectedList.getItems().stream()
-                .map(ChannelItem::name)
-                .collect(Collectors.toList());
+        List<String> names =
+                selectedList.getItems().stream().map(ChannelItem::name).collect(Collectors.toList());
 
-        int bitDepth = currentServer != null ?
-                currentServer.getPixelType().getBitsPerPixel() : 8;
+        int bitDepth = currentServer != null ? currentServer.getPixelType().getBitsPerPixel() : 8;
 
         return ChannelConfiguration.builder()
                 .selectedChannels(indices)
@@ -396,8 +389,11 @@ public class ChannelSelectionPanel extends VBox {
             addAllChannels();
         }
 
-        logger.debug("Auto-configured for imageType={}, channelCount={}: searchBar={}, perChannel={}",
-                imageType, channelCount, channelCount > SEARCH_BAR_THRESHOLD,
+        logger.debug(
+                "Auto-configured for imageType={}, channelCount={}: searchBar={}, perChannel={}",
+                imageType,
+                channelCount,
+                channelCount > SEARCH_BAR_THRESHOLD,
                 perChannelNormCheck.isSelected());
     }
 
@@ -459,7 +455,8 @@ public class ChannelSelectionPanel extends VBox {
     }
 
     private void addSelectedChannels() {
-        List<ChannelItem> toAdd = new ArrayList<>(availableList.getSelectionModel().getSelectedItems());
+        List<ChannelItem> toAdd =
+                new ArrayList<>(availableList.getSelectionModel().getSelectedItems());
         for (ChannelItem item : toAdd) {
             if (!selectedList.getItems().contains(item)) {
                 selectedList.getItems().add(item);
@@ -468,7 +465,8 @@ public class ChannelSelectionPanel extends VBox {
     }
 
     private void removeSelectedChannels() {
-        List<ChannelItem> toRemove = new ArrayList<>(selectedList.getSelectionModel().getSelectedItems());
+        List<ChannelItem> toRemove =
+                new ArrayList<>(selectedList.getSelectionModel().getSelectedItems());
         selectedList.getItems().removeAll(toRemove);
     }
 
@@ -523,7 +521,8 @@ public class ChannelSelectionPanel extends VBox {
             statusLabel.setStyle("-fx-text-fill: #cc0000;");
             valid = false;
         } else if (requiredChannelCount > 0 && selected != requiredChannelCount) {
-            statusLabel.setText(String.format("Selected %d channels (classifier expects %d)", selected, requiredChannelCount));
+            statusLabel.setText(
+                    String.format("Selected %d channels (classifier expects %d)", selected, requiredChannelCount));
             statusLabel.setStyle("-fx-text-fill: #cc0000;");
             valid = false;
         } else {

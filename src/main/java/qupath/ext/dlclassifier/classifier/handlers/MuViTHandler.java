@@ -1,5 +1,12 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
@@ -11,14 +18,6 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
-
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 /**
  * Handler for MuViT (Multi-Resolution Vision Transformer) pixel classifiers.
@@ -41,18 +40,13 @@ public class MuViTHandler implements ClassifierHandler {
      * MuViT does not use traditional backbone encoders.
      * These entries represent model size configurations.
      */
-    public static final List<String> MODEL_CONFIGS = List.of(
-            "muvit-small",
-            "muvit-base",
-            "muvit-large"
-    );
+    public static final List<String> MODEL_CONFIGS = List.of("muvit-small", "muvit-base", "muvit-large");
 
     /** Human-readable display names for model configurations. */
     private static final Map<String, String> CONFIG_DISPLAY_NAMES = Map.of(
             "muvit-small", "MuViT-Small (6 layers, 256 dim)",
             "muvit-base", "MuViT-Base (12 layers, 512 dim)",
-            "muvit-large", "MuViT-Large (16 layers, 768 dim)"
-    );
+            "muvit-large", "MuViT-Large (16 layers, 768 dim)");
 
     /**
      * Returns a human-readable display name for a model configuration.
@@ -65,9 +59,7 @@ public class MuViTHandler implements ClassifierHandler {
     }
 
     /** Supported tile sizes (no strict divisibility constraint for ViT). */
-    public static final List<Integer> TILE_SIZES = List.of(
-            128, 256, 512
-    );
+    public static final List<Integer> TILE_SIZES = List.of(128, 256, 512);
 
     @Override
     public String getType() {
@@ -81,10 +73,10 @@ public class MuViTHandler implements ClassifierHandler {
 
     @Override
     public String getDescription() {
-        return "Multi-resolution Vision Transformer. Processes tiles at multiple " +
-                "physical scales using cross-resolution self-attention with world-coordinate " +
-                "positional embeddings. Best for tasks requiring both fine detail and broad " +
-                "tissue context. Requires more GPU memory than CNN architectures.";
+        return "Multi-resolution Vision Transformer. Processes tiles at multiple "
+                + "physical scales using cross-resolution self-attention with world-coordinate "
+                + "positional embeddings. Best for tasks requiring both fine detail and broad "
+                + "tissue context. Requires more GPU memory than CNN architectures.";
     }
 
     @Override
@@ -147,9 +139,7 @@ public class MuViTHandler implements ClassifierHandler {
 
     @Override
     public Set<WeightInitStrategy> getSupportedWeightInitStrategies() {
-        return Set.of(WeightInitStrategy.SCRATCH,
-                      WeightInitStrategy.MAE_ENCODER,
-                      WeightInitStrategy.CONTINUE_TRAINING);
+        return Set.of(WeightInitStrategy.SCRATCH, WeightInitStrategy.MAE_ENCODER, WeightInitStrategy.CONTINUE_TRAINING);
     }
 
     @Override
@@ -166,13 +156,11 @@ public class MuViTHandler implements ClassifierHandler {
         int numChannels = channelConfig.getNumChannels();
         if (numChannels < getMinChannels()) {
             return Optional.of(String.format(
-                    "MuViT requires at least %d channel(s), but %d selected",
-                    getMinChannels(), numChannels));
+                    "MuViT requires at least %d channel(s), but %d selected", getMinChannels(), numChannels));
         }
         if (numChannels > getMaxChannels()) {
             return Optional.of(String.format(
-                    "MuViT supports at most %d channels, but %d selected",
-                    getMaxChannels(), numChannels));
+                    "MuViT supports at most %d channels, but %d selected", getMaxChannels(), numChannels));
         }
 
         return Optional.empty();
@@ -219,20 +207,17 @@ public class MuViTHandler implements ClassifierHandler {
     }
 
     @Override
-    public ClassifierMetadata buildMetadata(TrainingConfig config,
-                                            ChannelConfiguration channelConfig,
-                                            List<String> classNames) {
-        String timestamp = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+    public ClassifierMetadata buildMetadata(
+            TrainingConfig config, ChannelConfiguration channelConfig, List<String> classNames) {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         String id = String.format("muvit_%s_%s", config.getBackbone(), timestamp);
 
         ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
                 .id(id)
                 .name(String.format("MuViT %s Classifier", config.getBackbone()))
-                .description(String.format("MuViT %s, %d channels, %d classes",
-                        config.getBackbone(),
-                        channelConfig.getNumChannels(),
-                        classNames.size()))
+                .description(String.format(
+                        "MuViT %s, %d channels, %d classes",
+                        config.getBackbone(), channelConfig.getNumChannels(), classNames.size()))
                 .modelType("muvit")
                 .backbone(config.getBackbone())
                 .inputSize(config.getTileSize(), config.getTileSize())
@@ -253,8 +238,8 @@ public class MuViTHandler implements ClassifierHandler {
 
     private String getDefaultColor(int index) {
         String[] colors = {
-                "#808080", "#FF0000", "#00FF00", "#0000FF",
-                "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500"
+            "#808080", "#FF0000", "#00FF00", "#0000FF",
+            "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500"
         };
         return colors[index % colors.length];
     }
@@ -312,9 +297,9 @@ public class MuViTHandler implements ClassifierHandler {
             patchSizeCombo = new ComboBox<>(FXCollections.observableArrayList(8, 16));
             patchSizeCombo.setValue(16);
             patchSizeCombo.setMaxWidth(100);
-            Tooltip patchTooltip = new Tooltip(
-                    "Size of patches for the transformer. Smaller = more tokens = more VRAM.\n" +
-                    "16 is recommended for most cases.");
+            Tooltip patchTooltip =
+                    new Tooltip("Size of patches for the transformer. Smaller = more tokens = more VRAM.\n"
+                            + "16 is recommended for most cases.");
             patchSizeCombo.setTooltip(patchTooltip);
             grid.add(patchLabel, 0, row);
             grid.add(patchSizeCombo, 1, row);
@@ -324,10 +309,9 @@ public class MuViTHandler implements ClassifierHandler {
             Label levelsLabel = new Label("Level scales:");
             levelScalesField = new TextField("1,4");
             levelScalesField.setMaxWidth(150);
-            Tooltip levelsTooltip = new Tooltip(
-                    "Comma-separated scale factors for multi-resolution levels.\n" +
-                    "Example: '1,4' = detail at 1x and context at 4x physical area.\n" +
-                    "'1,2,8' = three levels at 1x, 2x, and 8x.");
+            Tooltip levelsTooltip = new Tooltip("Comma-separated scale factors for multi-resolution levels.\n"
+                    + "Example: '1,4' = detail at 1x and context at 4x physical area.\n"
+                    + "'1,2,8' = three levels at 1x, 2x, and 8x.");
             levelScalesField.setTooltip(levelsTooltip);
             grid.add(levelsLabel, 0, row);
             grid.add(levelScalesField, 1, row);
@@ -335,29 +319,27 @@ public class MuViTHandler implements ClassifierHandler {
 
             // RoPE mode
             Label ropeLabel = new Label("Position encoding:");
-            ropeModeCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "per_layer", "shared", "fixed", "none"));
+            ropeModeCombo = new ComboBox<>(FXCollections.observableArrayList("per_layer", "shared", "fixed", "none"));
             ropeModeCombo.setValue("per_layer");
             ropeModeCombo.setMaxWidth(150);
-            Tooltip ropeTooltip = new Tooltip(
-                    "How the model encodes spatial position of patches.\n" +
-                    "This controls cross-resolution attention quality.\n\n" +
-                    "per_layer (recommended): Each transformer layer has its own\n" +
-                    "position encoding. Best accuracy -- the model can learn\n" +
-                    "different spatial relationships at different depths.\n" +
-                    "Use this unless you have a specific reason not to.\n\n" +
-                    "shared: All layers share one position encoding.\n" +
-                    "Slightly fewer parameters. Use if training is unstable\n" +
-                    "or you have very limited data (<50 labeled tiles).\n\n" +
-                    "fixed: Non-learnable sinusoidal position encoding.\n" +
-                    "Zero trainable parameters for position. Use only if\n" +
-                    "you need maximum reproducibility or suspect position\n" +
-                    "encoding is overfitting (very unlikely in practice).\n\n" +
-                    "none: No position information at all. The model cannot\n" +
-                    "distinguish where patches came from spatially. Only for\n" +
-                    "ablation experiments -- not recommended for real use.\n\n" +
-                    "Must match the setting used during MAE pretraining\n" +
-                    "(locked automatically when an MAE encoder is loaded).");
+            Tooltip ropeTooltip = new Tooltip("How the model encodes spatial position of patches.\n"
+                    + "This controls cross-resolution attention quality.\n\n"
+                    + "per_layer (recommended): Each transformer layer has its own\n"
+                    + "position encoding. Best accuracy -- the model can learn\n"
+                    + "different spatial relationships at different depths.\n"
+                    + "Use this unless you have a specific reason not to.\n\n"
+                    + "shared: All layers share one position encoding.\n"
+                    + "Slightly fewer parameters. Use if training is unstable\n"
+                    + "or you have very limited data (<50 labeled tiles).\n\n"
+                    + "fixed: Non-learnable sinusoidal position encoding.\n"
+                    + "Zero trainable parameters for position. Use only if\n"
+                    + "you need maximum reproducibility or suspect position\n"
+                    + "encoding is overfitting (very unlikely in practice).\n\n"
+                    + "none: No position information at all. The model cannot\n"
+                    + "distinguish where patches came from spatially. Only for\n"
+                    + "ablation experiments -- not recommended for real use.\n\n"
+                    + "Must match the setting used during MAE pretraining\n"
+                    + "(locked automatically when an MAE encoder is loaded).");
             ropeModeCombo.setTooltip(ropeTooltip);
             grid.add(ropeLabel, 0, row);
             grid.add(ropeModeCombo, 1, row);
@@ -409,14 +391,12 @@ public class MuViTHandler implements ClassifierHandler {
 
         @Override
         public void applyParameters(Map<String, Object> params) {
-            if (params.containsKey("model_config"))
-                modelConfigCombo.setValue((String) params.get("model_config"));
+            if (params.containsKey("model_config")) modelConfigCombo.setValue((String) params.get("model_config"));
             if (params.containsKey("patch_size"))
                 patchSizeCombo.setValue(((Number) params.get("patch_size")).intValue());
             if (params.containsKey("level_scales"))
                 levelScalesField.setText(String.valueOf(params.get("level_scales")));
-            if (params.containsKey("rope_mode"))
-                ropeModeCombo.setValue((String) params.get("rope_mode"));
+            if (params.containsKey("rope_mode")) ropeModeCombo.setValue((String) params.get("rope_mode"));
         }
 
         @Override
@@ -429,4 +409,3 @@ public class MuViTHandler implements ClassifierHandler {
         }
     }
 }
-

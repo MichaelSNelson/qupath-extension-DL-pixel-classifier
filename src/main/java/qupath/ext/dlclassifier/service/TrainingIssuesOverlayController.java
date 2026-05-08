@@ -1,6 +1,12 @@
 package qupath.ext.dlclassifier.service;
 
+import java.awt.image.BufferedImage;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import javafx.application.Platform;
+import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.gui.QuPathGUI;
@@ -9,13 +15,6 @@ import qupath.lib.gui.viewer.overlays.BufferedImageOverlay;
 import qupath.lib.images.ImageData;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.ImageRegion;
-
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 
 /**
  * Renders a pre-computed loss heatmap or disagreement PNG as a viewer overlay
@@ -33,8 +32,7 @@ import java.nio.file.Paths;
  */
 public class TrainingIssuesOverlayController {
 
-    private static final Logger logger =
-            LoggerFactory.getLogger(TrainingIssuesOverlayController.class);
+    private static final Logger logger = LoggerFactory.getLogger(TrainingIssuesOverlayController.class);
 
     public enum OverlayMode {
         LOSS_HEATMAP,
@@ -57,11 +55,7 @@ public class TrainingIssuesOverlayController {
      * @param patchSize   training patch size in pixels at the downsampled level
      * @param downsample  downsample factor used during training
      */
-    public void showTile(QuPathViewer viewer,
-                         TileRowData row,
-                         OverlayMode mode,
-                         int patchSize,
-                         double downsample) {
+    public void showTile(QuPathViewer viewer, TileRowData row, OverlayMode mode, int patchSize, double downsample) {
         if (viewer == null || row == null) {
             clear();
             return;
@@ -69,21 +63,23 @@ public class TrainingIssuesOverlayController {
 
         snapshotProductionOverlayIfNeeded(viewer);
 
-        String overlayPath = mode == OverlayMode.DISAGREEMENT
-                ? row.disagreementImagePath()
-                : row.lossHeatmapPath();
+        String overlayPath = mode == OverlayMode.DISAGREEMENT ? row.disagreementImagePath() : row.lossHeatmapPath();
         if (overlayPath == null || overlayPath.isEmpty()) {
-            logger.warn("No overlay PNG path for tile {} in mode {} "
-                    + "-- evaluate_tiles did not save one for this row",
-                    row.filename(), mode);
+            logger.warn(
+                    "No overlay PNG path for tile {} in mode {} " + "-- evaluate_tiles did not save one for this row",
+                    row.filename(),
+                    mode);
             clear();
             return;
         }
 
         Path path = Paths.get(overlayPath);
         if (!Files.exists(path)) {
-            logger.warn("Overlay PNG does not exist on disk: {} "
-                    + "(tile={}, mode={})", overlayPath, row.filename(), mode);
+            logger.warn(
+                    "Overlay PNG does not exist on disk: {} " + "(tile={}, mode={})",
+                    overlayPath,
+                    row.filename(),
+                    mode);
             clear();
             return;
         }
@@ -122,7 +118,10 @@ public class TrainingIssuesOverlayController {
         int regionX = row.x() - paddingFullResX;
         int regionY = row.y() - paddingFullResY;
         ImageRegion region = ImageRegion.createInstance(
-                regionX, regionY, regionWidth, regionHeight,
+                regionX,
+                regionY,
+                regionWidth,
+                regionHeight,
                 ImagePlane.getDefaultPlane().getZ(),
                 ImagePlane.getDefaultPlane().getT());
 
@@ -135,27 +134,37 @@ public class TrainingIssuesOverlayController {
             if (imageData != null && imageData.getServer() != null) {
                 imageFullResW = imageData.getServer().getWidth();
                 imageFullResH = imageData.getServer().getHeight();
-                imagePixelSizeUm = imageData.getServer().getPixelCalibration()
-                        .getAveragedPixelSizeMicrons();
+                imagePixelSizeUm = imageData.getServer().getPixelCalibration().getAveragedPixelSizeMicrons();
             }
         } catch (Exception ignored) {
             // best-effort -- diagnostics only
         }
-        logger.info("TrainingIssues overlay: row=({},{}) pngSize={}x{} "
+        logger.info(
+                "TrainingIssues overlay: row=({},{}) pngSize={}x{} "
                         + "patchSize={} downsample={} paddingFullRes=({},{}) "
                         + "-> regionTL=({},{}) regionSize={}x{} "
                         + "imageLevel0={}x{} imagePixelUm={}",
-                row.x(), row.y(), imgW, imgH,
-                patchSize, downsample, paddingFullResX, paddingFullResY,
-                regionX, regionY, regionWidth, regionHeight,
-                (long) imageFullResW, (long) imageFullResH, imagePixelSizeUm);
+                row.x(),
+                row.y(),
+                imgW,
+                imgH,
+                patchSize,
+                downsample,
+                paddingFullResX,
+                paddingFullResY,
+                regionX,
+                regionY,
+                regionWidth,
+                regionHeight,
+                (long) imageFullResW,
+                (long) imageFullResH,
+                imagePixelSizeUm);
 
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) {
             return;
         }
-        BufferedImageOverlay overlay = new BufferedImageOverlay(
-                qupath.getOverlayOptions(), region, img);
+        BufferedImageOverlay overlay = new BufferedImageOverlay(qupath.getOverlayOptions(), region, img);
 
         Platform.runLater(() -> {
             viewer.setCustomPixelLayerOverlay(overlay);
@@ -197,8 +206,8 @@ public class TrainingIssuesOverlayController {
                 Platform.runLater(() -> {
                     try {
                         svc.createOverlayFromSelection(productionImageData);
-                        logger.info("Restored DL pixel classifier overlay after "
-                                + "Training Area Issues dialog closed");
+                        logger.info(
+                                "Restored DL pixel classifier overlay after " + "Training Area Issues dialog closed");
                     } catch (Exception e) {
                         logger.warn("Failed to restore DL overlay: {}", e.getMessage());
                     }
@@ -225,8 +234,7 @@ public class TrainingIssuesOverlayController {
             } catch (ClassCastException cce) {
                 productionImageData = null;
             }
-            logger.info("Pausing production DL overlay while Training Area "
-                    + "Issues dialog is driving the viewer");
+            logger.info("Pausing production DL overlay while Training Area " + "Issues dialog is driving the viewer");
             svc.removeOverlay();
         }
     }
@@ -238,9 +246,13 @@ public class TrainingIssuesOverlayController {
      */
     public interface TileRowData {
         int x();
+
         int y();
+
         String filename();
+
         String lossHeatmapPath();
+
         String disagreementImagePath();
     }
 }

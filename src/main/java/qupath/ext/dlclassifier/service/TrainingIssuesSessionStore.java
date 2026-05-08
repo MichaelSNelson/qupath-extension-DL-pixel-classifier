@@ -6,12 +6,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import javafx.stage.Window;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
-import qupath.fx.dialogs.Dialogs;
-
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -25,6 +19,11 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javafx.stage.Window;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.fx.dialogs.Dialogs;
 
 /**
  * Saves and reloads Training Area Issues sessions for a given classifier.
@@ -53,20 +52,16 @@ import java.util.Map;
  */
 public final class TrainingIssuesSessionStore {
 
-    private static final Logger logger =
-            LoggerFactory.getLogger(TrainingIssuesSessionStore.class);
+    private static final Logger logger = LoggerFactory.getLogger(TrainingIssuesSessionStore.class);
 
     private static final String SESSIONS_DIRNAME = "training_issues_sessions";
     private static final String ASSETS_DIRNAME = "assets";
     private static final String MANIFEST_FILENAME = "session.json";
-    private static final DateTimeFormatter SESSION_ID_FORMAT =
-            DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+    private static final DateTimeFormatter SESSION_ID_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
     private static final long SOFT_CAP_BYTES = 500L * 1024 * 1024;
 
-    private static final Gson GSON = new GsonBuilder()
-            .setPrettyPrinting()
-            .serializeNulls()
-            .create();
+    private static final Gson GSON =
+            new GsonBuilder().setPrettyPrinting().serializeNulls().create();
 
     private TrainingIssuesSessionStore() {}
 
@@ -74,21 +69,24 @@ public final class TrainingIssuesSessionStore {
 
     public record SaveEstimate(long totalBytes, int tileCount, Path targetDir) {}
 
-    public record SessionInfo(Path dir, String sessionId, String savedAt,
-                              String note, int tileCount, boolean stale,
-                              String stalenessReason) {
+    public record SessionInfo(
+            Path dir,
+            String sessionId,
+            String savedAt,
+            String note,
+            int tileCount,
+            boolean stale,
+            String stalenessReason) {
         @Override
         public String toString() {
             String suffix = stale ? " (STALE: " + stalenessReason + ")" : "";
-            String label = (note == null || note.isBlank())
-                    ? sessionId
-                    : sessionId + " - " + note;
+            String label = (note == null || note.isBlank()) ? sessionId : sessionId + " - " + note;
             return label + " [" + tileCount + " tiles]" + suffix;
         }
     }
 
-    public record LoadedSession(List<ClassifierClient.TileEvaluationResult> results,
-                                double downsample, int patchSize, SessionInfo info) {}
+    public record LoadedSession(
+            List<ClassifierClient.TileEvaluationResult> results, double downsample, int patchSize, SessionInfo info) {}
 
     // ==================== Save ====================
 
@@ -96,8 +94,7 @@ public final class TrainingIssuesSessionStore {
      * Estimates disk usage for the PNG files referenced by the given results.
      * Missing files are skipped (contribute zero bytes) rather than raising.
      */
-    public static SaveEstimate estimateSave(Path modelDir,
-                                            List<ClassifierClient.TileEvaluationResult> results) {
+    public static SaveEstimate estimateSave(Path modelDir, List<ClassifierClient.TileEvaluationResult> results) {
         long totalBytes = 0L;
         int counted = 0;
         for (var r : results) {
@@ -115,15 +112,16 @@ public final class TrainingIssuesSessionStore {
      * saves. Returns the session directory on success, or null if the user
      * cancelled or an error occurred (errors are already surfaced to the UI).
      */
-    public static Path saveWithConfirmation(Window owner,
-                                            ClassifierMetadata metadata,
-                                            Path modelDir,
-                                            double downsample,
-                                            int patchSize,
-                                            List<ClassifierClient.TileEvaluationResult> results) {
+    public static Path saveWithConfirmation(
+            Window owner,
+            ClassifierMetadata metadata,
+            Path modelDir,
+            double downsample,
+            int patchSize,
+            List<ClassifierClient.TileEvaluationResult> results) {
         if (metadata == null || modelDir == null || results == null || results.isEmpty()) {
-            Dialogs.showErrorMessage("Save Session",
-                    "Cannot save: missing classifier metadata, model directory, or results.");
+            Dialogs.showErrorMessage(
+                    "Save Session", "Cannot save: missing classifier metadata, model directory, or results.");
             return null;
         }
 
@@ -136,37 +134,31 @@ public final class TrainingIssuesSessionStore {
                         + "Estimated disk usage: %s MB%n"
                         + "Location:%n  %s%n%n"
                         + "Continue?",
-                metadata.getName(), metadata.getId(),
-                est.tileCount(), mb, est.targetDir());
+                metadata.getName(), metadata.getId(), est.tileCount(), mb, est.targetDir());
         if (!Dialogs.showConfirmDialog("Save Training Area Issues", confirmText)) {
             return null;
         }
 
         if (est.totalBytes() > SOFT_CAP_BYTES) {
-            String warn = String.format(
-                    "This session will use about %s MB of disk space.%nContinue anyway?", mb);
+            String warn = String.format("This session will use about %s MB of disk space.%nContinue anyway?", mb);
             if (!Dialogs.showConfirmDialog("Large session size", warn)) {
                 return null;
             }
         }
 
-        String note = Dialogs.showInputDialog(
-                "Session note",
-                "Optional note for this session (leave blank for none):",
-                "");
+        String note =
+                Dialogs.showInputDialog("Session note", "Optional note for this session (leave blank for none):", "");
         if (note == null) {
             return null;
         }
 
         try {
             Path dir = save(metadata, modelDir, downsample, patchSize, results, note);
-            Dialogs.showInfoNotification("Training Area Issues",
-                    "Session saved to " + dir);
+            Dialogs.showInfoNotification("Training Area Issues", "Session saved to " + dir);
             return dir;
         } catch (Exception e) {
             logger.error("Failed to save Training Area Issues session", e);
-            Dialogs.showErrorMessage("Save Session",
-                    "Failed to save session: " + e.getMessage());
+            Dialogs.showErrorMessage("Save Session", "Failed to save session: " + e.getMessage());
             return null;
         }
     }
@@ -176,12 +168,14 @@ public final class TrainingIssuesSessionStore {
      *
      * @throws IOException if a filesystem operation fails
      */
-    public static Path save(ClassifierMetadata metadata,
-                            Path modelDir,
-                            double downsample,
-                            int patchSize,
-                            List<ClassifierClient.TileEvaluationResult> results,
-                            String note) throws IOException {
+    public static Path save(
+            ClassifierMetadata metadata,
+            Path modelDir,
+            double downsample,
+            int patchSize,
+            List<ClassifierClient.TileEvaluationResult> results,
+            String note)
+            throws IOException {
         String sessionId = LocalDateTime.now().format(SESSION_ID_FORMAT);
         Path sessionDir = modelDir.resolve(SESSIONS_DIRNAME).resolve(sessionId);
         Path assetsDir = sessionDir.resolve(ASSETS_DIRNAME);
@@ -232,12 +226,12 @@ public final class TrainingIssuesSessionStore {
             // this, two tiles with the same stem in different splits collapse
             // onto the same assets/<stem>.png and one split silently wins.
             String split = r.split() == null ? "" : r.split();
-            String tileAsset     = copyAsset(r.tileImagePath(), assetsDir, split);
-            String lossAsset     = copyAsset(r.lossHeatmapPath(), assetsDir, split);
+            String tileAsset = copyAsset(r.tileImagePath(), assetsDir, split);
+            String lossAsset = copyAsset(r.lossHeatmapPath(), assetsDir, split);
             String disagreeAsset = copyAsset(r.disagreementImagePath(), assetsDir, split);
-            String predAsset     = copyAsset(r.predictionMapPath(), assetsDir, split);
-            String confAsset     = copyAsset(r.confidenceMapPath(), assetsDir, split);
-            String gtAsset       = copyAsset(r.groundTruthMaskPath(), assetsDir, split);
+            String predAsset = copyAsset(r.predictionMapPath(), assetsDir, split);
+            String confAsset = copyAsset(r.confidenceMapPath(), assetsDir, split);
+            String gtAsset = copyAsset(r.groundTruthMaskPath(), assetsDir, split);
             t.addProperty("tileAsset", tileAsset);
             t.addProperty("lossAsset", lossAsset);
             t.addProperty("disagreeAsset", disagreeAsset);
@@ -273,9 +267,10 @@ public final class TrainingIssuesSessionStore {
                 Path manifestPath = dir.resolve(MANIFEST_FILENAME);
                 if (!Files.exists(manifestPath)) continue;
                 try {
-                    JsonObject manifest = JsonParser.parseString(
-                            Files.readString(manifestPath)).getAsJsonObject();
-                    String id = getString(manifest, "sessionId", dir.getFileName().toString());
+                    JsonObject manifest = JsonParser.parseString(Files.readString(manifestPath))
+                            .getAsJsonObject();
+                    String id =
+                            getString(manifest, "sessionId", dir.getFileName().toString());
                     String savedAt = getString(manifest, "savedAt", "");
                     String note = getString(manifest, "note", "");
                     int count = manifest.has("tiles")
@@ -302,18 +297,19 @@ public final class TrainingIssuesSessionStore {
      */
     public static LoadedSession load(Path sessionDir) throws IOException {
         Path manifestPath = sessionDir.resolve(MANIFEST_FILENAME);
-        JsonObject manifest = JsonParser.parseString(
-                Files.readString(manifestPath)).getAsJsonObject();
+        JsonObject manifest =
+                JsonParser.parseString(Files.readString(manifestPath)).getAsJsonObject();
 
         JsonObject evaluation = manifest.getAsJsonObject("evaluation");
         double downsample = evaluation != null && evaluation.has("downsample")
-                ? evaluation.get("downsample").getAsDouble() : 1.0;
+                ? evaluation.get("downsample").getAsDouble()
+                : 1.0;
         int patchSize = evaluation != null && evaluation.has("patchSize")
-                ? evaluation.get("patchSize").getAsInt() : 512;
+                ? evaluation.get("patchSize").getAsInt()
+                : 512;
 
         List<ClassifierClient.TileEvaluationResult> results = new ArrayList<>();
-        JsonArray tiles = manifest.has("tiles")
-                ? manifest.getAsJsonArray("tiles") : new JsonArray();
+        JsonArray tiles = manifest.has("tiles") ? manifest.getAsJsonArray("tiles") : new JsonArray();
         for (JsonElement el : tiles) {
             JsonObject t = el.getAsJsonObject();
             Map<String, Double> iouMap = new LinkedHashMap<>();
@@ -340,8 +336,7 @@ public final class TrainingIssuesSessionStore {
                     resolveAsset(sessionDir, t, "tileAsset"),
                     resolveAsset(sessionDir, t, "predAsset"),
                     resolveAsset(sessionDir, t, "confAsset"),
-                    resolveAsset(sessionDir, t, "gtAsset")
-            ));
+                    resolveAsset(sessionDir, t, "gtAsset")));
         }
 
         SessionInfo info = new SessionInfo(
@@ -370,15 +365,15 @@ public final class TrainingIssuesSessionStore {
         c.addProperty("finalLoss", metadata.getFinalLoss());
         c.addProperty("finalAccuracy", metadata.getFinalAccuracy());
 
-        Path modelFile = firstExisting(
-                modelDir.resolve("model.pt"),
-                modelDir.resolve("model.onnx"));
+        Path modelFile = firstExisting(modelDir.resolve("model.pt"), modelDir.resolve("model.onnx"));
         if (modelFile != null) {
             try {
-                c.addProperty("modelFileModifiedAt",
+                c.addProperty(
+                        "modelFileModifiedAt",
                         LocalDateTime.ofInstant(
-                                Files.getLastModifiedTime(modelFile).toInstant(),
-                                java.time.ZoneId.systemDefault()).toString());
+                                        Files.getLastModifiedTime(modelFile).toInstant(),
+                                        java.time.ZoneId.systemDefault())
+                                .toString());
                 c.addProperty("modelFileSize", Files.size(modelFile));
                 c.addProperty("modelFileName", modelFile.getFileName().toString());
             } catch (IOException e) {
@@ -388,14 +383,11 @@ public final class TrainingIssuesSessionStore {
         return c;
     }
 
-    private static String computeStaleness(JsonObject manifest,
-                                           ClassifierMetadata metadata,
-                                           Path modelDir) {
+    private static String computeStaleness(JsonObject manifest, ClassifierMetadata metadata, Path modelDir) {
         if (!manifest.has("classifier")) return "";
         JsonObject saved = manifest.getAsJsonObject("classifier");
         String savedId = getString(saved, "id", "");
-        if (metadata != null && !savedId.isEmpty()
-                && !savedId.equals(metadata.getId())) {
+        if (metadata != null && !savedId.isEmpty() && !savedId.equals(metadata.getId())) {
             return "different classifier id";
         }
 
@@ -405,14 +397,13 @@ public final class TrainingIssuesSessionStore {
                 modelDir.resolve("model.onnx"));
         if (modelFile == null) return "";
 
-        long savedSize = saved.has("modelFileSize")
-                ? saved.get("modelFileSize").getAsLong() : -1;
+        long savedSize = saved.has("modelFileSize") ? saved.get("modelFileSize").getAsLong() : -1;
         String savedMtime = getString(saved, "modelFileModifiedAt", "");
         try {
             long currentSize = Files.size(modelFile);
             String currentMtime = LocalDateTime.ofInstant(
-                    Files.getLastModifiedTime(modelFile).toInstant(),
-                    java.time.ZoneId.systemDefault()).toString();
+                            Files.getLastModifiedTime(modelFile).toInstant(), java.time.ZoneId.systemDefault())
+                    .toString();
             if (savedSize >= 0 && currentSize != savedSize) {
                 return "model file size changed";
             }
@@ -425,8 +416,7 @@ public final class TrainingIssuesSessionStore {
         return "";
     }
 
-    private static String copyAsset(String sourcePath, Path assetsDir, String split)
-            throws IOException {
+    private static String copyAsset(String sourcePath, Path assetsDir, String split) throws IOException {
         if (sourcePath == null || sourcePath.isEmpty()) return null;
         Path src = Paths.get(sourcePath);
         if (!Files.exists(src)) return null;
@@ -434,9 +424,7 @@ public final class TrainingIssuesSessionStore {
         // Prefix the asset filename with the split so a "stem_loss.png" from
         // train and one from val don't collide in the flat assets/ directory.
         // ASCII-only to stay Windows-safe.
-        String filename = (split != null && !split.isEmpty())
-                ? split + "_" + base
-                : base;
+        String filename = (split != null && !split.isEmpty()) ? split + "_" + base : base;
         Path dst = assetsDir.resolve(filename);
         Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
         return ASSETS_DIRNAME + "/" + filename;

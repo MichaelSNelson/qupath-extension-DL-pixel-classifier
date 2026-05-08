@@ -221,35 +221,54 @@ public class InferenceConfig {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         InferenceConfig that = (InferenceConfig) o;
-        return tileSize == that.tileSize &&
-                overlap == that.overlap &&
-                Double.compare(that.overlapPercent, overlapPercent) == 0 &&
-                Double.compare(that.minObjectSizeMicrons, minObjectSizeMicrons) == 0 &&
-                Double.compare(that.holeFillingMicrons, holeFillingMicrons) == 0 &&
-                Double.compare(that.boundarySmoothing, boundarySmoothing) == 0 &&
-                maxTilesInMemory == that.maxTilesInMemory &&
-                useGPU == that.useGPU &&
-                useTTA == that.useTTA &&
-                multiPassAveraging == that.multiPassAveraging &&
-                Double.compare(that.overlaySmoothingSigma, overlaySmoothingSigma) == 0 &&
-                useCompactArgmaxOutput == that.useCompactArgmaxOutput &&
-                blendMode == that.blendMode &&
-                outputType == that.outputType &&
-                objectType == that.objectType;
+        return tileSize == that.tileSize
+                && overlap == that.overlap
+                && Double.compare(that.overlapPercent, overlapPercent) == 0
+                && Double.compare(that.minObjectSizeMicrons, minObjectSizeMicrons) == 0
+                && Double.compare(that.holeFillingMicrons, holeFillingMicrons) == 0
+                && Double.compare(that.boundarySmoothing, boundarySmoothing) == 0
+                && maxTilesInMemory == that.maxTilesInMemory
+                && useGPU == that.useGPU
+                && useTTA == that.useTTA
+                && multiPassAveraging == that.multiPassAveraging
+                && Double.compare(that.overlaySmoothingSigma, overlaySmoothingSigma) == 0
+                && useCompactArgmaxOutput == that.useCompactArgmaxOutput
+                && blendMode == that.blendMode
+                && outputType == that.outputType
+                && objectType == that.objectType;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(tileSize, overlap, overlapPercent, blendMode, outputType, objectType,
-                minObjectSizeMicrons, holeFillingMicrons, boundarySmoothing,
-                maxTilesInMemory, useGPU, useTTA, multiPassAveraging, overlaySmoothingSigma,
+        return Objects.hash(
+                tileSize,
+                overlap,
+                overlapPercent,
+                blendMode,
+                outputType,
+                objectType,
+                minObjectSizeMicrons,
+                holeFillingMicrons,
+                boundarySmoothing,
+                maxTilesInMemory,
+                useGPU,
+                useTTA,
+                multiPassAveraging,
+                overlaySmoothingSigma,
                 useCompactArgmaxOutput);
     }
 
     @Override
     public String toString() {
-        return String.format("InferenceConfig{tile=%d, overlap=%d (%.1f%%), output=%s, objectType=%s, blend=%s, tta=%b%s%s}",
-                tileSize, overlap, overlapPercent, outputType, objectType, blendMode, useTTA,
+        return String.format(
+                "InferenceConfig{tile=%d, overlap=%d (%.1f%%), output=%s, objectType=%s, blend=%s, tta=%b%s%s}",
+                tileSize,
+                overlap,
+                overlapPercent,
+                outputType,
+                objectType,
+                blendMode,
+                useTTA,
                 multiPassAveraging ? ", multiPass" : "",
                 useCompactArgmaxOutput ? ", argmax8" : "");
     }
@@ -282,66 +301,67 @@ public class InferenceConfig {
     }
 
     /**
-     * Checks a tileSize / overlap pair against recommended quality and
-     * speed ranges, returning a short advisory string when something is
-     * likely to be problematic or {@code null} when the pair is in a
-     * sensible range. Does not alter the values -- callers (typically
-     * the training / inference dialog) use this purely to populate a
-     * warning label so the user knows the tradeoff they are making.
-     * <p>
-     * Current ranges (all tileSize-relative so they hold for any size):
+     * Inference-time tileSize / overlap advisory.
+     *
+     * <p>Inference overlap is a halo around each tile that gets blended
+     * with neighbours; a low overlap shows visible seams in the overlay
+     * and a high overlap wastes compute on discarded context. This
+     * function is for the inference / overlay dialog -- training has
+     * different geometry and a different concept of overlap, so use
+     * {@link qupath.ext.dlclassifier.model.TrainingConfig#checkTrainingTileSettings}
+     * for that side.
+     *
+     * <p>Returns a short advisory string when the pair is outside a
+     * sensible range, or {@code null} when it is fine. Does not modify
+     * the input values.
+     *
+     * <p>Current ranges (all tileSize-relative):
      * <ul>
      *   <li>Stride must stay &gt; 0. If the requested overlap is &ge;
      *       tileSize/2, the effective padding will silently clamp --
      *       surface that.</li>
-     *   <li>Padding &lt; 12.5% of tileSize: tile boundaries will not
-     *       have enough model context; visible seams are likely near
-     *       high-contrast transitions.</li>
+     *   <li>Padding &lt; 12.5% of tileSize: visible seams are likely
+     *       near high-contrast transitions.</li>
      *   <li>Padding &gt; 37.5% of tileSize: most of each tile is
-     *       discarded context; inference is much slower with little
-     *       quality benefit.</li>
-     *   <li>tileSize &lt; 192: any fixed-px context budget becomes a
-     *       large fraction of the tile, and the tile count grows
-     *       quadratically with 1/tileSize, so inference is slower.</li>
+     *       discarded context; inference is much slower.</li>
+     *   <li>tileSize &lt; 192: tile count grows as 1/tileSize^2 and
+     *       per-tile context is limited.</li>
      * </ul>
-     *
-     * @return a human-readable advisory, or {@code null} if the pair is
-     *         within recommended ranges
      */
-    public static String checkTileSettings(int tileSize, int configOverlap) {
+    public static String checkInferenceTileSettings(int tileSize, int configOverlap) {
         if (tileSize <= 0) return null;
         int padding = Math.max(0, configOverlap);
         if (padding >= tileSize / 2) {
             int clamped = (tileSize - 1) / 2;
             return String.format(
                     "Overlap %dpx is >= tileSize/2 (%dpx) -- stride would be zero "
-                    + "and tiling cannot advance. Value will be clamped to %dpx "
-                    + "at inference. Reduce overlap to fix this properly.",
+                            + "and tiling cannot advance. Value will be clamped to %dpx "
+                            + "at inference. Reduce overlap to fix this properly.",
                     configOverlap, tileSize / 2, clamped);
         }
         double pct = 100.0 * padding / tileSize;
         if (tileSize < 192) {
             return String.format(
                     "Small tile size (%dpx): inference will be slower (tile count "
-                    + "grows as 1/tileSize^2) and per-tile context is limited, "
-                    + "which tends to hurt edge predictions. 256-512px is the "
-                    + "typical working range.",
+                            + "grows as 1/tileSize^2) and per-tile context is limited, "
+                            + "which tends to hurt edge predictions. 256-512px is the "
+                            + "typical working range.",
                     tileSize);
         }
         if (pct < 12.5) {
             return String.format(
                     "Low overlap (%.1f%% of tileSize): tile boundaries may show "
-                    + "visible seams in the overlay, especially at high-contrast "
-                    + "class transitions. 12.5-25%% (%d-%dpx for this tile size) "
-                    + "is the typical working range.",
+                            + "visible seams in the overlay, especially at high-contrast "
+                            + "class transitions. 12.5-25%% (%d-%dpx for this tile size) "
+                            + "is the typical working range.",
                     pct, tileSize / 8, tileSize / 4);
         }
         if (pct > 37.5) {
             return String.format(
                     "High overlap (%.1f%% of tileSize): most of each tile is "
-                    + "discarded context, so inference will be significantly "
-                    + "slower with little quality benefit. 12.5-25%% is the "
-                    + "typical working range.",
+                            + "discarded context, so inference will be significantly "
+                            + "slower with little quality benefit. 12.5-25%% is the "
+                            + "typical working range.",
                     pct);
         }
         return null;

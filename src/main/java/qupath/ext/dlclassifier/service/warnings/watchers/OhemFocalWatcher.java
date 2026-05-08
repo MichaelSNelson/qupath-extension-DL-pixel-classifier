@@ -1,7 +1,6 @@
 package qupath.ext.dlclassifier.service.warnings.watchers;
 
 import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.service.warnings.InteractionWarning;
 import qupath.ext.dlclassifier.service.warnings.TrainingWarning;
 
 /**
@@ -29,8 +28,7 @@ public final class OhemFocalWatcher implements TrainingWarning {
 
     @Override
     public String getTitle() {
-        return "OHEM with Focal loss -- focal_gamma preserved by "
-                + "OHEMFocalLoss";
+        return "OHEM with Focal loss -- focal_gamma preserved by " + "OHEMFocalLoss";
     }
 
     @Override
@@ -58,8 +56,7 @@ public final class OhemFocalWatcher implements TrainingWarning {
     public boolean check(TrainingConfig config) {
         if (config == null) return false;
         String lf = config.getLossFunction();
-        boolean focal = "focal".equalsIgnoreCase(lf)
-                || "focal_dice".equalsIgnoreCase(lf);
+        boolean focal = "focal".equalsIgnoreCase(lf) || "focal_dice".equalsIgnoreCase(lf);
         return focal && config.getOhemHardRatio() < 1.0;
     }
 }

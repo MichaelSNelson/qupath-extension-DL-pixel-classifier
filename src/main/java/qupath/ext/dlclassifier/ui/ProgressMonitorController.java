@@ -1,5 +1,16 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import javafx.application.Platform;
 import javafx.beans.property.*;
 import javafx.geometry.Insets;
@@ -15,18 +26,6 @@ import javafx.stage.StageStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.gui.QuPathGUI;
-
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 /**
  * Controller for monitoring training and inference progress.
@@ -85,7 +84,11 @@ public class ProgressMonitorController {
     private final AtomicInteger trainingTotalEpochs = new AtomicInteger(0);
 
     /** The user's choice for what to save when cancelling training. */
-    public enum CancelSaveMode { BEST_EPOCH, LAST_EPOCH, DO_NOT_SAVE }
+    public enum CancelSaveMode {
+        BEST_EPOCH,
+        LAST_EPOCH,
+        DO_NOT_SAVE
+    }
 
     private volatile CancelSaveMode cancelSaveMode = CancelSaveMode.DO_NOT_SAVE;
 
@@ -131,8 +134,8 @@ public class ProgressMonitorController {
      * @param showPauseControls whether to show Pause and Complete-Training buttons
      *                          (true for both supervised training and SSL/MAE pretraining)
      */
-    public ProgressMonitorController(String title, boolean showLossChart,
-                                     boolean showClassMetrics, boolean showPauseControls) {
+    public ProgressMonitorController(
+            String title, boolean showLossChart, boolean showClassMetrics, boolean showPauseControls) {
         stage = new Stage();
         stage.initOwner(QuPathGUI.getInstance().getStage());
         stage.initStyle(StageStyle.DECORATED);
@@ -172,8 +175,7 @@ public class ProgressMonitorController {
         // Clicking earlier (e.g. during patch export) would write no signal
         // and leave the user confused. Enable via onTrainingJobStarted().
         pauseButton.setDisable(true);
-        pauseButton.setTooltip(new Tooltip(
-                "Pause becomes available once the training job starts on the worker."));
+        pauseButton.setTooltip(new Tooltip("Pause becomes available once the training job starts on the worker."));
 
         cancelButton = new Button("Cancel");
         cancelButton.setOnAction(e -> handleCancel());
@@ -231,8 +233,9 @@ public class ProgressMonitorController {
         lossChart.getData().addAll(List.of(trainLossSeries, valLossSeries));
 
         // Apply distinct colors so train vs validation are easily distinguishable.
-        String cssUrl = ProgressMonitorController.class.getResource(
-                "/qupath/ext/dlclassifier/ui/loss-chart.css").toExternalForm();
+        String cssUrl = ProgressMonitorController.class
+                .getResource("/qupath/ext/dlclassifier/ui/loss-chart.css")
+                .toExternalForm();
         lossChart.getStylesheets().add(cssUrl);
 
         // Create per-class IoU chart
@@ -268,13 +271,14 @@ public class ProgressMonitorController {
         Label currentLabel = new Label("Current:");
         currentLabel.setMinWidth(Region.USE_PREF_SIZE);
         HBox currentRow = new HBox(10, currentLabel, currentProgressBar);
-        statusBox.getChildren().addAll(
-                statusLabel,
-                new HBox(10, overallLabel, overallProgressBar),
-                currentRow,
-                new HBox(20, timeLabel, detailLabel),
-                estimateLabel
-        );
+        statusBox
+                .getChildren()
+                .addAll(
+                        statusLabel,
+                        new HBox(10, overallLabel, overallProgressBar),
+                        currentRow,
+                        new HBox(20, timeLabel, detailLabel),
+                        estimateLabel);
         // Current progress is only meaningful for inference (tiles within annotation).
         // Training has a single progress level (epochs) shown in Overall.
         if (showLossChart) {
@@ -291,13 +295,11 @@ public class ProgressMonitorController {
             lossLegend.setAlignment(Pos.CENTER);
             lossLegend.setPadding(new Insets(2, 0, 5, 0));
             if (showClassMetrics) {
-                lossLegend.getChildren().addAll(
-                        createLegendItem("#2196F3", "Train Loss"),
-                        createLegendItem("#F44336", "Val Loss")
-                );
+                lossLegend
+                        .getChildren()
+                        .addAll(createLegendItem("#2196F3", "Train Loss"), createLegendItem("#F44336", "Val Loss"));
             } else {
-                lossLegend.getChildren().add(
-                        createLegendItem("#2196F3", "Reconstruction Loss"));
+                lossLegend.getChildren().add(createLegendItem("#2196F3", "Reconstruction Loss"));
             }
 
             VBox lossChartWithLegend = new VBox(0, lossChart, lossLegend);
@@ -457,9 +459,13 @@ public class ProgressMonitorController {
      * @param perClassIoU per-class IoU values (class name -> IoU)
      * @param perClassLoss per-class loss values (class name -> loss)
      */
-    public void updateTrainingMetrics(int epoch, int totalEpochs, double trainLoss, double valLoss,
-                                       Map<String, Double> perClassIoU,
-                                       Map<String, Double> perClassLoss) {
+    public void updateTrainingMetrics(
+            int epoch,
+            int totalEpochs,
+            double trainLoss,
+            double valLoss,
+            Map<String, Double> perClassIoU,
+            Map<String, Double> perClassLoss) {
         // Track epoch timing (called from background thread, before Platform.runLater)
         recordEpochCompletion(epoch, totalEpochs);
 
@@ -479,36 +485,34 @@ public class ProgressMonitorController {
             // Update per-class IoU chart
             if (perClassIoU != null) {
                 for (var entry : perClassIoU.entrySet()) {
-                    XYChart.Series<Number, Number> series = iouSeriesMap.computeIfAbsent(
-                            entry.getKey(), className -> {
-                                XYChart.Series<Number, Number> newSeries = new XYChart.Series<>();
-                                newSeries.setName(className);
-                                iouChart.getData().add(newSeries);
+                    XYChart.Series<Number, Number> series = iouSeriesMap.computeIfAbsent(entry.getKey(), className -> {
+                        XYChart.Series<Number, Number> newSeries = new XYChart.Series<>();
+                        newSeries.setName(className);
+                        iouChart.getData().add(newSeries);
 
-                                // Apply QuPath class color to series line
-                                Integer packedColor = classColors.get(className);
-                                if (packedColor != null) {
-                                    int r = (packedColor >> 16) & 0xFF;
-                                    int g = (packedColor >> 8) & 0xFF;
-                                    int b = packedColor & 0xFF;
-                                    String colorCss = String.format("rgb(%d,%d,%d)", r, g, b);
-                                    // Style the series node (line) once it is attached to the scene
-                                    if (newSeries.getNode() != null) {
-                                        newSeries.getNode().setStyle("-fx-stroke: " + colorCss + ";");
-                                    } else {
-                                        // Defer styling until the node is created
-                                        newSeries.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                                            if (newNode != null) {
-                                                newNode.setStyle("-fx-stroke: " + colorCss + ";");
-                                            }
-                                        });
+                        // Apply QuPath class color to series line
+                        Integer packedColor = classColors.get(className);
+                        if (packedColor != null) {
+                            int r = (packedColor >> 16) & 0xFF;
+                            int g = (packedColor >> 8) & 0xFF;
+                            int b = packedColor & 0xFF;
+                            String colorCss = String.format("rgb(%d,%d,%d)", r, g, b);
+                            // Style the series node (line) once it is attached to the scene
+                            if (newSeries.getNode() != null) {
+                                newSeries.getNode().setStyle("-fx-stroke: " + colorCss + ";");
+                            } else {
+                                // Defer styling until the node is created
+                                newSeries.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                                    if (newNode != null) {
+                                        newNode.setStyle("-fx-stroke: " + colorCss + ";");
                                     }
-                                    // Add to custom legend
-                                    iouLegendBox.getChildren().add(
-                                            createLegendItem(colorCss, className));
-                                }
-                                return newSeries;
-                            });
+                                });
+                            }
+                            // Add to custom legend
+                            iouLegendBox.getChildren().add(createLegendItem(colorCss, className));
+                        }
+                        return newSeries;
+                    });
                     series.getData().add(new XYChart.Data<>(epoch, entry.getValue()));
                 }
             }
@@ -747,8 +751,7 @@ public class ProgressMonitorController {
             // Re-exporting tiles can take 30-90s, during which a pause click
             // would write a signal with the wrong jobId and be lost.
             pauseButton.setDisable(true);
-            pauseButton.setTooltip(new Tooltip(
-                    "Pause becomes available once the resumed training job starts."));
+            pauseButton.setTooltip(new Tooltip("Pause becomes available once the resumed training job starts."));
             pauseButton.setOnAction(e -> handlePause());
             completeTrainingButton.setVisible(false);
             completeTrainingButton.setManaged(false);
@@ -827,8 +830,7 @@ public class ProgressMonitorController {
         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
         dialog.setTitle("Cancel Training");
         dialog.setHeaderText("Save progress?");
-        dialog.setContentText(
-                "Training will be stopped. Choose what to save:\n\n"
+        dialog.setContentText("Training will be stopped. Choose what to save:\n\n"
                 + "Best Epoch -- save the model with the best validation score\n"
                 + "Last Epoch -- save the model from the most recent epoch\n"
                 + "Do Not Save -- discard all training progress");
@@ -894,18 +896,18 @@ public class ProgressMonitorController {
      * Installs a tooltip on a chart data point showing series name, epoch, and value.
      * Must be called on the FX application thread.
      */
-    private void installDataPointTooltip(XYChart.Data<Number, Number> data,
-                                          String seriesName, int epoch, double value) {
+    private void installDataPointTooltip(
+            XYChart.Data<Number, Number> data, String seriesName, int epoch, double value) {
         javafx.scene.Node node = data.getNode();
         if (node != null) {
-            Tooltip.install(node, new Tooltip(
-                    String.format("%s\nEpoch: %d\nValue: %.4f", seriesName, epoch, value)));
+            Tooltip.install(node, new Tooltip(String.format("%s\nEpoch: %d\nValue: %.4f", seriesName, epoch, value)));
             node.setStyle("-fx-background-radius: 3px; -fx-padding: 2px;");
         } else {
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
-                    Tooltip.install(newNode, new Tooltip(
-                            String.format("%s\nEpoch: %d\nValue: %.4f", seriesName, epoch, value)));
+                    Tooltip.install(
+                            newNode,
+                            new Tooltip(String.format("%s\nEpoch: %d\nValue: %.4f", seriesName, epoch, value)));
                     newNode.setStyle("-fx-background-radius: 3px; -fx-padding: 2px;");
                 }
             });
@@ -1039,8 +1041,7 @@ public class ProgressMonitorController {
      * not today (e.g., "2:35 PM" or "2:35 PM (Apr 1)").
      */
     private String formatTimeOfDay(long epochMillis) {
-        LocalDateTime etaDt = LocalDateTime.ofInstant(
-                Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault());
+        LocalDateTime etaDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault());
         LocalDateTime nowDt = LocalDateTime.now();
 
         DateTimeFormatter timeFmt = DateTimeFormatter.ofPattern("h:mm a");
@@ -1091,5 +1092,4 @@ public class ProgressMonitorController {
     public static ProgressMonitorController forSSLPretraining() {
         return new ProgressMonitorController("SSL Pretraining", true, false, true);
     }
-
 }

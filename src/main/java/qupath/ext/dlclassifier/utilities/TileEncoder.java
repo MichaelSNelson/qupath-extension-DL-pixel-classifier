@@ -61,25 +61,25 @@ public final class TileEncoder {
             // Fast path: extract BGR bytes and swap to RGB
             byte[] pixels = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
             for (int i = 0; i < h * w; i++) {
-                result[i * 3]     = pixels[i * 3 + 2]; // R
+                result[i * 3] = pixels[i * 3 + 2]; // R
                 result[i * 3 + 1] = pixels[i * 3 + 1]; // G
-                result[i * 3 + 2] = pixels[i * 3];     // B
+                result[i * 3 + 2] = pixels[i * 3]; // B
             }
         } else if (type == BufferedImage.TYPE_INT_RGB || type == BufferedImage.TYPE_INT_ARGB) {
             // Extract from int[] pixel data
             int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
             for (int i = 0; i < h * w; i++) {
                 int px = pixels[i];
-                result[i * 3]     = (byte) ((px >> 16) & 0xFF); // R
-                result[i * 3 + 1] = (byte) ((px >> 8) & 0xFF);  // G
-                result[i * 3 + 2] = (byte) (px & 0xFF);         // B
+                result[i * 3] = (byte) ((px >> 16) & 0xFF); // R
+                result[i * 3 + 1] = (byte) ((px >> 8) & 0xFF); // G
+                result[i * 3 + 2] = (byte) (px & 0xFF); // B
             }
         } else {
             // Generic fallback using getRGB
             int[] rgbPixels = image.getRGB(0, 0, w, h, null, 0, w);
             for (int i = 0; i < h * w; i++) {
                 int px = rgbPixels[i];
-                result[i * 3]     = (byte) ((px >> 16) & 0xFF);
+                result[i * 3] = (byte) ((px >> 16) & 0xFF);
                 result[i * 3 + 1] = (byte) ((px >> 8) & 0xFF);
                 result[i * 3 + 2] = (byte) (px & 0xFF);
             }
@@ -102,7 +102,8 @@ public final class TileEncoder {
     public static byte[] encodeTileRawFloat(BufferedImage image, List<Integer> selectedChannels) {
         float[][][] data = BitDepthConverter.toFloatArray(image);
         if (selectedChannels != null && !selectedChannels.isEmpty()) {
-            int[] indices = selectedChannels.stream().mapToInt(Integer::intValue).toArray();
+            int[] indices =
+                    selectedChannels.stream().mapToInt(Integer::intValue).toArray();
             data = BitDepthConverter.extractChannels(data, indices);
         }
         int h = data.length;
@@ -136,17 +137,14 @@ public final class TileEncoder {
      * @param bytesPerChannel  bytes per channel value (1 for uint8, 4 for float32)
      * @return interleaved byte array with 2 * channelsPerArray channels per pixel
      */
-    public static byte[] interleaveContextChannels(byte[] detailBytes, byte[] contextBytes,
-                                                    int numPixels, int channelsPerArray,
-                                                    int bytesPerChannel) {
+    public static byte[] interleaveContextChannels(
+            byte[] detailBytes, byte[] contextBytes, int numPixels, int channelsPerArray, int bytesPerChannel) {
         int channelStride = channelsPerArray * bytesPerChannel;
         int totalStride = channelStride * 2;
         byte[] result = new byte[numPixels * totalStride];
         for (int px = 0; px < numPixels; px++) {
-            System.arraycopy(detailBytes, px * channelStride,
-                    result, px * totalStride, channelStride);
-            System.arraycopy(contextBytes, px * channelStride,
-                    result, px * totalStride + channelStride, channelStride);
+            System.arraycopy(detailBytes, px * channelStride, result, px * totalStride, channelStride);
+            System.arraycopy(contextBytes, px * channelStride, result, px * totalStride + channelStride, channelStride);
         }
         return result;
     }
@@ -161,7 +159,6 @@ public final class TileEncoder {
     public static String encodeTileBase64Png(BufferedImage image) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         javax.imageio.ImageIO.write(image, "png", baos);
-        return "data:image/png;base64," +
-                Base64.getEncoder().encodeToString(baos.toByteArray());
+        return "data:image/png;base64," + Base64.getEncoder().encodeToString(baos.toByteArray());
     }
 }

@@ -23,152 +23,146 @@ public final class DLClassifierPreferences {
     private static final Logger logger = LoggerFactory.getLogger(DLClassifierPreferences.class);
 
     // Tile settings
-    private static final IntegerProperty tileSize = PathPrefs.createPersistentPreference(
-            "dlclassifier.tileSize", 512);
+    private static final IntegerProperty tileSize = PathPrefs.createPersistentPreference("dlclassifier.tileSize", 512);
 
-    private static final IntegerProperty tileOverlap = PathPrefs.createPersistentPreference(
-            "dlclassifier.tileOverlap", 64);
+    private static final IntegerProperty tileOverlap =
+            PathPrefs.createPersistentPreference("dlclassifier.tileOverlap", 64);
 
-    private static final DoubleProperty tileOverlapPercent = PathPrefs.createPersistentPreference(
-            "dlclassifier.tileOverlapPercent", 12.5);
+    private static final DoubleProperty tileOverlapPercent =
+            PathPrefs.createPersistentPreference("dlclassifier.tileOverlapPercent", 12.5);
 
     // Object output settings
-    private static final StringProperty defaultObjectType = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultObjectType", "DETECTION");
+    private static final StringProperty defaultObjectType =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultObjectType", "DETECTION");
 
     // Training defaults
-    private static final IntegerProperty defaultEpochs = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultEpochs", 50);
+    private static final IntegerProperty defaultEpochs =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultEpochs", 50);
 
-    private static final IntegerProperty defaultBatchSize = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultBatchSize", 8);
+    private static final IntegerProperty defaultBatchSize =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultBatchSize", 8);
 
-    private static final DoubleProperty defaultLearningRate = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultLearningRate", 0.0001);
+    private static final DoubleProperty defaultLearningRate =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultLearningRate", 0.0001);
 
-    private static final BooleanProperty useAugmentation = PathPrefs.createPersistentPreference(
-            "dlclassifier.useAugmentation", true);
+    private static final BooleanProperty useAugmentation =
+            PathPrefs.createPersistentPreference("dlclassifier.useAugmentation", true);
 
-    private static final BooleanProperty usePretrainedWeights = PathPrefs.createPersistentPreference(
-            "dlclassifier.usePretrainedWeights", true);
+    private static final BooleanProperty usePretrainedWeights =
+            PathPrefs.createPersistentPreference("dlclassifier.usePretrainedWeights", true);
 
     // Inference defaults
-    private static final BooleanProperty useGPU = PathPrefs.createPersistentPreference(
-            "dlclassifier.useGPU", true);
+    private static final BooleanProperty useGPU = PathPrefs.createPersistentPreference("dlclassifier.useGPU", true);
 
-    private static final DoubleProperty minObjectSizeMicrons = PathPrefs.createPersistentPreference(
-            "dlclassifier.minObjectSizeMicrons", 10.0);
+    private static final DoubleProperty minObjectSizeMicrons =
+            PathPrefs.createPersistentPreference("dlclassifier.minObjectSizeMicrons", 10.0);
 
-    private static final DoubleProperty holeFillingMicrons = PathPrefs.createPersistentPreference(
-            "dlclassifier.holeFillingMicrons", 5.0);
+    private static final DoubleProperty holeFillingMicrons =
+            PathPrefs.createPersistentPreference("dlclassifier.holeFillingMicrons", 5.0);
 
     // Normalization
-    private static final StringProperty defaultNormalization = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultNormalization", "PERCENTILE_99");
+    private static final StringProperty defaultNormalization =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultNormalization", "PERCENTILE_99");
 
     // ==================== Training Dialog Preferences ====================
 
-    private static final StringProperty lastArchitecture = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastArchitecture", "unet");
+    private static final StringProperty lastArchitecture =
+            PathPrefs.createPersistentPreference("dlclassifier.lastArchitecture", "unet");
 
-    private static final StringProperty lastBackbone = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastBackbone", "resnet34");
+    private static final StringProperty lastBackbone =
+            PathPrefs.createPersistentPreference("dlclassifier.lastBackbone", "resnet34");
 
-    private static final IntegerProperty validationSplit = PathPrefs.createPersistentPreference(
-            "dlclassifier.validationSplit", 20);
+    private static final IntegerProperty validationSplit =
+            PathPrefs.createPersistentPreference("dlclassifier.validationSplit", 20);
 
-    private static final BooleanProperty rebalanceByDefault = PathPrefs.createPersistentPreference(
-            "dlclassifier.rebalanceByDefault", true);
+    private static final BooleanProperty rebalanceByDefault =
+            PathPrefs.createPersistentPreference("dlclassifier.rebalanceByDefault", true);
 
-    private static final BooleanProperty augFlipHorizontal = PathPrefs.createPersistentPreference(
-            "dlclassifier.augFlipHorizontal", true);
+    private static final BooleanProperty augFlipHorizontal =
+            PathPrefs.createPersistentPreference("dlclassifier.augFlipHorizontal", true);
 
-    private static final BooleanProperty augFlipVertical = PathPrefs.createPersistentPreference(
-            "dlclassifier.augFlipVertical", true);
+    private static final BooleanProperty augFlipVertical =
+            PathPrefs.createPersistentPreference("dlclassifier.augFlipVertical", true);
 
-    private static final BooleanProperty augRotation = PathPrefs.createPersistentPreference(
-            "dlclassifier.augRotation", true);
+    private static final BooleanProperty augRotation =
+            PathPrefs.createPersistentPreference("dlclassifier.augRotation", true);
 
-    private static final BooleanProperty augColorJitter = PathPrefs.createPersistentPreference(
-            "dlclassifier.augColorJitter", true);
+    private static final BooleanProperty augColorJitter =
+            PathPrefs.createPersistentPreference("dlclassifier.augColorJitter", true);
 
-    private static final StringProperty augIntensityMode = PathPrefs.createPersistentPreference(
-            "dlclassifier.augIntensityMode", "generic");
+    private static final StringProperty augIntensityMode =
+            PathPrefs.createPersistentPreference("dlclassifier.augIntensityMode", "generic");
 
     // Scale jitter strength: random rescale of training tiles within
     // +/- this fraction of native size, then crop/pad back to image_size.
     // Trains the model to tolerate cross-batch pixel-size mismatch on top
     // of the explicit metadata-driven resample at inference. 0.0 disables.
     private static final DoubleProperty augScaleJitterLimit =
-            PathPrefs.createPersistentPreference(
-                    "dlclassifier.augScaleJitterLimit", 0.3);
+            PathPrefs.createPersistentPreference("dlclassifier.augScaleJitterLimit", 0.3);
 
-    private static final BooleanProperty augElasticDeform = PathPrefs.createPersistentPreference(
-            "dlclassifier.augElasticDeform", false);
+    private static final BooleanProperty augElasticDeform =
+            PathPrefs.createPersistentPreference("dlclassifier.augElasticDeform", false);
 
     // ==================== Advanced augmentation strength/probability ====================
     // Defaults match the hardcoded values in training_service.get_training_augmentation()
-    private static final DoubleProperty augPFlip = PathPrefs.createPersistentPreference(
-            "dlclassifier.augPFlip", 0.5);
-    private static final DoubleProperty augPRotate = PathPrefs.createPersistentPreference(
-            "dlclassifier.augPRotate", 0.5);
-    private static final DoubleProperty augPElastic = PathPrefs.createPersistentPreference(
-            "dlclassifier.augPElastic", 0.3);
-    private static final DoubleProperty augPColor = PathPrefs.createPersistentPreference(
-            "dlclassifier.augPColor", 0.3);
-    private static final DoubleProperty augBrightnessLimit = PathPrefs.createPersistentPreference(
-            "dlclassifier.augBrightnessLimit", 0.2);
-    private static final DoubleProperty augContrastLimit = PathPrefs.createPersistentPreference(
-            "dlclassifier.augContrastLimit", 0.2);
-    private static final IntegerProperty augGammaMin = PathPrefs.createPersistentPreference(
-            "dlclassifier.augGammaMin", 80);
-    private static final IntegerProperty augGammaMax = PathPrefs.createPersistentPreference(
-            "dlclassifier.augGammaMax", 120);
-    private static final DoubleProperty augElasticAlpha = PathPrefs.createPersistentPreference(
-            "dlclassifier.augElasticAlpha", 120.0);
-    private static final DoubleProperty augElasticSigmaRatio = PathPrefs.createPersistentPreference(
-            "dlclassifier.augElasticSigmaRatio", 0.05);
-    private static final DoubleProperty augPNoise = PathPrefs.createPersistentPreference(
-            "dlclassifier.augPNoise", 0.2);
-    private static final DoubleProperty augNoiseStdMin = PathPrefs.createPersistentPreference(
-            "dlclassifier.augNoiseStdMin", 0.04);
-    private static final DoubleProperty augNoiseStdMax = PathPrefs.createPersistentPreference(
-            "dlclassifier.augNoiseStdMax", 0.2);
+    private static final DoubleProperty augPFlip = PathPrefs.createPersistentPreference("dlclassifier.augPFlip", 0.5);
+    private static final DoubleProperty augPRotate =
+            PathPrefs.createPersistentPreference("dlclassifier.augPRotate", 0.5);
+    private static final DoubleProperty augPElastic =
+            PathPrefs.createPersistentPreference("dlclassifier.augPElastic", 0.3);
+    private static final DoubleProperty augPColor = PathPrefs.createPersistentPreference("dlclassifier.augPColor", 0.3);
+    private static final DoubleProperty augBrightnessLimit =
+            PathPrefs.createPersistentPreference("dlclassifier.augBrightnessLimit", 0.2);
+    private static final DoubleProperty augContrastLimit =
+            PathPrefs.createPersistentPreference("dlclassifier.augContrastLimit", 0.2);
+    private static final IntegerProperty augGammaMin =
+            PathPrefs.createPersistentPreference("dlclassifier.augGammaMin", 80);
+    private static final IntegerProperty augGammaMax =
+            PathPrefs.createPersistentPreference("dlclassifier.augGammaMax", 120);
+    private static final DoubleProperty augElasticAlpha =
+            PathPrefs.createPersistentPreference("dlclassifier.augElasticAlpha", 120.0);
+    private static final DoubleProperty augElasticSigmaRatio =
+            PathPrefs.createPersistentPreference("dlclassifier.augElasticSigmaRatio", 0.05);
+    private static final DoubleProperty augPNoise = PathPrefs.createPersistentPreference("dlclassifier.augPNoise", 0.2);
+    private static final DoubleProperty augNoiseStdMin =
+            PathPrefs.createPersistentPreference("dlclassifier.augNoiseStdMin", 0.04);
+    private static final DoubleProperty augNoiseStdMax =
+            PathPrefs.createPersistentPreference("dlclassifier.augNoiseStdMax", 0.2);
 
     // Tiling/resolution settings persisted from training dialog
-    private static final DoubleProperty defaultDownsample = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultDownsample", 1.0);
+    private static final DoubleProperty defaultDownsample =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultDownsample", 1.0);
 
-    private static final IntegerProperty defaultContextScale = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultContextScale", 1);
+    private static final IntegerProperty defaultContextScale =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultContextScale", 1);
 
-    private static final IntegerProperty lastLineStrokeWidth = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastLineStrokeWidth", 0);
+    private static final IntegerProperty lastLineStrokeWidth =
+            PathPrefs.createPersistentPreference("dlclassifier.lastLineStrokeWidth", 0);
 
     // Training data export directory (empty = system temp)
-    private static final StringProperty trainingExportDir = PathPrefs.createPersistentPreference(
-            "dlclassifier.trainingExportDir", "");
+    private static final StringProperty trainingExportDir =
+            PathPrefs.createPersistentPreference("dlclassifier.trainingExportDir", "");
 
     // ==================== Training Strategy Preferences ====================
 
-    private static final StringProperty defaultScheduler = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultScheduler", "onecycle");
+    private static final StringProperty defaultScheduler =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultScheduler", "onecycle");
 
-    private static final StringProperty defaultLossFunction = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultLossFunction", "ce_dice");
+    private static final StringProperty defaultLossFunction =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultLossFunction", "ce_dice");
 
-    private static final StringProperty defaultEarlyStoppingMetric = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultEarlyStoppingMetric", "mean_iou");
+    private static final StringProperty defaultEarlyStoppingMetric =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultEarlyStoppingMetric", "mean_iou");
 
-    private static final IntegerProperty defaultEarlyStoppingPatience = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultEarlyStoppingPatience", 15);
+    private static final IntegerProperty defaultEarlyStoppingPatience =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultEarlyStoppingPatience", 15);
 
-    private static final BooleanProperty defaultMixedPrecision = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultMixedPrecision", true);
+    private static final BooleanProperty defaultMixedPrecision =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultMixedPrecision", true);
 
     // UI mode
-    private static final BooleanProperty advancedMode = PathPrefs.createPersistentPreference(
-            "dlclassifier.advancedMode", false);
+    private static final BooleanProperty advancedMode =
+            PathPrefs.createPersistentPreference("dlclassifier.advancedMode", false);
 
     // Developer-mode toggle that exposes pretraining options not recommended
     // for end users (currently SimCLR/BYOL self-supervised pretraining).
@@ -176,147 +170,142 @@ public final class DLClassifierPreferences {
     // primary fly-wing use case; hidden by default while the path is kept
     // intact for developers / research use.
     private static final BooleanProperty showDeveloperPretrainingOptions =
-            PathPrefs.createPersistentPreference(
-                    "dlclassifier.showDeveloperPretrainingOptions", false);
+            PathPrefs.createPersistentPreference("dlclassifier.showDeveloperPretrainingOptions", false);
 
-    private static final IntegerProperty defaultGradientAccumulation = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultGradientAccumulation", 1);
+    private static final IntegerProperty defaultGradientAccumulation =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultGradientAccumulation", 1);
 
-    private static final IntegerProperty defaultOhemHardPixelPct = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultOhemHardPixelPct", 100);
+    private static final IntegerProperty defaultOhemHardPixelPct =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultOhemHardPixelPct", 100);
 
-    private static final IntegerProperty defaultOhemHardPixelStartPct = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultOhemHardPixelStartPct", 100);
+    private static final IntegerProperty defaultOhemHardPixelStartPct =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultOhemHardPixelStartPct", 100);
 
-    private static final DoubleProperty defaultFocalGamma = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultFocalGamma", 2.0);
+    private static final DoubleProperty defaultFocalGamma =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultFocalGamma", 2.0);
 
     // Boundary-softened CE parameters (loss_function = "boundary_ce" or
     // "boundary_ce_dice"). sigma is the EDT falloff length in pixels,
     // w_min is the floor weight at exact boundaries.
-    private static final DoubleProperty defaultBoundarySigma = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultBoundarySigma", 3.0);
-    private static final DoubleProperty defaultBoundaryWMin = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultBoundaryWMin", 0.1);
+    private static final DoubleProperty defaultBoundarySigma =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultBoundarySigma", 3.0);
+    private static final DoubleProperty defaultBoundaryWMin =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultBoundaryWMin", 0.1);
 
-    private static final StringProperty defaultOhemSchedule = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultOhemSchedule", "fixed");
+    private static final StringProperty defaultOhemSchedule =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultOhemSchedule", "fixed");
 
     // When true, OHEM uses global topk + per-class safety floor (lets hard
     // pixels concentrate on the weaker class). When false, each class keeps
     // a proportional share of the hard pixels -- the legacy behavior.
-    private static final BooleanProperty defaultOhemAdaptiveFloor = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultOhemAdaptiveFloor", false);
+    private static final BooleanProperty defaultOhemAdaptiveFloor =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultOhemAdaptiveFloor", false);
 
-    private static final BooleanProperty defaultProgressiveResize = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultProgressiveResize", false);
+    private static final BooleanProperty defaultProgressiveResize =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultProgressiveResize", false);
 
-    private static final StringProperty defaultFocusClass = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultFocusClass", "");
+    private static final StringProperty defaultFocusClass =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultFocusClass", "");
 
-    private static final DoubleProperty defaultFocusClassMinIoU = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultFocusClassMinIoU", 0.0);
+    private static final DoubleProperty defaultFocusClassMinIoU =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultFocusClassMinIoU", 0.0);
 
     // ==================== Advanced Training Parameters ====================
 
-    private static final DoubleProperty defaultWeightDecay = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultWeightDecay", 0.01);
+    private static final DoubleProperty defaultWeightDecay =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultWeightDecay", 0.01);
 
-    private static final DoubleProperty defaultDiscriminativeLrRatio = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultDiscriminativeLrRatio", 0.1);
+    private static final DoubleProperty defaultDiscriminativeLrRatio =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultDiscriminativeLrRatio", 0.1);
 
-    private static final IntegerProperty lastSeed = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastSeed", 0);
+    private static final IntegerProperty lastSeed = PathPrefs.createPersistentPreference("dlclassifier.lastSeed", 0);
 
     // ==================== Inference Dialog Preferences ====================
 
-    private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastOutputType", "OBJECTS");
+    private static final StringProperty lastOutputType =
+            PathPrefs.createPersistentPreference("dlclassifier.lastOutputType", "OBJECTS");
 
-    private static final StringProperty lastBlendMode = PathPrefs.createPersistentPreference(
-            "dlclassifier.lastBlendMode", "GAUSSIAN");
+    private static final StringProperty lastBlendMode =
+            PathPrefs.createPersistentPreference("dlclassifier.lastBlendMode", "GAUSSIAN");
 
-    private static final DoubleProperty smoothing = PathPrefs.createPersistentPreference(
-            "dlclassifier.smoothing", 1.0);
+    private static final DoubleProperty smoothing = PathPrefs.createPersistentPreference("dlclassifier.smoothing", 1.0);
 
-    private static final DoubleProperty overlaySmoothing = PathPrefs.createPersistentPreference(
-            "dlclassifier.overlaySmoothing", 2.0);
+    private static final DoubleProperty overlaySmoothing =
+            PathPrefs.createPersistentPreference("dlclassifier.overlaySmoothing", 2.0);
 
-    private static final StringProperty applicationScope = PathPrefs.createPersistentPreference(
-            "dlclassifier.applicationScope", "ALL_ANNOTATIONS");
+    private static final StringProperty applicationScope =
+            PathPrefs.createPersistentPreference("dlclassifier.applicationScope", "ALL_ANNOTATIONS");
 
-    private static final BooleanProperty createBackup = PathPrefs.createPersistentPreference(
-            "dlclassifier.createBackup", false);
+    private static final BooleanProperty createBackup =
+            PathPrefs.createPersistentPreference("dlclassifier.createBackup", false);
 
     // Multi-pass tile averaging for seamless inference
-    private static final BooleanProperty multiPassAveraging = PathPrefs.createPersistentPreference(
-            "dlclassifier.multiPassAveraging", false);
+    private static final BooleanProperty multiPassAveraging =
+            PathPrefs.createPersistentPreference("dlclassifier.multiPassAveraging", false);
 
     // Phase 3c: compact uint8 argmax output instead of float32 probability maps.
     // When on, Python inference returns class indices directly (20x smaller
     // payload, no softmax). Disables overlay smoothing, multi-pass averaging,
     // and tile blending since those operate on floats.
-    private static final BooleanProperty useCompactArgmaxOutput = PathPrefs.createPersistentPreference(
-            "dlclassifier.useCompactArgmaxOutput", false);
+    private static final BooleanProperty useCompactArgmaxOutput =
+            PathPrefs.createPersistentPreference("dlclassifier.useCompactArgmaxOutput", false);
 
     // Phase 4: experimental TensorRT inference path. Requires
     // onnxruntime-gpu built with TensorrtExecutionProvider. Builds a TRT
     // engine from model_static.onnx on first inference and caches it on
     // disk; silently falls back to CUDAExecutionProvider when TRT is
     // unavailable. Windows wheels are hit-or-miss, so default is off.
-    private static final BooleanProperty experimentalTensorRT = PathPrefs.createPersistentPreference(
-            "dlclassifier.experimentalTensorRT", false);
+    private static final BooleanProperty experimentalTensorRT =
+            PathPrefs.createPersistentPreference("dlclassifier.experimentalTensorRT", false);
 
     // Phase 4: experimental INT8 PTQ. Requires experimentalTensorRT on.
     // Calibration uses a sample of training tiles; BatchRenorm is folded
     // to BatchNorm at export time (safe at eval() with rmax=dmax=inf).
-    private static final BooleanProperty experimentalInt8 = PathPrefs.createPersistentPreference(
-            "dlclassifier.experimentalInt8", false);
+    private static final BooleanProperty experimentalInt8 =
+            PathPrefs.createPersistentPreference("dlclassifier.experimentalInt8", false);
 
     // Preload training patches into RAM to skip per-batch disk I/O and
     // TIFF decode. "auto" = enable when the dataset fits in ~25% of free
     // RAM; "on" = always enable (may exhaust memory on huge datasets);
     // "off" = always stream from disk (the legacy behavior).
-    private static final StringProperty defaultInMemoryDataset = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultInMemoryDataset", "auto");
+    private static final StringProperty defaultInMemoryDataset =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultInMemoryDataset", "auto");
 
     // Fraction of available RAM the bounded cache may use (only honored
     // when defaultInMemoryDataset == "bounded"). 0.40 leaves 60% for the
     // dataloader, optimizer state, and other system processes.
     private static final DoubleProperty cacheBoundedFraction =
-            PathPrefs.createPersistentPreference(
-                    "dlclassifier.cacheBoundedFraction", 0.40);
+            PathPrefs.createPersistentPreference("dlclassifier.cacheBoundedFraction", 0.40);
 
     // Whether to suppress the pre-flight 'bounded mode' confirmation
     // dialog. Stays false by default so a user changing to bounded mode
     // sees the warning the first time. They can opt out per-machine.
     private static final BooleanProperty boundedCacheNoticeDismissed =
-            PathPrefs.createPersistentPreference(
-                    "dlclassifier.boundedCacheNoticeDismissed", false);
+            PathPrefs.createPersistentPreference("dlclassifier.boundedCacheNoticeDismissed", false);
 
     // One-time overlay notice dismissed
-    private static final BooleanProperty overlayNoticeDismissed = PathPrefs.createPersistentPreference(
-            "dlclassifier.overlayNoticeDismissed", false);
+    private static final BooleanProperty overlayNoticeDismissed =
+            PathPrefs.createPersistentPreference("dlclassifier.overlayNoticeDismissed", false);
 
     // ==================== Environment ====================
 
     // Automatically rebuild the Python environment when extension version changes
-    private static final BooleanProperty autoRebuildEnvironment = PathPrefs.createPersistentPreference(
-            "dlclassifier.autoRebuildEnvironment", true);
+    private static final BooleanProperty autoRebuildEnvironment =
+            PathPrefs.createPersistentPreference("dlclassifier.autoRebuildEnvironment", true);
 
     // Show the welcome/getting-started message when Train Classifier is first opened
-    private static final BooleanProperty showWelcomeMessage = PathPrefs.createPersistentPreference(
-            "dlclassifier.showWelcomeMessage", true);
+    private static final BooleanProperty showWelcomeMessage =
+            PathPrefs.createPersistentPreference("dlclassifier.showWelcomeMessage", true);
 
     // ==================== Menu Appearance ====================
 
     // Show colored dot next to extension name in the Extensions menu
-    private static final BooleanProperty showMenuDot = PathPrefs.createPersistentPreference(
-            "dlclassifier.showMenuDot", true);
+    private static final BooleanProperty showMenuDot =
+            PathPrefs.createPersistentPreference("dlclassifier.showMenuDot", true);
 
     // Color of the menu dot as packed ARGB integer (default: magenta = 0xFFFF00FF)
-    private static final IntegerProperty menuDotColor = PathPrefs.createPersistentPreference(
-            "dlclassifier.menuDotColor", 0xFFFF00FF);
+    private static final IntegerProperty menuDotColor =
+            PathPrefs.createPersistentPreference("dlclassifier.menuDotColor", 0xFFFF00FF);
 
     private DLClassifierPreferences() {
         // Utility class - no instantiation
@@ -331,8 +320,7 @@ public final class DLClassifierPreferences {
      * @param qupath the QuPath GUI instance
      */
     public static void installPreferences(QuPathGUI qupath) {
-        if (qupath == null)
-            return;
+        if (qupath == null) return;
 
         logger.info("Installing DL Pixel Classifier preferences");
 
@@ -340,173 +328,166 @@ public final class DLClassifierPreferences {
         // the relevant PreferenceWarning watchers when the user flips
         // the experimental TRT / INT8 toggles, so they get an
         // immediate popup instead of wondering why nothing changed.
-        javafx.beans.value.ChangeListener<Boolean> providerToggleListener =
-                (obs, oldV, newV) -> {
-                    // Only fire on turn-ON transitions. Turning a
-                    // provider OFF is not a situation that warrants a
-                    // popup about cache invalidation (user knows they
-                    // are giving up the provider).
-                    if (!Boolean.TRUE.equals(newV)) return;
-                    try {
-                        var list = InteractionWarningService.evaluatePreferences();
-                        var visible = InteractionWarningService.filterVisible(list);
-                        if (!visible.isEmpty()) {
-                            InteractionWarningService.showIfAny(visible, null);
-                        }
-                    } catch (RuntimeException ex) {
-                        logger.warn("Preference-toggle interaction warning "
-                                + "evaluation failed", ex);
-                    }
-                };
+        javafx.beans.value.ChangeListener<Boolean> providerToggleListener = (obs, oldV, newV) -> {
+            // Only fire on turn-ON transitions. Turning a
+            // provider OFF is not a situation that warrants a
+            // popup about cache invalidation (user knows they
+            // are giving up the provider).
+            if (!Boolean.TRUE.equals(newV)) return;
+            try {
+                var list = InteractionWarningService.evaluatePreferences();
+                var visible = InteractionWarningService.filterVisible(list);
+                if (!visible.isEmpty()) {
+                    InteractionWarningService.showIfAny(visible, null);
+                }
+            } catch (RuntimeException ex) {
+                logger.warn("Preference-toggle interaction warning " + "evaluation failed", ex);
+            }
+        };
         experimentalTensorRT.addListener(providerToggleListener);
         experimentalInt8.addListener(providerToggleListener);
 
         ObservableList<org.controlsfx.control.PropertySheet.Item> items =
-                qupath.getPreferencePane()
-                        .getPropertySheet()
-                        .getItems();
+                qupath.getPreferencePane().getPropertySheet().getItems();
 
         items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)
                 .name("Use GPU for Inference")
                 .category(CATEGORY)
-                .description("Use GPU acceleration for inference when available. " +
-                        "Falls back to CPU if no GPU is detected.")
+                .description("Use GPU acceleration for inference when available. "
+                        + "Falls back to CPU if no GPU is detected.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(trainingExportDir, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.DIRECTORY)
                 .name("Training Data Export Directory")
                 .category(CATEGORY)
-                .description("Directory for exporting training data patches. " +
-                        "If empty, the system temporary directory is used. " +
-                        "Set to a directory on a larger drive if temp space is limited.")
+                .description("Directory for exporting training data patches. "
+                        + "If empty, the system temporary directory is used. "
+                        + "Set to a directory on a larger drive if temp space is limited.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(autoRebuildEnvironment, Boolean.class)
                 .name("Auto-Rebuild Environment on Update")
                 .category(CATEGORY)
-                .description("Automatically rebuild the Python environment in the background " +
-                        "when the extension JAR is updated. While rebuilding, all workflow " +
-                        "menu items (Train, Apply Classifier, Overlay) are temporarily " +
-                        "disabled and re-enabled once the rebuild completes. " +
-                        "Disable this if you prefer to rebuild manually via Utilities.")
+                .description("Automatically rebuild the Python environment in the background "
+                        + "when the extension JAR is updated. While rebuilding, all workflow "
+                        + "menu items (Train, Apply Classifier, Overlay) are temporarily "
+                        + "disabled and re-enabled once the rebuild completes. "
+                        + "Disable this if you prefer to rebuild manually via Utilities.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(overlaySmoothing, Double.class)
                 .name("Overlay Prediction Smoothing")
                 .category(CATEGORY)
-                .description("Gaussian sigma for smoothing probability maps before " +
-                        "classification in the prediction overlay. " +
-                        "0 = no smoothing (raw model output, may appear noisy); " +
-                        "1-2 = light; 3-5 = moderate (recommended for noisy models); " +
-                        "5+ = heavy (may lose fine detail). " +
-                        "Changes apply immediately if an overlay is active.")
+                .description("Gaussian sigma for smoothing probability maps before "
+                        + "classification in the prediction overlay. "
+                        + "0 = no smoothing (raw model output, may appear noisy); "
+                        + "1-2 = light; 3-5 = moderate (recommended for noisy models); "
+                        + "5+ = heavy (may lose fine detail). "
+                        + "Changes apply immediately if an overlay is active.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(multiPassAveraging, Boolean.class)
                 .name("Overlay High-Quality Tile Averaging")
                 .category(CATEGORY)
-                .description("Run each tile at 4 spatial offsets and average the " +
-                        "predictions to eliminate tile boundary artifacts. " +
-                        "Recommended for context-scale models where seams are visible. " +
-                        "Applies to both the overlay and Apply Classifier. " +
-                        "~4x slower but produces seamless results.")
+                .description("Run each tile at 4 spatial offsets and average the "
+                        + "predictions to eliminate tile boundary artifacts. "
+                        + "Recommended for context-scale models where seams are visible. "
+                        + "Applies to both the overlay and Apply Classifier. "
+                        + "~4x slower but produces seamless results.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(useCompactArgmaxOutput, Boolean.class)
                 .name("Overlay Fast Argmax (uint8)")
                 .category(CATEGORY)
-                .description("Return class indices directly from inference instead of " +
-                        "full probability maps. ~20x smaller payload and slightly " +
-                        "faster per tile. " +
-                        "Trade-off: disables overlay smoothing, multi-pass averaging, " +
-                        "and tile boundary blending (these all require float " +
-                        "probabilities). Leave off for highest-quality overlays; " +
-                        "turn on for quick previews or lower memory use.")
+                .description("Return class indices directly from inference instead of "
+                        + "full probability maps. ~20x smaller payload and slightly "
+                        + "faster per tile. "
+                        + "Trade-off: disables overlay smoothing, multi-pass averaging, "
+                        + "and tile boundary blending (these all require float "
+                        + "probabilities). Leave off for highest-quality overlays; "
+                        + "turn on for quick previews or lower memory use.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(experimentalTensorRT, Boolean.class)
                 .name("Experimental: TensorRT Inference")
                 .category(CATEGORY)
-                .description("Use TensorRT for ONNX inference on CUDA. " +
-                        "Builds a TRT engine from the static-shape ONNX on first " +
-                        "inference and caches it next to the model. " +
-                        "Typical speedup: 2-4x over plain CUDAExecutionProvider. " +
-                        "Requires onnxruntime-gpu built with the " +
-                        "TensorrtExecutionProvider. Silently falls back to " +
-                        "CUDAExecutionProvider when unavailable. " +
-                        "EXPERIMENTAL -- may not work on all Windows setups; " +
-                        "report issues if encountered.")
+                .description("Use TensorRT for ONNX inference on CUDA. "
+                        + "Builds a TRT engine from the static-shape ONNX on first "
+                        + "inference and caches it next to the model. "
+                        + "Typical speedup: 2-4x over plain CUDAExecutionProvider. "
+                        + "Requires onnxruntime-gpu built with the "
+                        + "TensorrtExecutionProvider. Silently falls back to "
+                        + "CUDAExecutionProvider when unavailable. "
+                        + "EXPERIMENTAL -- may not work on all Windows setups; "
+                        + "report issues if encountered.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(experimentalInt8, Boolean.class)
                 .name("Experimental: INT8 Quantization")
                 .category(CATEGORY)
-                .description("Quantize weights and activations to INT8 when " +
-                        "TensorRT is enabled. Typical additional speedup: ~2x " +
-                        "over FP16 TRT with ~1-2 point IoU drop on simple tasks. " +
-                        "Requires a calibration pass (done once at engine " +
-                        "build time). Only effective when " +
-                        "'Experimental: TensorRT Inference' is also on. " +
-                        "EXPERIMENTAL.")
+                .description("Quantize weights and activations to INT8 when "
+                        + "TensorRT is enabled. Typical additional speedup: ~2x "
+                        + "over FP16 TRT with ~1-2 point IoU drop on simple tasks. "
+                        + "Requires a calibration pass (done once at engine "
+                        + "build time). Only effective when "
+                        + "'Experimental: TensorRT Inference' is also on. "
+                        + "EXPERIMENTAL.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(defaultInMemoryDataset, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
-                .choices(javafx.collections.FXCollections.observableArrayList(
-                        "auto", "on", "off", "bounded"))
+                .choices(javafx.collections.FXCollections.observableArrayList("auto", "on", "off", "bounded"))
                 .name("Training: Pre-Load Patches Into RAM")
                 .category(CATEGORY)
-                .description("Cache training patches in RAM to skip per-batch " +
-                        "disk I/O. " +
-                        "auto = enable when the dataset fits in about 50% of " +
-                        "free RAM (safe default); " +
-                        "on = always enable (may run out of memory on large " +
-                        "datasets); " +
-                        "off = always stream from disk. " +
-                        "bounded = WARNING: trains on a fixed RANDOM SUBSET of " +
-                        "the dataset that fits in RAM. The model will not see " +
-                        "patches outside the subset. Use only when disk " +
-                        "streaming is too slow and you accept training on a " +
-                        "subset. A pre-flight dialog confirms before each " +
-                        "training run.")
+                .description("Cache training patches in RAM to skip per-batch " + "disk I/O. "
+                        + "auto = enable when the dataset fits in about 50% of "
+                        + "free RAM (safe default); "
+                        + "on = always enable (may run out of memory on large "
+                        + "datasets); "
+                        + "off = always stream from disk. "
+                        + "bounded = WARNING: trains on a fixed RANDOM SUBSET of "
+                        + "the dataset that fits in RAM. The model will not see "
+                        + "patches outside the subset. Use only when disk "
+                        + "streaming is too slow and you accept training on a "
+                        + "subset. A pre-flight dialog confirms before each "
+                        + "training run.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(cacheBoundedFraction, Double.class)
                 .name("Training: Bounded Cache Fraction")
                 .category(CATEGORY)
-                .description("When 'Pre-Load Patches Into RAM' = bounded, the " +
-                        "fraction of available RAM the cache may use. " +
-                        "0.40 means 40% of free RAM. The actual subset size is " +
-                        "(fraction * available_RAM) / per_patch_bytes, so larger " +
-                        "values train on a larger subset but leave less headroom.")
+                .description("When 'Pre-Load Patches Into RAM' = bounded, the "
+                        + "fraction of available RAM the cache may use. "
+                        + "0.40 means 40% of free RAM. The actual subset size is "
+                        + "(fraction * available_RAM) / per_patch_bytes, so larger "
+                        + "values train on a larger subset but leave less headroom.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
                 .name("Show Menu Indicator Dot")
                 .category(CATEGORY)
-                .description("Show a colored dot next to the extension name in the " +
-                        "Extensions menu for quick identification. " +
-                        "Takes effect after restarting QuPath.")
+                .description("Show a colored dot next to the extension name in the "
+                        + "Extensions menu for quick identification. "
+                        + "Takes effect after restarting QuPath.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(menuDotColor, Integer.class)
                 .propertyType(PropertyItemBuilder.PropertyType.COLOR)
                 .name("Menu Indicator Dot Color")
                 .category(CATEGORY)
-                .description("Color of the indicator dot shown in the Extensions menu. " +
-                        "Takes effect after restarting QuPath.")
+                .description("Color of the indicator dot shown in the Extensions menu. "
+                        + "Takes effect after restarting QuPath.")
                 .build());
 
-        items.add(new PropertyItemBuilder<>(
-                showDeveloperPretrainingOptions, Boolean.class)
+        items.add(new PropertyItemBuilder<>(showDeveloperPretrainingOptions, Boolean.class)
                 .name("Show Developer Pretraining Options")
                 .category(CATEGORY)
-                .description("Show experimental self-supervised pretraining " +
-                        "(SimCLR/BYOL) in the menu. Hidden by default because " +
-                        "SSL pretraining is unstable on small datasets and " +
-                        "rarely the right tool for end-user workflows. " +
-                        "Takes effect after restarting QuPath.")
+                .description("Show experimental self-supervised pretraining "
+                        + "(SimCLR/BYOL) in the menu. Hidden by default because "
+                        + "SSL pretraining is unstable on small datasets and "
+                        + "rarely the right tool for end-user workflows. "
+                        + "Takes effect after restarting QuPath.")
                 .build());
     }
 
@@ -828,57 +809,161 @@ public final class DLClassifierPreferences {
 
     // ==================== Advanced augmentation strength/probability ====================
 
-    public static double getAugPFlip() { return augPFlip.get(); }
-    public static void setAugPFlip(double v) { augPFlip.set(v); }
-    public static DoubleProperty augPFlipProperty() { return augPFlip; }
+    public static double getAugPFlip() {
+        return augPFlip.get();
+    }
 
-    public static double getAugPRotate() { return augPRotate.get(); }
-    public static void setAugPRotate(double v) { augPRotate.set(v); }
-    public static DoubleProperty augPRotateProperty() { return augPRotate; }
+    public static void setAugPFlip(double v) {
+        augPFlip.set(v);
+    }
 
-    public static double getAugPElastic() { return augPElastic.get(); }
-    public static void setAugPElastic(double v) { augPElastic.set(v); }
-    public static DoubleProperty augPElasticProperty() { return augPElastic; }
+    public static DoubleProperty augPFlipProperty() {
+        return augPFlip;
+    }
 
-    public static double getAugPColor() { return augPColor.get(); }
-    public static void setAugPColor(double v) { augPColor.set(v); }
-    public static DoubleProperty augPColorProperty() { return augPColor; }
+    public static double getAugPRotate() {
+        return augPRotate.get();
+    }
 
-    public static double getAugBrightnessLimit() { return augBrightnessLimit.get(); }
-    public static void setAugBrightnessLimit(double v) { augBrightnessLimit.set(v); }
-    public static DoubleProperty augBrightnessLimitProperty() { return augBrightnessLimit; }
+    public static void setAugPRotate(double v) {
+        augPRotate.set(v);
+    }
 
-    public static double getAugContrastLimit() { return augContrastLimit.get(); }
-    public static void setAugContrastLimit(double v) { augContrastLimit.set(v); }
-    public static DoubleProperty augContrastLimitProperty() { return augContrastLimit; }
+    public static DoubleProperty augPRotateProperty() {
+        return augPRotate;
+    }
 
-    public static int getAugGammaMin() { return augGammaMin.get(); }
-    public static void setAugGammaMin(int v) { augGammaMin.set(v); }
-    public static IntegerProperty augGammaMinProperty() { return augGammaMin; }
+    public static double getAugPElastic() {
+        return augPElastic.get();
+    }
 
-    public static int getAugGammaMax() { return augGammaMax.get(); }
-    public static void setAugGammaMax(int v) { augGammaMax.set(v); }
-    public static IntegerProperty augGammaMaxProperty() { return augGammaMax; }
+    public static void setAugPElastic(double v) {
+        augPElastic.set(v);
+    }
 
-    public static double getAugElasticAlpha() { return augElasticAlpha.get(); }
-    public static void setAugElasticAlpha(double v) { augElasticAlpha.set(v); }
-    public static DoubleProperty augElasticAlphaProperty() { return augElasticAlpha; }
+    public static DoubleProperty augPElasticProperty() {
+        return augPElastic;
+    }
 
-    public static double getAugElasticSigmaRatio() { return augElasticSigmaRatio.get(); }
-    public static void setAugElasticSigmaRatio(double v) { augElasticSigmaRatio.set(v); }
-    public static DoubleProperty augElasticSigmaRatioProperty() { return augElasticSigmaRatio; }
+    public static double getAugPColor() {
+        return augPColor.get();
+    }
 
-    public static double getAugPNoise() { return augPNoise.get(); }
-    public static void setAugPNoise(double v) { augPNoise.set(v); }
-    public static DoubleProperty augPNoiseProperty() { return augPNoise; }
+    public static void setAugPColor(double v) {
+        augPColor.set(v);
+    }
 
-    public static double getAugNoiseStdMin() { return augNoiseStdMin.get(); }
-    public static void setAugNoiseStdMin(double v) { augNoiseStdMin.set(v); }
-    public static DoubleProperty augNoiseStdMinProperty() { return augNoiseStdMin; }
+    public static DoubleProperty augPColorProperty() {
+        return augPColor;
+    }
 
-    public static double getAugNoiseStdMax() { return augNoiseStdMax.get(); }
-    public static void setAugNoiseStdMax(double v) { augNoiseStdMax.set(v); }
-    public static DoubleProperty augNoiseStdMaxProperty() { return augNoiseStdMax; }
+    public static double getAugBrightnessLimit() {
+        return augBrightnessLimit.get();
+    }
+
+    public static void setAugBrightnessLimit(double v) {
+        augBrightnessLimit.set(v);
+    }
+
+    public static DoubleProperty augBrightnessLimitProperty() {
+        return augBrightnessLimit;
+    }
+
+    public static double getAugContrastLimit() {
+        return augContrastLimit.get();
+    }
+
+    public static void setAugContrastLimit(double v) {
+        augContrastLimit.set(v);
+    }
+
+    public static DoubleProperty augContrastLimitProperty() {
+        return augContrastLimit;
+    }
+
+    public static int getAugGammaMin() {
+        return augGammaMin.get();
+    }
+
+    public static void setAugGammaMin(int v) {
+        augGammaMin.set(v);
+    }
+
+    public static IntegerProperty augGammaMinProperty() {
+        return augGammaMin;
+    }
+
+    public static int getAugGammaMax() {
+        return augGammaMax.get();
+    }
+
+    public static void setAugGammaMax(int v) {
+        augGammaMax.set(v);
+    }
+
+    public static IntegerProperty augGammaMaxProperty() {
+        return augGammaMax;
+    }
+
+    public static double getAugElasticAlpha() {
+        return augElasticAlpha.get();
+    }
+
+    public static void setAugElasticAlpha(double v) {
+        augElasticAlpha.set(v);
+    }
+
+    public static DoubleProperty augElasticAlphaProperty() {
+        return augElasticAlpha;
+    }
+
+    public static double getAugElasticSigmaRatio() {
+        return augElasticSigmaRatio.get();
+    }
+
+    public static void setAugElasticSigmaRatio(double v) {
+        augElasticSigmaRatio.set(v);
+    }
+
+    public static DoubleProperty augElasticSigmaRatioProperty() {
+        return augElasticSigmaRatio;
+    }
+
+    public static double getAugPNoise() {
+        return augPNoise.get();
+    }
+
+    public static void setAugPNoise(double v) {
+        augPNoise.set(v);
+    }
+
+    public static DoubleProperty augPNoiseProperty() {
+        return augPNoise;
+    }
+
+    public static double getAugNoiseStdMin() {
+        return augNoiseStdMin.get();
+    }
+
+    public static void setAugNoiseStdMin(double v) {
+        augNoiseStdMin.set(v);
+    }
+
+    public static DoubleProperty augNoiseStdMinProperty() {
+        return augNoiseStdMin;
+    }
+
+    public static double getAugNoiseStdMax() {
+        return augNoiseStdMax.get();
+    }
+
+    public static void setAugNoiseStdMax(double v) {
+        augNoiseStdMax.set(v);
+    }
+
+    public static DoubleProperty augNoiseStdMaxProperty() {
+        return augNoiseStdMax;
+    }
 
     // ==================== Tiling/Resolution Settings ====================
 
@@ -1107,14 +1192,29 @@ public final class DLClassifierPreferences {
 
     // ==================== Advanced Training Parameters ====================
 
-    public static double getDefaultWeightDecay() { return defaultWeightDecay.get(); }
-    public static void setDefaultWeightDecay(double v) { defaultWeightDecay.set(v); }
+    public static double getDefaultWeightDecay() {
+        return defaultWeightDecay.get();
+    }
 
-    public static double getDefaultDiscriminativeLrRatio() { return defaultDiscriminativeLrRatio.get(); }
-    public static void setDefaultDiscriminativeLrRatio(double v) { defaultDiscriminativeLrRatio.set(v); }
+    public static void setDefaultWeightDecay(double v) {
+        defaultWeightDecay.set(v);
+    }
 
-    public static int getLastSeed() { return lastSeed.get(); }
-    public static void setLastSeed(int v) { lastSeed.set(v); }
+    public static double getDefaultDiscriminativeLrRatio() {
+        return defaultDiscriminativeLrRatio.get();
+    }
+
+    public static void setDefaultDiscriminativeLrRatio(double v) {
+        defaultDiscriminativeLrRatio.set(v);
+    }
+
+    public static int getLastSeed() {
+        return lastSeed.get();
+    }
+
+    public static void setLastSeed(int v) {
+        lastSeed.set(v);
+    }
 
     // ==================== Inference Dialog Preferences ====================
 
@@ -1289,16 +1389,14 @@ public final class DLClassifierPreferences {
      */
     public static String getDefaultInMemoryDataset() {
         String v = defaultInMemoryDataset.get();
-        if ("auto".equals(v) || "on".equals(v) || "off".equals(v)
-                || "bounded".equals(v)) {
+        if ("auto".equals(v) || "on".equals(v) || "off".equals(v) || "bounded".equals(v)) {
             return v;
         }
         return "auto";
     }
 
     public static void setDefaultInMemoryDataset(String mode) {
-        if ("auto".equals(mode) || "on".equals(mode) || "off".equals(mode)
-                || "bounded".equals(mode)) {
+        if ("auto".equals(mode) || "on".equals(mode) || "off".equals(mode) || "bounded".equals(mode)) {
             defaultInMemoryDataset.set(mode);
         }
     }

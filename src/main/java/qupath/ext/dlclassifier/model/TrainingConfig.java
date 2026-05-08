@@ -99,7 +99,7 @@ public class TrainingConfig {
     private final boolean useTorchCompile;
 
     // Focus class for best model selection and early stopping
-    private final String focusClass;       // null = disabled (use earlyStoppingMetric as-is)
+    private final String focusClass; // null = disabled (use earlyStoppingMetric as-is)
     private final double focusClassMinIoU; // 0.0 = no minimum threshold
 
     // Intensity augmentation mode: "none", "brightfield", or "fluorescence"
@@ -753,72 +753,184 @@ public class TrainingConfig {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         TrainingConfig that = (TrainingConfig) o;
-        return epochs == that.epochs &&
-                batchSize == that.batchSize &&
-                Double.compare(that.learningRate, learningRate) == 0 &&
-                Double.compare(that.weightDecay, weightDecay) == 0 &&
-                Double.compare(that.discriminativeLrRatio, discriminativeLrRatio) == 0 &&
-                Objects.equals(seed, that.seed) &&
-                tileSize == that.tileSize &&
-                overlap == that.overlap &&
-                hasPerImageSplitRoles == that.hasPerImageSplitRoles &&
-                Double.compare(that.downsample, downsample) == 0 &&
-                Double.compare(that.validationSplit, validationSplit) == 0 &&
-                usePretrainedWeights == that.usePretrainedWeights &&
-                freezeEncoderLayers == that.freezeEncoderLayers &&
-                lineStrokeWidth == that.lineStrokeWidth &&
-                contextScale == that.contextScale &&
-                earlyStoppingPatience == that.earlyStoppingPatience &&
-                mixedPrecision == that.mixedPrecision &&
-                Double.compare(that.focusClassMinIoU, focusClassMinIoU) == 0 &&
-                Objects.equals(modelType, that.modelType) &&
-                Objects.equals(backbone, that.backbone) &&
-                Objects.equals(augmentationConfig, that.augmentationConfig) &&
-                Objects.equals(augmentationParams, that.augmentationParams) &&
-                Objects.equals(frozenLayers, that.frozenLayers) &&
-                Objects.equals(classWeightMultipliers, that.classWeightMultipliers) &&
-                Objects.equals(schedulerType, that.schedulerType) &&
-                Objects.equals(lossFunction, that.lossFunction) &&
-                Double.compare(that.focalGamma, focalGamma) == 0 &&
-                Double.compare(that.boundarySigma, boundarySigma) == 0 &&
-                Double.compare(that.boundaryWMin, boundaryWMin) == 0 &&
-                Double.compare(that.ohemHardRatio, ohemHardRatio) == 0 &&
-                Double.compare(that.ohemHardRatioStart, ohemHardRatioStart) == 0 &&
-                ohemAdaptiveFloor == that.ohemAdaptiveFloor &&
-                dataLoaderWorkers == that.dataLoaderWorkers &&
-                Objects.equals(inMemoryDataset, that.inMemoryDataset) &&
-                Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
-                Objects.equals(focusClass, that.focusClass) &&
-                Objects.equals(intensityAugMode, that.intensityAugMode) &&
-                gradientAccumulationSteps == that.gradientAccumulationSteps &&
-                progressiveResize == that.progressiveResize &&
-                wholeImage == that.wholeImage &&
-                Objects.equals(pretrainedModelPath, that.pretrainedModelPath);
+        return epochs == that.epochs
+                && batchSize == that.batchSize
+                && Double.compare(that.learningRate, learningRate) == 0
+                && Double.compare(that.weightDecay, weightDecay) == 0
+                && Double.compare(that.discriminativeLrRatio, discriminativeLrRatio) == 0
+                && Objects.equals(seed, that.seed)
+                && tileSize == that.tileSize
+                && overlap == that.overlap
+                && hasPerImageSplitRoles == that.hasPerImageSplitRoles
+                && Double.compare(that.downsample, downsample) == 0
+                && Double.compare(that.validationSplit, validationSplit) == 0
+                && usePretrainedWeights == that.usePretrainedWeights
+                && freezeEncoderLayers == that.freezeEncoderLayers
+                && lineStrokeWidth == that.lineStrokeWidth
+                && contextScale == that.contextScale
+                && earlyStoppingPatience == that.earlyStoppingPatience
+                && mixedPrecision == that.mixedPrecision
+                && Double.compare(that.focusClassMinIoU, focusClassMinIoU) == 0
+                && Objects.equals(modelType, that.modelType)
+                && Objects.equals(backbone, that.backbone)
+                && Objects.equals(augmentationConfig, that.augmentationConfig)
+                && Objects.equals(augmentationParams, that.augmentationParams)
+                && Objects.equals(frozenLayers, that.frozenLayers)
+                && Objects.equals(classWeightMultipliers, that.classWeightMultipliers)
+                && Objects.equals(schedulerType, that.schedulerType)
+                && Objects.equals(lossFunction, that.lossFunction)
+                && Double.compare(that.focalGamma, focalGamma) == 0
+                && Double.compare(that.boundarySigma, boundarySigma) == 0
+                && Double.compare(that.boundaryWMin, boundaryWMin) == 0
+                && Double.compare(that.ohemHardRatio, ohemHardRatio) == 0
+                && Double.compare(that.ohemHardRatioStart, ohemHardRatioStart) == 0
+                && ohemAdaptiveFloor == that.ohemAdaptiveFloor
+                && dataLoaderWorkers == that.dataLoaderWorkers
+                && Objects.equals(inMemoryDataset, that.inMemoryDataset)
+                && Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric)
+                && Objects.equals(focusClass, that.focusClass)
+                && Objects.equals(intensityAugMode, that.intensityAugMode)
+                && gradientAccumulationSteps == that.gradientAccumulationSteps
+                && progressiveResize == that.progressiveResize
+                && wholeImage == that.wholeImage
+                && Objects.equals(pretrainedModelPath, that.pretrainedModelPath);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(modelType, backbone, epochs, batchSize, learningRate,
-                weightDecay, discriminativeLrRatio, seed,
-                tileSize, overlap, hasPerImageSplitRoles, downsample, validationSplit, augmentationConfig,
+        return Objects.hash(
+                modelType,
+                backbone,
+                epochs,
+                batchSize,
+                learningRate,
+                weightDecay,
+                discriminativeLrRatio,
+                seed,
+                tileSize,
+                overlap,
+                hasPerImageSplitRoles,
+                downsample,
+                validationSplit,
+                augmentationConfig,
                 augmentationParams,
-                usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
-                classWeightMultipliers, contextScale, schedulerType, lossFunction,
-                focalGamma, boundarySigma, boundaryWMin,
-                ohemHardRatio, ohemHardRatioStart, ohemAdaptiveFloor,
-                dataLoaderWorkers, inMemoryDataset,
-                earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU, intensityAugMode,
-                gradientAccumulationSteps, progressiveResize, wholeImage, pretrainedModelPath);
+                usePretrainedWeights,
+                freezeEncoderLayers,
+                frozenLayers,
+                lineStrokeWidth,
+                classWeightMultipliers,
+                contextScale,
+                schedulerType,
+                lossFunction,
+                focalGamma,
+                boundarySigma,
+                boundaryWMin,
+                ohemHardRatio,
+                ohemHardRatioStart,
+                ohemAdaptiveFloor,
+                dataLoaderWorkers,
+                inMemoryDataset,
+                earlyStoppingMetric,
+                earlyStoppingPatience,
+                mixedPrecision,
+                focusClass,
+                focusClassMinIoU,
+                intensityAugMode,
+                gradientAccumulationSteps,
+                progressiveResize,
+                wholeImage,
+                pretrainedModelPath);
     }
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, wd=%.4f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, focalGamma=%.1f, ohemRatio=%.2f, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, gradAccum=%d, progResize=%b, wholeImage=%b, pretrainedModel=%s}",
-                modelType, backbone, epochs, learningRate, weightDecay, tileSize, downsample, contextScale, lineStrokeWidth,
-                schedulerType, lossFunction, focalGamma, ohemHardRatio, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
-                focusClass, focusClassMinIoU, intensityAugMode,
-                gradientAccumulationSteps, progressiveResize, wholeImage, pretrainedModelPath);
+        return String.format(
+                "TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, wd=%.4f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, focalGamma=%.1f, ohemRatio=%.2f, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, gradAccum=%d, progResize=%b, wholeImage=%b, pretrainedModel=%s}",
+                modelType,
+                backbone,
+                epochs,
+                learningRate,
+                weightDecay,
+                tileSize,
+                downsample,
+                contextScale,
+                lineStrokeWidth,
+                schedulerType,
+                lossFunction,
+                focalGamma,
+                ohemHardRatio,
+                earlyStoppingMetric,
+                earlyStoppingPatience,
+                mixedPrecision,
+                focusClass,
+                focusClassMinIoU,
+                intensityAugMode,
+                gradientAccumulationSteps,
+                progressiveResize,
+                wholeImage,
+                pretrainedModelPath);
+    }
+
+    /**
+     * Training-time tileSize / overlap advisory.
+     *
+     * <p>Training overlap controls how much adjacent training tiles
+     * overlap each other -- it samples each pixel into multiple training
+     * patches when &gt; 0. This is conceptually different from inference
+     * overlap (which is a halo blended between neighbour predictions),
+     * so the warnings here only flag training-relevant problems:
+     * <ul>
+     *   <li>stride must remain &gt; 0 (otherwise tile generation cannot
+     *       advance) -- same geometric constraint as inference.</li>
+     *   <li>tileSize &lt; 192 is slower to train and gives the model
+     *       limited per-tile context.</li>
+     *   <li>overlap &gt; 37.5% wastes compute on near-duplicate
+     *       training samples; with no per-image train/val role assigned
+     *       it also raises the chance of pixel-level leakage between
+     *       train and val (overlapping tiles from the same image can
+     *       land on opposite sides of a stratified split).</li>
+     * </ul>
+     * <p>Notably, low or zero overlap is <em>not</em> a problem during
+     * training -- it just means each pixel appears in exactly one
+     * training sample, which is the safer default for split-cleanliness.
+     * Edge / seam warnings belong on the inference dialog and are
+     * handled by
+     * {@link qupath.ext.dlclassifier.model.InferenceConfig#checkInferenceTileSettings}.
+     *
+     * @return a human-readable advisory, or {@code null} when the
+     *         setting is in a sensible range
+     */
+    public static String checkTrainingTileSettings(int tileSize, int configOverlap) {
+        if (tileSize <= 0) return null;
+        int padding = Math.max(0, configOverlap);
+        if (padding >= tileSize / 2) {
+            int clamped = (tileSize - 1) / 2;
+            return String.format(
+                    "Overlap %dpx is >= tileSize/2 (%dpx) -- stride would be "
+                            + "zero and tile generation cannot advance. Value will be "
+                            + "clamped to %dpx. Reduce overlap to fix this properly.",
+                    configOverlap, tileSize / 2, clamped);
+        }
+        double pct = 100.0 * padding / tileSize;
+        if (tileSize < 192) {
+            return String.format(
+                    "Small tile size (%dpx): training will be slower (tile "
+                            + "count grows as 1/tileSize^2) and the model sees less "
+                            + "per-tile context. 256-512px is the typical working "
+                            + "range.",
+                    tileSize);
+        }
+        if (pct > 37.5) {
+            return String.format(
+                    "High overlap (%.1f%% of tileSize): adjacent training "
+                            + "tiles share most of their pixels, so most epochs will "
+                            + "revisit near-duplicate samples. If you have not pinned "
+                            + "images to TRAIN_ONLY / VAL_ONLY, large overlap also "
+                            + "raises the risk of pixel-level leakage between the "
+                            + "train and val splits.",
+                    pct);
+        }
+        return null;
     }
 
     public static Builder builder() {
@@ -1453,8 +1565,8 @@ public class TrainingConfig {
                 throw new IllegalStateException("OHEM hard ratio start must be between 0.05 and 1.0");
             }
             if (ohemHardRatioStart < ohemHardRatio) {
-                throw new IllegalStateException("OHEM hard ratio start must be >= end (start "
-                        + ohemHardRatioStart + " < end " + ohemHardRatio + ")");
+                throw new IllegalStateException("OHEM hard ratio start must be >= end (start " + ohemHardRatioStart
+                        + " < end " + ohemHardRatio + ")");
             }
             if (gradientAccumulationSteps < 1 || gradientAccumulationSteps > 16) {
                 throw new IllegalStateException("Gradient accumulation steps must be between 1 and 16");

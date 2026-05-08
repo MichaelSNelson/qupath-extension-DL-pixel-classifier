@@ -1,6 +1,13 @@
 package qupath.ext.dlclassifier.service.warnings;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
@@ -18,14 +25,6 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.lib.gui.prefs.PathPrefs;
-import javafx.beans.property.BooleanProperty;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Central registry for {@link InteractionWarning} watchers. New
@@ -48,19 +47,16 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class InteractionWarningService {
 
-    private static final Logger logger =
-            LoggerFactory.getLogger(InteractionWarningService.class);
+    private static final Logger logger = LoggerFactory.getLogger(InteractionWarningService.class);
 
     private static final String PREF_KEY_PREFIX = "dlclassifier.warning.";
     private static final String PREF_KEY_SUFFIX = ".suppressed";
 
     // Keyed by id so duplicate registration replaces cleanly.
-    private static final Map<String, InteractionWarning> REGISTRY =
-            new ConcurrentHashMap<>();
+    private static final Map<String, InteractionWarning> REGISTRY = new ConcurrentHashMap<>();
 
     // Cache of suppression properties so we don't keep recreating them.
-    private static final Map<String, BooleanProperty> SUPPRESSION_PROPS =
-            new ConcurrentHashMap<>();
+    private static final Map<String, BooleanProperty> SUPPRESSION_PROPS = new ConcurrentHashMap<>();
 
     private InteractionWarningService() {}
 
@@ -100,8 +96,7 @@ public final class InteractionWarningService {
                     triggered.add(w);
                 }
             } catch (RuntimeException ex) {
-                logger.warn("Training watcher {} threw an exception "
-                        + "during check and was skipped", w.getId(), ex);
+                logger.warn("Training watcher {} threw an exception " + "during check and was skipped", w.getId(), ex);
             }
         }
         return triggered;
@@ -112,8 +107,7 @@ public final class InteractionWarningService {
      * config + metadata. Either may be null; each watcher handles
      * nulls defensively.
      */
-    public static List<InteractionWarning> evaluate(
-            InferenceConfig config, ClassifierMetadata metadata) {
+    public static List<InteractionWarning> evaluate(InferenceConfig config, ClassifierMetadata metadata) {
         List<InteractionWarning> triggered = new ArrayList<>();
         for (InteractionWarning w : REGISTRY.values()) {
             if (!(w instanceof InferenceWarning iw)) continue;
@@ -122,8 +116,7 @@ public final class InteractionWarningService {
                     triggered.add(w);
                 }
             } catch (RuntimeException ex) {
-                logger.warn("Inference watcher {} threw an exception "
-                        + "during check and was skipped", w.getId(), ex);
+                logger.warn("Inference watcher {} threw an exception " + "during check and was skipped", w.getId(), ex);
             }
         }
         return triggered;
@@ -142,8 +135,8 @@ public final class InteractionWarningService {
                     triggered.add(w);
                 }
             } catch (RuntimeException ex) {
-                logger.warn("Preference watcher {} threw an exception "
-                        + "during check and was skipped", w.getId(), ex);
+                logger.warn(
+                        "Preference watcher {} threw an exception " + "during check and was skipped", w.getId(), ex);
             }
         }
         return triggered;
@@ -153,16 +146,13 @@ public final class InteractionWarningService {
      * Drop watchers the user has already suppressed. BLOCKING
      * severity is never filtered out.
      */
-    public static List<InteractionWarning> filterVisible(
-            List<InteractionWarning> warnings) {
+    public static List<InteractionWarning> filterVisible(List<InteractionWarning> warnings) {
         List<InteractionWarning> visible = new ArrayList<>();
         for (InteractionWarning w : warnings) {
-            if (w.getSeverity() == InteractionWarning.Severity.BLOCKING
-                    || !isSuppressed(w.getId())) {
+            if (w.getSeverity() == InteractionWarning.Severity.BLOCKING || !isSuppressed(w.getId())) {
                 visible.add(w);
             } else {
-                logger.info("Interaction warning {} triggered but is "
-                        + "suppressed by user preference.", w.getId());
+                logger.info("Interaction warning {} triggered but is " + "suppressed by user preference.", w.getId());
             }
         }
         return visible;
@@ -182,16 +172,14 @@ public final class InteractionWarningService {
      * @return true when the user chose to proceed, false when
      *     blocked or cancelled
      */
-    public static boolean showIfAny(List<InteractionWarning> warnings,
-                                    Stage parent) {
+    public static boolean showIfAny(List<InteractionWarning> warnings, Stage parent) {
         if (warnings == null || warnings.isEmpty()) return true;
         final boolean[] result = {true};
         Runnable show = () -> {
             Alert alert = buildAlert(warnings, parent);
             Optional<ButtonType> choice = alert.showAndWait();
             if (hasBlocking(warnings)) {
-                result[0] = choice.isPresent()
-                        && choice.get() == ButtonType.OK;
+                result[0] = choice.isPresent() && choice.get() == ButtonType.OK;
             } else {
                 // Non-blocking popups always allow proceed.
                 result[0] = true;
@@ -235,9 +223,8 @@ public final class InteractionWarningService {
     }
 
     private static BooleanProperty suppressionProperty(String id) {
-        return SUPPRESSION_PROPS.computeIfAbsent(id, key ->
-                PathPrefs.createPersistentPreference(
-                        PREF_KEY_PREFIX + key + PREF_KEY_SUFFIX, false));
+        return SUPPRESSION_PROPS.computeIfAbsent(
+                id, key -> PathPrefs.createPersistentPreference(PREF_KEY_PREFIX + key + PREF_KEY_SUFFIX, false));
     }
 
     private static boolean hasBlocking(List<InteractionWarning> warnings) {
@@ -249,16 +236,14 @@ public final class InteractionWarningService {
         return false;
     }
 
-    private static Alert buildAlert(List<InteractionWarning> warnings,
-                                    Stage parent) {
+    private static Alert buildAlert(List<InteractionWarning> warnings, Stage parent) {
         boolean blocking = hasBlocking(warnings);
-        Alert.AlertType type = blocking
-                ? Alert.AlertType.CONFIRMATION
-                : Alert.AlertType.WARNING;
+        Alert.AlertType type = blocking ? Alert.AlertType.CONFIRMATION : Alert.AlertType.WARNING;
         Alert alert = new Alert(type);
-        alert.setTitle(blocking
-                ? "DL Pixel Classifier: please resolve before continuing"
-                : "DL Pixel Classifier: option interactions detected");
+        alert.setTitle(
+                blocking
+                        ? "DL Pixel Classifier: please resolve before continuing"
+                        : "DL Pixel Classifier: option interactions detected");
         alert.setHeaderText(summaryHeader(warnings));
         if (parent != null) {
             alert.initOwner(parent);
@@ -298,8 +283,7 @@ public final class InteractionWarningService {
         if (anchor != null && !anchor.isBlank()) {
             Hyperlink link = new Hyperlink("Learn more");
             link.setOnAction(e -> {
-                logger.info("Interaction warning docs link clicked: {} ({})",
-                        w.getId(), anchor);
+                logger.info("Interaction warning docs link clicked: {} ({})", w.getId(), anchor);
                 // The docs live in claude-reports/ alongside the extension
                 // sources; the anchor is logged rather than launched so
                 // that offline use (the common case) does not surface a
@@ -312,8 +296,7 @@ public final class InteractionWarningService {
         if (w.getSeverity() != InteractionWarning.Severity.BLOCKING) {
             CheckBox suppress = new CheckBox("Don't show this warning again");
             suppress.setSelected(isSuppressed(w.getId()));
-            suppress.selectedProperty().addListener((obs, oldV, newV) ->
-                    setSuppressed(w.getId(), newV));
+            suppress.selectedProperty().addListener((obs, oldV, newV) -> setSuppressed(w.getId(), newV));
             footer.getChildren().add(suppress);
         }
 
@@ -327,7 +310,6 @@ public final class InteractionWarningService {
         if (warnings.size() == 1) {
             return warnings.get(0).getTitle();
         }
-        return warnings.size() + " option interactions detected "
-                + "(see details below)";
+        return warnings.size() + " option interactions detected " + "(see details below)";
     }
 }

@@ -1,5 +1,9 @@
 package qupath.ext.dlclassifier.scripting;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.*;
+import java.util.function.BiConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
@@ -12,17 +16,11 @@ import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ModelManager;
-import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.scripting.QP;
-
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.util.*;
-import java.util.function.BiConsumer;
 
 /**
  * Scripting API for deep learning pixel classification.
@@ -86,8 +84,7 @@ public class DLClassifierScripts {
      * @param classifier  the classifier metadata
      * @param annotations annotations to classify
      */
-    public static void classifyRegions(ClassifierMetadata classifier,
-                                       Collection<PathObject> annotations) {
+    public static void classifyRegions(ClassifierMetadata classifier, Collection<PathObject> annotations) {
         classifyRegions(classifier, annotations, "measurements");
     }
 
@@ -98,21 +95,21 @@ public class DLClassifierScripts {
      * @param annotations annotations to classify
      * @param outputType  output type: "measurements", "objects", or "overlay"
      */
-    public static void classifyRegions(ClassifierMetadata classifier,
-                                       Collection<PathObject> annotations,
-                                       String outputType) {
+    public static void classifyRegions(
+            ClassifierMetadata classifier, Collection<PathObject> annotations, String outputType) {
         ImageData<BufferedImage> imageData = QP.getCurrentImageData();
         if (imageData == null) {
             throw new IllegalStateException("No image is open");
         }
 
         // Build configuration
-        InferenceConfig.OutputType outType = switch (outputType.toLowerCase()) {
-            case "objects" -> InferenceConfig.OutputType.OBJECTS;
-            case "overlay" -> InferenceConfig.OutputType.OVERLAY;
-            case "rendered_overlay" -> InferenceConfig.OutputType.RENDERED_OVERLAY;
-            default -> InferenceConfig.OutputType.MEASUREMENTS;
-        };
+        InferenceConfig.OutputType outType =
+                switch (outputType.toLowerCase()) {
+                    case "objects" -> InferenceConfig.OutputType.OBJECTS;
+                    case "overlay" -> InferenceConfig.OutputType.OVERLAY;
+                    case "rendered_overlay" -> InferenceConfig.OutputType.RENDERED_OVERLAY;
+                    default -> InferenceConfig.OutputType.MEASUREMENTS;
+                };
 
         InferenceConfig config = InferenceConfig.builder()
                 .tileSize(DLClassifierPreferences.getTileSize())
@@ -123,13 +120,16 @@ public class DLClassifierScripts {
 
         // Build channel configuration
         ChannelConfiguration channelConfig = ChannelConfiguration.builder()
-                .selectedChannels(classifier.getExpectedChannelNames().isEmpty() ?
-                        List.of(0, 1, 2) :
-                        java.util.stream.IntStream.range(0, classifier.getInputChannels())
-                                .boxed().toList())
-                .channelNames(classifier.getExpectedChannelNames().isEmpty() ?
-                        List.of("Red", "Green", "Blue") :
-                        classifier.getExpectedChannelNames())
+                .selectedChannels(
+                        classifier.getExpectedChannelNames().isEmpty()
+                                ? List.of(0, 1, 2)
+                                : java.util.stream.IntStream.range(0, classifier.getInputChannels())
+                                        .boxed()
+                                        .toList())
+                .channelNames(
+                        classifier.getExpectedChannelNames().isEmpty()
+                                ? List.of("Red", "Green", "Blue")
+                                : classifier.getExpectedChannelNames())
                 .bitDepth(classifier.getBitDepthTrained())
                 .normalizationStrategy(classifier.getNormalizationStrategy())
                 .build();
@@ -150,9 +150,8 @@ public class DLClassifierScripts {
      * @param annotations   annotations to classify
      * @param channelNames  names of channels to use
      */
-    public static void classifyRegions(ClassifierMetadata classifier,
-                                       Collection<PathObject> annotations,
-                                       List<String> channelNames) {
+    public static void classifyRegions(
+            ClassifierMetadata classifier, Collection<PathObject> annotations, List<String> channelNames) {
         // Validate channel count
         if (channelNames.size() != classifier.getInputChannels()) {
             throw new IllegalArgumentException(String.format(
@@ -207,11 +206,13 @@ public class DLClassifierScripts {
     /**
      * Runs classification on annotations using the InferenceWorkflow builder.
      */
-    private static void runClassification(ClassifierMetadata classifier,
-                                          Collection<PathObject> annotations,
-                                          InferenceConfig config,
-                                          ChannelConfiguration channelConfig,
-                                          ImageData<BufferedImage> imageData) throws IOException {
+    private static void runClassification(
+            ClassifierMetadata classifier,
+            Collection<PathObject> annotations,
+            InferenceConfig config,
+            ChannelConfiguration channelConfig,
+            ImageData<BufferedImage> imageData)
+            throws IOException {
         logger.info("Running classification on {} annotations", annotations.size());
 
         InferenceWorkflow.InferenceResult result = InferenceWorkflow.builder()
@@ -246,8 +247,7 @@ public class DLClassifierScripts {
      * @return the handler, or default if not found
      */
     public static ClassifierHandler getHandler(String type) {
-        return ClassifierRegistry.getHandler(type)
-                .orElse(ClassifierRegistry.getDefaultHandler());
+        return ClassifierRegistry.getHandler(type).orElse(ClassifierRegistry.getDefaultHandler());
     }
 
     /**
@@ -298,8 +298,8 @@ public class DLClassifierScripts {
 
         @Override
         public String toString() {
-            return String.format("BatchResult[processed=%d, skipped=%d, errors=%d, total=%d]",
-                    processed, skipped, errors, total);
+            return String.format(
+                    "BatchResult[processed=%d, skipped=%d, errors=%d, total=%d]", processed, skipped, errors, total);
         }
     }
 
@@ -332,10 +332,11 @@ public class DLClassifierScripts {
      * @param progressHandler optional callback for progress updates (imageName, index)
      * @return result summary
      */
-    public static BatchResult classifyProject(ClassifierMetadata classifier,
-                                              String outputType,
-                                              boolean skipProcessed,
-                                              BiConsumer<String, Integer> progressHandler) {
+    public static BatchResult classifyProject(
+            ClassifierMetadata classifier,
+            String outputType,
+            boolean skipProcessed,
+            BiConsumer<String, Integer> progressHandler) {
         Project<BufferedImage> project = QP.getProject();
         if (project == null) {
             throw new IllegalStateException("No project is open");
@@ -355,11 +356,12 @@ public class DLClassifierScripts {
      * @param progressHandler optional callback for progress updates (imageName, index)
      * @return result summary
      */
-    public static BatchResult classifyProjectImages(ClassifierMetadata classifier,
-                                                    List<ProjectImageEntry<BufferedImage>> entries,
-                                                    String outputType,
-                                                    boolean skipProcessed,
-                                                    BiConsumer<String, Integer> progressHandler) {
+    public static BatchResult classifyProjectImages(
+            ClassifierMetadata classifier,
+            List<ProjectImageEntry<BufferedImage>> entries,
+            String outputType,
+            boolean skipProcessed,
+            BiConsumer<String, Integer> progressHandler) {
         int processed = 0;
         int skipped = 0;
         int errors = 0;
@@ -425,8 +427,7 @@ public class DLClassifierScripts {
      */
     public static boolean hasClassificationMeasurements(Collection<PathObject> annotations) {
         return annotations.stream()
-                .anyMatch(ann -> ann.getMeasurements().keySet().stream()
-                        .anyMatch(name -> name.startsWith("DL:")));
+                .anyMatch(ann -> ann.getMeasurements().keySet().stream().anyMatch(name -> name.startsWith("DL:")));
     }
 
     /**
@@ -470,8 +471,9 @@ public class DLClassifierScripts {
         int cleared = clearClassificationMeasurements(annotations);
 
         if (cleared > 0) {
-            imageData.getHierarchy().fireHierarchyChangedEvent(
-                    imageData.getHierarchy().getRootObject());
+            imageData
+                    .getHierarchy()
+                    .fireHierarchyChangedEvent(imageData.getHierarchy().getRootObject());
         }
 
         return cleared;

@@ -1,15 +1,5 @@
 package qupath.ext.dlclassifier.service;
 
-import org.apposed.appose.Appose;
-import org.apposed.appose.Environment;
-import org.apposed.appose.Service;
-import org.apposed.appose.Service.Task;
-import org.apposed.appose.Service.ResponseType;
-import org.apposed.appose.TaskException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.common.GeneralTools;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +10,15 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import org.apposed.appose.Appose;
+import org.apposed.appose.Environment;
+import org.apposed.appose.Service;
+import org.apposed.appose.Service.ResponseType;
+import org.apposed.appose.Service.Task;
+import org.apposed.appose.TaskException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.common.GeneralTools;
 
 /**
  * Singleton managing the Appose Environment and Python Service lifecycle.
@@ -51,7 +50,7 @@ public class ApposeService {
     private Service pythonService;
     private boolean initialized;
     private boolean cudaAvailable;
-    private String gpuType = "cpu";  // "cuda", "mps", or "cpu"
+    private String gpuType = "cpu"; // "cuda", "mps", or "cpu"
 
     // Cached health check results from the combined verification task
     private volatile boolean lastHealthy;
@@ -110,8 +109,7 @@ public class ApposeService {
             return Path.of(svc.environment.base());
         }
         // Appose default: ~/.local/share/appose/<env-name>
-        return Path.of(System.getProperty("user.home"),
-                ".local", "share", "appose", ENV_NAME);
+        return Path.of(System.getProperty("user.home"), ".local", "share", "appose", ENV_NAME);
     }
 
     /**
@@ -186,8 +184,7 @@ public class ApposeService {
      * @param includeOnnx    if false, strips ONNX dependencies from the environment
      * @throws IOException if resource loading or environment build fails
      */
-    public synchronized void initialize(Consumer<String> statusCallback,
-                                         boolean includeOnnx) throws IOException {
+    public synchronized void initialize(Consumer<String> statusCallback, boolean includeOnnx) throws IOException {
         if (initialized) {
             report(statusCallback, "Already initialized");
             return;
@@ -275,36 +272,34 @@ public class ApposeService {
                 // Combined verification + health check task.  The Appose
                 // worker may exit after this task completes, so we must get
                 // ALL needed info (packages, GPU, version, health) in one shot.
-                String verifyScript =
-                        "import torch\n" +
-                        "import segmentation_models_pytorch\n" +
-                        "import albumentations\n" +
-                        "import numpy\n" +
-                        "import PIL\n" +
-                        "import ttach\n" +
-                        "task.outputs['torch_version'] = torch.__version__\n" +
-                        "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n" +
-                        "mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()\n" +
-                        "task.outputs['mps_available'] = str(mps)\n" +
-                        "task.outputs['gpu_type'] = 'cuda' if torch.cuda.is_available() " +
-                        "else ('mps' if mps else 'cpu')\n" +
+                String verifyScript = "import torch\n" + "import segmentation_models_pytorch\n"
+                        + "import albumentations\n"
+                        + "import numpy\n"
+                        + "import PIL\n"
+                        + "import ttach\n"
+                        + "task.outputs['torch_version'] = torch.__version__\n"
+                        + "task.outputs['cuda_available'] = str(torch.cuda.is_available())\n"
+                        + "mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()\n"
+                        + "task.outputs['mps_available'] = str(mps)\n"
+                        + "task.outputs['gpu_type'] = 'cuda' if torch.cuda.is_available() "
+                        + "else ('mps' if mps else 'cpu')\n"
+                        +
                         // Health check: service status + version info
-                        "task.outputs['healthy'] = inference_service is not None\n" +
-                        "if gpu_manager is not None:\n" +
-                        "    info = gpu_manager.get_info()\n" +
-                        "    task.outputs['gpu_name'] = info.get('name', '')\n" +
-                        "    task.outputs['gpu_memory_mb'] = info.get('total_memory_mb', 0)\n" +
-                        "else:\n" +
-                        "    task.outputs['gpu_name'] = ''\n" +
-                        "    task.outputs['gpu_memory_mb'] = 0\n" +
-                        "import dlclassifier_server as _dls\n" +
-                        "task.outputs['server_version'] = getattr(_dls, '__version__', 'unknown')\n" +
-                        "task.outputs['version_warning'] = globals().get('version_warning', '') or ''\n";
+                        "task.outputs['healthy'] = inference_service is not None\n"
+                        + "if gpu_manager is not None:\n"
+                        + "    info = gpu_manager.get_info()\n"
+                        + "    task.outputs['gpu_name'] = info.get('name', '')\n"
+                        + "    task.outputs['gpu_memory_mb'] = info.get('total_memory_mb', 0)\n"
+                        + "else:\n"
+                        + "    task.outputs['gpu_name'] = ''\n"
+                        + "    task.outputs['gpu_memory_mb'] = 0\n"
+                        + "import dlclassifier_server as _dls\n"
+                        + "task.outputs['server_version'] = getattr(_dls, '__version__', 'unknown')\n"
+                        + "task.outputs['version_warning'] = globals().get('version_warning', '') or ''\n";
 
                 Task verifyTask = pythonService.task(verifyScript);
                 verifyTask.listen(event -> {
-                    if (event.responseType == ResponseType.FAILURE
-                            || event.responseType == ResponseType.CRASH) {
+                    if (event.responseType == ResponseType.FAILURE || event.responseType == ResponseType.CRASH) {
                         logger.error("Verification task failed: {}", verifyTask.error);
                     }
                 });
@@ -314,14 +309,17 @@ public class ApposeService {
                 String cudaStr = String.valueOf(verifyTask.outputs.get("cuda_available"));
                 String mpsStr = String.valueOf(verifyTask.outputs.get("mps_available"));
                 String gpuType = String.valueOf(verifyTask.outputs.get("gpu_type"));
-                logger.info("Environment verified: PyTorch {}, CUDA={}, MPS={}, gpu_type={}",
-                        torchVersion, cudaStr, mpsStr, gpuType);
+                logger.info(
+                        "Environment verified: PyTorch {}, CUDA={}, MPS={}, gpu_type={}",
+                        torchVersion,
+                        cudaStr,
+                        mpsStr,
+                        gpuType);
 
                 // Log version header for provenance tracking
                 String extVersion = GeneralTools.getPackageVersion(ApposeService.class);
                 logger.info("=== DL Pixel Classifier Environment ===");
-                logger.info("  Extension version: {}",
-                        extVersion != null ? extVersion : "dev");
+                logger.info("  Extension version: {}", extVersion != null ? extVersion : "dev");
                 logger.info("  QuPath version: {}", GeneralTools.getVersion());
                 logger.info("  PyTorch version: {}", torchVersion);
                 logger.info("  GPU type: {}", gpuType);
@@ -337,14 +335,11 @@ public class ApposeService {
 
                 // Store health check results from combined verification task
                 this.lastHealthy = Boolean.TRUE.equals(verifyTask.outputs.get("healthy"));
-                this.lastServerVersion = String.valueOf(
-                        verifyTask.outputs.getOrDefault("server_version", "unknown"));
-                this.lastVersionWarning = String.valueOf(
-                        verifyTask.outputs.getOrDefault("version_warning", ""));
+                this.lastServerVersion = String.valueOf(verifyTask.outputs.getOrDefault("server_version", "unknown"));
+                this.lastVersionWarning = String.valueOf(verifyTask.outputs.getOrDefault("version_warning", ""));
                 Object gpuMem = verifyTask.outputs.get("gpu_memory_mb");
                 this.lastGpuMemoryMb = gpuMem instanceof Number n ? n.intValue() : 0;
-                this.lastGpuName = String.valueOf(
-                        verifyTask.outputs.getOrDefault("gpu_name", ""));
+                this.lastGpuName = String.valueOf(verifyTask.outputs.getOrDefault("gpu_name", ""));
 
                 initialized = true;
                 initError = null;
@@ -353,12 +348,17 @@ public class ApposeService {
                 registerShutdownHook();
                 String deviceNote;
                 switch (gpuType) {
-                    case "cuda": deviceNote = "NVIDIA GPU"; break;
-                    case "mps": deviceNote = "Apple MPS"; break;
-                    default: deviceNote = "CPU only"; break;
+                    case "cuda":
+                        deviceNote = "NVIDIA GPU";
+                        break;
+                    case "mps":
+                        deviceNote = "Apple MPS";
+                        break;
+                    default:
+                        deviceNote = "CPU only";
+                        break;
                 }
-                report(statusCallback, "Setup complete! (PyTorch " + torchVersion
-                        + ", " + deviceNote + ")");
+                report(statusCallback, "Setup complete! (PyTorch " + torchVersion + ", " + deviceNote + ")");
                 logger.info("Appose Python service initialized");
             } finally {
                 Thread.currentThread().setContextClassLoader(original);
@@ -409,8 +409,8 @@ public class ApposeService {
                     // the next repaint, so this is harmless -- log at WARN, not ERROR.
                     String error = task.error != null ? task.error : "";
                     if (error.toLowerCase().contains("thread death")) {
-                        logger.warn("Appose task '{}' transient failure (will retry on repaint): {}",
-                                scriptName, error);
+                        logger.warn(
+                                "Appose task '{}' transient failure (will retry on repaint): {}", scriptName, error);
                     } else {
                         logger.error("Appose task '{}' FAILURE: {}", scriptName, error);
                     }
@@ -440,8 +440,10 @@ public class ApposeService {
      * @return the completed Task with outputs
      * @throws IOException if the service is not available or the task fails
      */
-    public Task runTaskWithListener(String scriptName, Map<String, Object> inputs,
-                                    java.util.function.Consumer<org.apposed.appose.TaskEvent> eventListener)
+    public Task runTaskWithListener(
+            String scriptName,
+            Map<String, Object> inputs,
+            java.util.function.Consumer<org.apposed.appose.TaskEvent> eventListener)
             throws IOException {
         ensureInitialized();
 
@@ -511,7 +513,7 @@ public class ApposeService {
         if (pythonService != null) {
             try {
                 logger.info("Shutting down Appose Python service...");
-                pythonService.close();  // closes stdin -> Python gets EOFError
+                pythonService.close(); // closes stdin -> Python gets EOFError
 
                 // Poll up to 5 seconds for graceful exit, then force kill
                 if (pythonService.isAlive()) {
@@ -558,8 +560,8 @@ public class ApposeService {
      */
     public synchronized void deleteEnvironment() throws IOException {
         if (pythonService != null) {
-            throw new IOException("Cannot delete environment while Python service is running. "
-                    + "Call shutdown() first.");
+            throw new IOException(
+                    "Cannot delete environment while Python service is running. " + "Call shutdown() first.");
         }
         if (environment != null) {
             try {
@@ -569,8 +571,7 @@ public class ApposeService {
                 logger.info("Appose environment deleted");
                 return;
             } catch (Exception e) {
-                logger.warn("Appose environment.delete() failed, falling back to manual deletion: {}",
-                        e.getMessage());
+                logger.warn("Appose environment.delete() failed, falling back to manual deletion: {}", e.getMessage());
                 environment = null;
             }
         }
@@ -589,14 +590,14 @@ public class ApposeService {
     private static void deleteDirectoryRecursively(Path directory) throws IOException {
         java.nio.file.FileVisitor<Path> visitor = new java.nio.file.SimpleFileVisitor<>() {
             @Override
-            public java.nio.file.FileVisitResult visitFile(Path file,
-                    java.nio.file.attribute.BasicFileAttributes attrs) throws IOException {
+            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs)
+                    throws IOException {
                 Files.delete(file);
                 return java.nio.file.FileVisitResult.CONTINUE;
             }
+
             @Override
-            public java.nio.file.FileVisitResult postVisitDirectory(Path dir,
-                    IOException exc) throws IOException {
+            public java.nio.file.FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
                 if (exc != null) throw exc;
                 Files.delete(dir);
                 return java.nio.file.FileVisitResult.CONTINUE;
@@ -613,25 +614,30 @@ public class ApposeService {
      */
     private void registerShutdownHook() {
         if (shutdownHook != null) return;
-        shutdownHook = new Thread(() -> {
-            logger.info("JVM shutdown hook: cleaning up Python subprocess");
-            // Don't call shutdown() here (it tries to remove the hook)
-            Service svc = pythonService;
-            if (svc != null) {
-                try {
-                    svc.close();
-                    // Brief wait, then force kill
-                    if (svc.isAlive()) {
-                        Thread.sleep(2000);
+        shutdownHook = new Thread(
+                () -> {
+                    logger.info("JVM shutdown hook: cleaning up Python subprocess");
+                    // Don't call shutdown() here (it tries to remove the hook)
+                    Service svc = pythonService;
+                    if (svc != null) {
+                        try {
+                            svc.close();
+                            // Brief wait, then force kill
+                            if (svc.isAlive()) {
+                                Thread.sleep(2000);
+                            }
+                            if (svc.isAlive()) {
+                                svc.kill();
+                            }
+                        } catch (Exception e) {
+                            try {
+                                svc.kill();
+                            } catch (Exception ignored) {
+                            }
+                        }
                     }
-                    if (svc.isAlive()) {
-                        svc.kill();
-                    }
-                } catch (Exception e) {
-                    try { svc.kill(); } catch (Exception ignored) {}
-                }
-            }
-        }, "DLClassifier-ShutdownHook");
+                },
+                "DLClassifier-ShutdownHook");
         shutdownHook.setDaemon(false);
         Runtime.getRuntime().addShutdownHook(shutdownHook);
     }
@@ -686,19 +692,29 @@ public class ApposeService {
     }
 
     /** Cached health status from the combined verification/health check task. */
-    public boolean isLastHealthy() { return lastHealthy; }
+    public boolean isLastHealthy() {
+        return lastHealthy;
+    }
 
     /** Cached server version from the combined verification/health check task. */
-    public String getLastServerVersion() { return lastServerVersion; }
+    public String getLastServerVersion() {
+        return lastServerVersion;
+    }
 
     /** Cached version warning from the combined verification/health check task. */
-    public String getLastVersionWarning() { return lastVersionWarning; }
+    public String getLastVersionWarning() {
+        return lastVersionWarning;
+    }
 
     /** Cached GPU total memory in MB from the combined verification/health check task. */
-    public int getLastGpuMemoryMb() { return lastGpuMemoryMb; }
+    public int getLastGpuMemoryMb() {
+        return lastGpuMemoryMb;
+    }
 
     /** Cached GPU name from the combined verification/health check task. */
-    public String getLastGpuName() { return lastGpuName; }
+    public String getLastGpuName() {
+        return lastGpuName;
+    }
 
     /**
      * Checks whether any GPU acceleration is available (CUDA or MPS).
@@ -791,8 +807,10 @@ public class ApposeService {
         for (String line : pixiToml.split("\n")) {
             String trimmed = line.trim().toLowerCase();
             // Skip lines that are ONNX dependency declarations
-            if (trimmed.startsWith("onnx ") || trimmed.startsWith("onnx=")
-                    || trimmed.startsWith("onnxruntime ") || trimmed.startsWith("onnxruntime=")) {
+            if (trimmed.startsWith("onnx ")
+                    || trimmed.startsWith("onnx=")
+                    || trimmed.startsWith("onnxruntime ")
+                    || trimmed.startsWith("onnxruntime=")) {
                 continue;
             }
             // Also skip comment lines immediately preceding ONNX deps
@@ -826,8 +844,10 @@ public class ApposeService {
      */
     /** Extension version. Used for pip URL construction and script generation. */
     public static final String DL_SERVER_VERSION = "0.7.10-dev";
+
     private static final boolean IS_DEV_BUILD = DL_SERVER_VERSION.contains("-dev");
     private static final String DL_SERVER_PIP_URL;
+
     static {
         if (IS_DEV_BUILD) {
             // Dev builds: always install latest from main branch
@@ -891,19 +911,28 @@ public class ApposeService {
         java.util.List<String> command;
         if (IS_DEV_BUILD) {
             command = java.util.List.of(
-                    pixi.toString(), "run",
-                    "--manifest-path", manifestPath.toString(),
-                    "pip", "install", "--upgrade", "--no-deps",
-                    "--force-reinstall", "--no-cache-dir",
-                    DL_SERVER_PIP_URL
-            );
+                    pixi.toString(),
+                    "run",
+                    "--manifest-path",
+                    manifestPath.toString(),
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--no-deps",
+                    "--force-reinstall",
+                    "--no-cache-dir",
+                    DL_SERVER_PIP_URL);
         } else {
             command = java.util.List.of(
-                    pixi.toString(), "run",
-                    "--manifest-path", manifestPath.toString(),
-                    "pip", "install", "--upgrade", "--no-deps",
-                    DL_SERVER_PIP_URL
-            );
+                    pixi.toString(),
+                    "run",
+                    "--manifest-path",
+                    manifestPath.toString(),
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--no-deps",
+                    DL_SERVER_PIP_URL);
         }
 
         ProcessBuilder pb = new ProcessBuilder(command);
@@ -913,8 +942,8 @@ public class ApposeService {
 
         // Read output for logging
         StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader reader =
+                new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
@@ -931,8 +960,7 @@ public class ApposeService {
         }
 
         if (exitCode != 0) {
-            throw new IOException("pip install dlclassifier-server failed (exit code "
-                    + exitCode + "):\n" + output);
+            throw new IOException("pip install dlclassifier-server failed (exit code " + exitCode + "):\n" + output);
         }
         logger.info("dlclassifier-server installed successfully");
     }
@@ -941,8 +969,7 @@ public class ApposeService {
      * Runs a pixi command (e.g. "install") and waits for completion.
      * Logs all output and throws on non-zero exit code.
      */
-    private void runPixiCommand(Path pixi, Path workDir, Path manifestPath,
-                                String... args) throws IOException {
+    private void runPixiCommand(Path pixi, Path workDir, Path manifestPath, String... args) throws IOException {
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add(pixi.toString());
         for (String arg : args) {
@@ -958,8 +985,8 @@ public class ApposeService {
         Process process = pb.start();
 
         StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader reader =
+                new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
@@ -976,8 +1003,7 @@ public class ApposeService {
         }
 
         if (exitCode != 0) {
-            throw new IOException("pixi " + args[0] + " failed (exit code "
-                    + exitCode + "):\n" + output);
+            throw new IOException("pixi " + args[0] + " failed (exit code " + exitCode + "):\n" + output);
         }
     }
 
@@ -990,8 +1016,7 @@ public class ApposeService {
      */
     private Path findPixiBinary() {
         // Appose's default install location
-        Path apposeDir = Path.of(System.getProperty("user.home"),
-                ".local", "share", "appose");
+        Path apposeDir = Path.of(System.getProperty("user.home"), ".local", "share", "appose");
         String pixiName = GeneralTools.isWindows() ? "pixi.exe" : "pixi";
         Path pixi = apposeDir.resolve(".pixi").resolve("bin").resolve(pixiName);
         if (Files.isRegularFile(pixi)) return pixi;
@@ -999,7 +1024,8 @@ public class ApposeService {
         // Check if pixi is on the system PATH
         try {
             Process p = new ProcessBuilder(pixiName, "--version")
-                    .redirectErrorStream(true).start();
+                    .redirectErrorStream(true)
+                    .start();
             int exit = p.waitFor();
             if (exit == 0) {
                 return Path.of(pixiName); // Available on PATH
@@ -1048,13 +1074,14 @@ public class ApposeService {
                     Path renamed = envDir.resolve(".pixi_old_" + System.currentTimeMillis());
                     try {
                         Files.move(pixiDir, renamed);
-                        logger.info("Could not delete .pixi/ (locked files), renamed to {}",
-                                renamed.getFileName());
+                        logger.info("Could not delete .pixi/ (locked files), renamed to {}", renamed.getFileName());
                     } catch (IOException e2) {
-                        logger.warn("Could not delete or rename .pixi/ -- "
-                                + "environment may not rebuild automatically. "
-                                + "Use DL Classifier > Setup Environment to force rebuild. "
-                                + "Error: {}", e2.getMessage());
+                        logger.warn(
+                                "Could not delete or rename .pixi/ -- "
+                                        + "environment may not rebuild automatically. "
+                                        + "Use DL Classifier > Setup Environment to force rebuild. "
+                                        + "Error: {}",
+                                e2.getMessage());
                     }
                 }
             }
@@ -1068,8 +1095,7 @@ public class ApposeService {
 
     private void ensureInitialized() throws IOException {
         if (!isAvailable()) {
-            throw new IOException("Appose service is not available"
-                    + (initError != null ? ": " + initError : ""));
+            throw new IOException("Appose service is not available" + (initError != null ? ": " + initError : ""));
         }
     }
 
@@ -1088,13 +1114,11 @@ public class ApposeService {
      * Loads a text resource from the JAR.
      */
     private static String loadResource(String resourcePath) throws IOException {
-        try (InputStream is = ApposeService.class.getClassLoader()
-                .getResourceAsStream(resourcePath)) {
+        try (InputStream is = ApposeService.class.getClassLoader().getResourceAsStream(resourcePath)) {
             if (is == null) {
                 throw new IOException("Resource not found: " + resourcePath);
             }
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(is, StandardCharsets.UTF_8))) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
                 return reader.lines().collect(Collectors.joining("\n"));
             }
         }

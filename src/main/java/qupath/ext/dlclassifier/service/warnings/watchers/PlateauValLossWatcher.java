@@ -1,7 +1,6 @@
 package qupath.ext.dlclassifier.service.warnings.watchers;
 
 import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.service.warnings.InteractionWarning;
 import qupath.ext.dlclassifier.service.warnings.TrainingWarning;
 
 /**

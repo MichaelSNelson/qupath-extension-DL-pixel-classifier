@@ -1,5 +1,10 @@
 package qupath.ext.dlclassifier.classifier;
 
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.classifier.handlers.CustomONNXHandler;
@@ -7,12 +12,6 @@ import qupath.ext.dlclassifier.classifier.handlers.FastPretrainedHandler;
 import qupath.ext.dlclassifier.classifier.handlers.MuViTHandler;
 import qupath.ext.dlclassifier.classifier.handlers.TinyUNetHandler;
 import qupath.ext.dlclassifier.classifier.handlers.UNetHandler;
-
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Thread-safe static registry for mapping classifier type identifiers to
@@ -83,7 +82,8 @@ public final class ClassifierRegistry {
 
         String type = handler.getType();
         if (type == null || type.trim().isEmpty()) {
-            logger.warn("Handler {} has null or empty type - ignoring registration",
+            logger.warn(
+                    "Handler {} has null or empty type - ignoring registration",
                     handler.getClass().getSimpleName());
             return;
         }
@@ -92,13 +92,16 @@ public final class ClassifierRegistry {
         ClassifierHandler existing = HANDLERS.put(normalizedType, handler);
 
         if (existing != null) {
-            logger.warn("Replaced existing handler for type '{}'. Old: {}, New: {}",
+            logger.warn(
+                    "Replaced existing handler for type '{}'. Old: {}, New: {}",
                     normalizedType,
                     existing.getClass().getSimpleName(),
                     handler.getClass().getSimpleName());
         } else {
-            logger.info("Registered classifier handler for type '{}': {}",
-                    normalizedType, handler.getClass().getSimpleName());
+            logger.info(
+                    "Registered classifier handler for type '{}': {}",
+                    normalizedType,
+                    handler.getClass().getSimpleName());
         }
     }
 
@@ -118,7 +121,8 @@ public final class ClassifierRegistry {
         ClassifierHandler handler = HANDLERS.get(normalizedType);
 
         if (handler != null) {
-            logger.debug("Found handler for type '{}': {}", type, handler.getClass().getSimpleName());
+            logger.debug(
+                    "Found handler for type '{}': {}", type, handler.getClass().getSimpleName());
         } else {
             logger.debug("No handler found for type '{}'. Registered types: {}", type, HANDLERS.keySet());
         }

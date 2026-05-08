@@ -1,5 +1,11 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
@@ -14,13 +20,6 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.lib.gui.QuPathGUI;
-
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
 
 /**
  * Handler for user-provided ONNX models.
@@ -48,9 +47,7 @@ import java.util.*;
 public class CustomONNXHandler implements ClassifierHandler {
 
     /** Supported tile sizes - flexible for custom models */
-    public static final List<Integer> TILE_SIZES = List.of(
-            128, 256, 384, 512, 768, 1024
-    );
+    public static final List<Integer> TILE_SIZES = List.of(128, 256, 384, 512, 768, 1024);
 
     @Override
     public String getType() {
@@ -64,11 +61,11 @@ public class CustomONNXHandler implements ClassifierHandler {
 
     @Override
     public String getDescription() {
-        return "Import and use your own ONNX segmentation model for inference. " +
-                "Supports any ONNX model with NCHW input and segmentation output. " +
-                "Training is not supported - use for pre-trained models only.\n\n" +
-                "WARNING: this option has not been exercised end-to-end on real " +
-                "ONNX models yet. Treat as experimental and expect rough edges.";
+        return "Import and use your own ONNX segmentation model for inference. "
+                + "Supports any ONNX model with NCHW input and segmentation output. "
+                + "Training is not supported - use for pre-trained models only.\n\n"
+                + "WARNING: this option has not been exercised end-to-end on real "
+                + "ONNX models yet. Treat as experimental and expect rough edges.";
     }
 
     @Override
@@ -77,7 +74,7 @@ public class CustomONNXHandler implements ClassifierHandler {
         return TrainingConfig.builder()
                 .modelType("custom_onnx")
                 .backbone("none")
-                .epochs(0)  // No training
+                .epochs(0) // No training
                 .batchSize(1)
                 .tileSize(512)
                 .overlap(64)
@@ -145,19 +142,17 @@ public class CustomONNXHandler implements ClassifierHandler {
     }
 
     @Override
-    public ClassifierMetadata buildMetadata(TrainingConfig config,
-                                            ChannelConfiguration channelConfig,
-                                            List<String> classNames) {
-        String timestamp = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+    public ClassifierMetadata buildMetadata(
+            TrainingConfig config, ChannelConfiguration channelConfig, List<String> classNames) {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         String id = String.format("custom_onnx_%s", timestamp);
 
         ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
                 .id(id)
                 .name("Custom ONNX Classifier")
-                .description(String.format("Custom ONNX model with %d channels, %d classes",
-                        channelConfig.getNumChannels(),
-                        classNames.size()))
+                .description(String.format(
+                        "Custom ONNX model with %d channels, %d classes",
+                        channelConfig.getNumChannels(), classNames.size()))
                 .modelType("custom_onnx")
                 .backbone("none")
                 .inputSize(config.getTileSize(), config.getTileSize())
@@ -168,8 +163,8 @@ public class CustomONNXHandler implements ClassifierHandler {
                 .bitDepthTrained(channelConfig.getBitDepth());
 
         // Add classes
-        String[] defaultColors = {"#808080", "#FF0000", "#00FF00", "#0000FF",
-                "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500"};
+        String[] defaultColors = {"#808080", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500"
+        };
         for (int i = 0; i < classNames.size(); i++) {
             builder.addClass(i, classNames.get(i), defaultColors[i % defaultColors.length]);
         }
@@ -194,13 +189,11 @@ public class CustomONNXHandler implements ClassifierHandler {
             root.setPadding(new Insets(10));
 
             // Info banner
-            Label infoLabel = new Label(
-                    "Import a pre-trained ONNX model for inference. " +
-                    "The model must have NCHW input format and output class probabilities."
-            );
+            Label infoLabel = new Label("Import a pre-trained ONNX model for inference. "
+                    + "The model must have NCHW input format and output class probabilities.");
             infoLabel.setWrapText(true);
-            infoLabel.setStyle("-fx-background-color: #e8f4fd; -fx-padding: 8; " +
-                    "-fx-border-color: #b8daff; -fx-border-radius: 4;");
+            infoLabel.setStyle("-fx-background-color: #e8f4fd; -fx-padding: 8; "
+                    + "-fx-border-color: #b8daff; -fx-border-radius: 4;");
 
             // Model file selection
             Label pathLabel = new Label("ONNX Model File:");
@@ -228,8 +221,7 @@ public class CustomONNXHandler implements ClassifierHandler {
             numClassesSpinner = new Spinner<>(2, 100, 2);
             numClassesSpinner.setEditable(true);
             numClassesSpinner.setPrefWidth(100);
-            numClassesSpinner.valueProperty().addListener((obs, oldVal, newVal) ->
-                    updateClassNamesArea(newVal));
+            numClassesSpinner.valueProperty().addListener((obs, oldVal, newVal) -> updateClassNamesArea(newVal));
 
             configGrid.add(channelsLabel, 0, 0);
             configGrid.add(numChannelsSpinner, 1, 0);
@@ -246,29 +238,28 @@ public class CustomONNXHandler implements ClassifierHandler {
             statusLabel = new Label("");
             statusLabel.setStyle("-fx-text-fill: #666;");
 
-            root.getChildren().addAll(
-                    infoLabel,
-                    pathLabel, pathBox,
-                    new Separator(),
-                    configGrid,
-                    classNamesLabel, classNamesArea,
-                    statusLabel
-            );
+            root.getChildren()
+                    .addAll(
+                            infoLabel,
+                            pathLabel,
+                            pathBox,
+                            new Separator(),
+                            configGrid,
+                            classNamesLabel,
+                            classNamesArea,
+                            statusLabel);
         }
 
         private void browseForModel() {
             FileChooser fileChooser = new FileChooser();
             fileChooser.setTitle("Select ONNX Model");
-            fileChooser.getExtensionFilters().add(
-                    new FileChooser.ExtensionFilter("ONNX Models", "*.onnx")
-            );
+            fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ONNX Models", "*.onnx"));
 
             // Start in user's home or last directory
             String userHome = System.getProperty("user.home");
             fileChooser.setInitialDirectory(new File(userHome));
 
-            File selected = fileChooser.showOpenDialog(
-                    QuPathGUI.getInstance().getStage());
+            File selected = fileChooser.showOpenDialog(QuPathGUI.getInstance().getStage());
 
             if (selected != null) {
                 modelPathField.setText(selected.getAbsolutePath());

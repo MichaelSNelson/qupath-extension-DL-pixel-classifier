@@ -2,7 +2,6 @@ package qupath.ext.dlclassifier.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -145,26 +144,33 @@ public class ChannelConfiguration {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         ChannelConfiguration that = (ChannelConfiguration) o;
-        return bitDepth == that.bitDepth &&
-                perChannelNormalization == that.perChannelNormalization &&
-                Double.compare(that.clipPercentile, clipPercentile) == 0 &&
-                Double.compare(that.fixedMin, fixedMin) == 0 &&
-                Double.compare(that.fixedMax, fixedMax) == 0 &&
-                Objects.equals(selectedChannels, that.selectedChannels) &&
-                Objects.equals(channelNames, that.channelNames) &&
-                normalizationStrategy == that.normalizationStrategy;
+        return bitDepth == that.bitDepth
+                && perChannelNormalization == that.perChannelNormalization
+                && Double.compare(that.clipPercentile, clipPercentile) == 0
+                && Double.compare(that.fixedMin, fixedMin) == 0
+                && Double.compare(that.fixedMax, fixedMax) == 0
+                && Objects.equals(selectedChannels, that.selectedChannels)
+                && Objects.equals(channelNames, that.channelNames)
+                && normalizationStrategy == that.normalizationStrategy;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(selectedChannels, channelNames, bitDepth,
-                normalizationStrategy, perChannelNormalization,
-                clipPercentile, fixedMin, fixedMax);
+        return Objects.hash(
+                selectedChannels,
+                channelNames,
+                bitDepth,
+                normalizationStrategy,
+                perChannelNormalization,
+                clipPercentile,
+                fixedMin,
+                fixedMax);
     }
 
     @Override
     public String toString() {
-        return String.format("ChannelConfiguration{channels=%s, bitDepth=%d, normalization=%s}",
+        return String.format(
+                "ChannelConfiguration{channels=%s, bitDepth=%d, normalization=%s}",
                 channelNames, bitDepth, normalizationStrategy);
     }
 
@@ -261,8 +267,7 @@ public class ChannelConfiguration {
                 }
             }
             if (channelNames.size() != selectedChannels.size()) {
-                throw new IllegalStateException(
-                        "Channel names count must match selected channels count");
+                throw new IllegalStateException("Channel names count must match selected channels count");
             }
             return new ChannelConfiguration(this);
         }

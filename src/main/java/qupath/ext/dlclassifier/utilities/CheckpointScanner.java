@@ -1,8 +1,5 @@
 package qupath.ext.dlclassifier.utilities;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +13,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Scans the central checkpoint registry (~/.dlclassifier/checkpoints/) for
@@ -33,8 +32,7 @@ public final class CheckpointScanner {
 
     private static final Logger logger = LoggerFactory.getLogger(CheckpointScanner.class);
 
-    private static final Pattern BEST_IN_PROGRESS_PATTERN =
-            Pattern.compile("^best_in_progress_(.+)\\.pt$");
+    private static final Pattern BEST_IN_PROGRESS_PATTERN = Pattern.compile("^best_in_progress_(.+)\\.pt$");
 
     // Files younger than this are likely from a currently-running training
     // (the Python side rewrites the file on every new-best epoch). Excluding
@@ -51,8 +49,7 @@ public final class CheckpointScanner {
      * @param modified       last-modified time of the file
      * @param sizeBytes      file size in bytes
      */
-    public record OrphanedCheckpoint(Path file, String classifierName,
-                                      Instant modified, long sizeBytes) {}
+    public record OrphanedCheckpoint(Path file, String classifierName, Instant modified, long sizeBytes) {}
 
     /**
      * Returns the path to the central checkpoint registry directory.
@@ -72,8 +69,7 @@ public final class CheckpointScanner {
      * @return list of orphaned checkpoints, sorted by modified time descending
      *         (most recent first). Empty list if the registry does not exist.
      */
-    public static List<OrphanedCheckpoint> scanCentralRegistry(
-            Set<String> activeClassifierNames) {
+    public static List<OrphanedCheckpoint> scanCentralRegistry(Set<String> activeClassifierNames) {
         Path registry = getRegistryDir();
         if (!Files.isDirectory(registry)) {
             return Collections.emptyList();
@@ -90,8 +86,7 @@ public final class CheckpointScanner {
                     return;
                 }
                 String classifierName = m.group(1);
-                if (activeClassifierNames != null
-                        && activeClassifierNames.contains(classifierName)) {
+                if (activeClassifierNames != null && activeClassifierNames.contains(classifierName)) {
                     return;
                 }
                 try {
@@ -101,8 +96,7 @@ public final class CheckpointScanner {
                         return; // too fresh, likely a live training
                     }
                     long size = Files.size(file);
-                    orphans.add(new OrphanedCheckpoint(
-                            file, classifierName, modified, size));
+                    orphans.add(new OrphanedCheckpoint(file, classifierName, modified, size));
                 } catch (IOException e) {
                     logger.debug("Could not stat checkpoint {}: {}", file, e.getMessage());
                 }

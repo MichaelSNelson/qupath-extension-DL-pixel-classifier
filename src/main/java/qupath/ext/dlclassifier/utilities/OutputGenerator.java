@@ -1,5 +1,9 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.awt.image.BufferedImage;
+import java.util.*;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.RecursiveTask;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.MultiPolygon;
@@ -23,11 +27,6 @@ import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
 import qupath.lib.roi.interfaces.ROI;
-
-import java.awt.image.BufferedImage;
-import java.util.*;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.RecursiveTask;
 
 /**
  * Generates output from classification results.
@@ -58,9 +57,7 @@ public class OutputGenerator {
      * @param metadata  classifier metadata
      * @param config    inference configuration
      */
-    public OutputGenerator(ImageData<BufferedImage> imageData,
-                           ClassifierMetadata metadata,
-                           InferenceConfig config) {
+    public OutputGenerator(ImageData<BufferedImage> imageData, ClassifierMetadata metadata, InferenceConfig config) {
         this.imageData = imageData;
         this.metadata = metadata;
         this.config = config;
@@ -215,9 +212,8 @@ public class OutputGenerator {
      * @param tileResults list of probability maps for each tile
      * @param tileSpecs   list of tile specifications
      */
-    public void addMeasurements(PathObject parent,
-                                List<float[][][]> tileResults,
-                                List<TileProcessor.TileSpec> tileSpecs) {
+    public void addMeasurements(
+            PathObject parent, List<float[][][]> tileResults, List<TileProcessor.TileSpec> tileSpecs) {
         if (tileResults.isEmpty()) {
             logger.warn("No tile results to process for measurements");
             return;
@@ -285,14 +281,12 @@ public class OutputGenerator {
      * @param parentROI   the parent region for filtering
      * @return list of created detection objects
      */
-    public List<PathObject> createDetectionObjects(List<float[][][]> tileResults,
-                                                   List<TileProcessor.TileSpec> tileSpecs,
-                                                   ROI parentROI) {
+    public List<PathObject> createDetectionObjects(
+            List<float[][][]> tileResults, List<TileProcessor.TileSpec> tileSpecs, ROI parentROI) {
         List<PathObject> allDetections = new ArrayList<>();
 
         if (tileResults.size() != tileSpecs.size()) {
-            logger.error("Mismatch between tile results ({}) and specs ({})",
-                    tileResults.size(), tileSpecs.size());
+            logger.error("Mismatch between tile results ({}) and specs ({})", tileResults.size(), tileSpecs.size());
             return allDetections;
         }
 
@@ -325,9 +319,8 @@ public class OutputGenerator {
      * @param objectType type of PathObject to create (DETECTION or ANNOTATION)
      * @return list of created PathObjects
      */
-    public List<PathObject> createObjectsFromMergedMap(int[][] classMap,
-                                                        int offsetX, int offsetY,
-                                                        OutputObjectType objectType) {
+    public List<PathObject> createObjectsFromMergedMap(
+            int[][] classMap, int offsetX, int offsetY, OutputObjectType objectType) {
         return createObjectsFromMergedMap(classMap, offsetX, offsetY, 1.0, objectType);
     }
 
@@ -346,17 +339,21 @@ public class OutputGenerator {
      * @param objectType  DETECTION or ANNOTATION
      * @return list of PathObjects
      */
-    public List<PathObject> createObjectsFromMergedMap(int[][] classMap,
-                                                        int offsetX, int offsetY,
-                                                        double downsample,
-                                                        OutputObjectType objectType) {
+    public List<PathObject> createObjectsFromMergedMap(
+            int[][] classMap, int offsetX, int offsetY, double downsample, OutputObjectType objectType) {
         int height = classMap.length;
         int width = classMap[0].length;
         int fullResW = (int) (width * downsample);
         int fullResH = (int) (height * downsample);
 
-        logger.info("Creating objects from merged map ({}x{} @ ds={}) at ({},{}), type={}",
-                width, height, downsample, offsetX, offsetY, objectType);
+        logger.info(
+                "Creating objects from merged map ({}x{} @ ds={}) at ({},{}), type={}",
+                width,
+                height,
+                downsample,
+                offsetX,
+                offsetY,
+                objectType);
 
         List<PathObject> objects = new ArrayList<>();
         int numClasses = metadata.getClasses().size();
@@ -364,8 +361,7 @@ public class OutputGenerator {
         // Create a RegionRequest mapping classMap pixels to full-res image space.
         // ContourTracing uses this to scale traced geometries to image coordinates.
         RegionRequest region = RegionRequest.createInstance(
-                imageData.getServer().getPath(), downsample,
-                offsetX, offsetY, fullResW, fullResH);
+                imageData.getServer().getPath(), downsample, offsetX, offsetY, fullResW, fullResH);
 
         // Process each class (skip background = class 0, skip ignored classes)
         List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
@@ -375,8 +371,7 @@ public class OutputGenerator {
                 logger.debug("Skipping ignored class: {}", className);
                 continue;
             }
-            List<PathObject> classObjects = traceClassContours(
-                    classMap, classIdx, width, height, region, objectType);
+            List<PathObject> classObjects = traceClassContours(classMap, classIdx, width, height, region, objectType);
             objects.addAll(classObjects);
         }
 
@@ -398,12 +393,13 @@ public class OutputGenerator {
      * @param objectType    type of PathObject to create
      * @return list of created PathObjects
      */
-    public List<PathObject> createObjectsFromTiles(TileProcessor tileProcessor,
-                                                    List<float[][][]> tileResults,
-                                                    List<TileProcessor.TileSpec> tileSpecs,
-                                                    ROI parentROI,
-                                                    int numClasses,
-                                                    OutputObjectType objectType) {
+    public List<PathObject> createObjectsFromTiles(
+            TileProcessor tileProcessor,
+            List<float[][][]> tileResults,
+            List<TileProcessor.TileSpec> tileSpecs,
+            ROI parentROI,
+            int numClasses,
+            OutputObjectType objectType) {
         if (tileResults.isEmpty() || tileSpecs.isEmpty()) {
             logger.warn("No tile results to process for object creation");
             return Collections.emptyList();
@@ -416,10 +412,7 @@ public class OutputGenerator {
 
         // Use edge-aware merging to get complete merged result
         TileProcessor.MergedResult merged = tileProcessor.mergeTileResultsWithEdgeHandling(
-                tileSpecs, tileResults,
-                regionX, regionY, regionWidth, regionHeight,
-                numClasses
-        );
+                tileSpecs, tileResults, regionX, regionY, regionWidth, regionHeight, numClasses);
 
         // Apply probability smoothing to match overlay quality.
         // The overlay smooths each tile's probabilities before argmax;
@@ -428,19 +421,15 @@ public class OutputGenerator {
         double sigma = config.getOverlaySmoothingSigma();
         int[][] classMap;
         if (sigma > 0) {
-            float[][][] smoothed = gaussianSmoothProbabilities(
-                    merged.probabilityMap(), regionWidth, regionHeight, sigma);
+            float[][][] smoothed =
+                    gaussianSmoothProbabilities(merged.probabilityMap(), regionWidth, regionHeight, sigma);
             classMap = computeArgmax(smoothed, regionWidth, regionHeight, numClasses);
         } else {
             classMap = merged.classificationMap();
         }
 
         // Create objects from the classification map using ContourTracing
-        List<PathObject> objects = createObjectsFromMergedMap(
-                classMap,
-                regionX, regionY,
-                objectType
-        );
+        List<PathObject> objects = createObjectsFromMergedMap(classMap, regionX, regionY, objectType);
 
         // Clip objects to the parent ROI using geometric intersection
         if (parentROI != null) {
@@ -456,13 +445,17 @@ public class OutputGenerator {
      * Traces contours for a single class using QuPath's ContourTracing API
      * and creates PathObjects with post-processing applied.
      */
-    private List<PathObject> traceClassContours(int[][] classMap, int targetClass,
-                                                 int width, int height,
-                                                 RegionRequest region,
-                                                 OutputObjectType objectType) {
+    private List<PathObject> traceClassContours(
+            int[][] classMap,
+            int targetClass,
+            int width,
+            int height,
+            RegionRequest region,
+            OutputObjectType objectType) {
         List<PathObject> objects = new ArrayList<>();
         List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
-        String className = targetClass < classes.size() ? classes.get(targetClass).name() : "Class " + targetClass;
+        String className =
+                targetClass < classes.size() ? classes.get(targetClass).name() : "Class " + targetClass;
         PathClass pathClass = PathClass.fromString(className);
 
         // Create a SimpleImage where pixels matching targetClass have value targetClass,
@@ -470,8 +463,7 @@ public class OutputGenerator {
         SimpleImage classImage = createClassImage(classMap, targetClass, width, height);
 
         // Use ContourTracing to trace geometries for this class value
-        Geometry geometry = ContourTracing.createTracedGeometry(
-                classImage, targetClass, targetClass, region);
+        Geometry geometry = ContourTracing.createTracedGeometry(classImage, targetClass, targetClass, region);
 
         if (geometry == null || geometry.isEmpty()) {
             return objects;
@@ -515,8 +507,7 @@ public class OutputGenerator {
      * Creates a SimpleImage from the classification map for a specific class.
      * Pixels matching the target class are set to the class value; others are 0.
      */
-    private SimpleImage createClassImage(int[][] classMap, int targetClass,
-                                          int width, int height) {
+    private SimpleImage createClassImage(int[][] classMap, int targetClass, int width, int height) {
         float[] data = new float[width * height];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -615,16 +606,13 @@ public class OutputGenerator {
 
             for (int i = 0; i < numHoles; i++) {
                 var hole = polygon.getInteriorRingN(i);
-                double holeArea = Math.abs(
-                        org.locationtech.jts.algorithm.Area.ofRing(hole.getCoordinates()));
+                double holeArea = Math.abs(org.locationtech.jts.algorithm.Area.ofRing(hole.getCoordinates()));
                 if (holeArea >= minHoleAreaPixels) {
                     keptHoles.add((LinearRing) hole);
                 }
             }
 
-            return factory.createPolygon(
-                    (LinearRing) shell,
-                    keptHoles.toArray(new LinearRing[0]));
+            return factory.createPolygon((LinearRing) shell, keptHoles.toArray(new LinearRing[0]));
 
         } else if (geometry instanceof MultiPolygon mp) {
             var factory = geometry.getFactory();
@@ -697,8 +685,7 @@ public class OutputGenerator {
 
         Geometry merged;
         if (geometries.size() > PARALLEL_THRESHOLD) {
-            merged = ForkJoinPool.commonPool().invoke(
-                    new GeometryUnionTask(geometries, 0, geometries.size()));
+            merged = ForkJoinPool.commonPool().invoke(new GeometryUnionTask(geometries, 0, geometries.size()));
         } else {
             merged = mergeGeometriesBatched(geometries, UNION_BATCH_SIZE, false);
         }
@@ -718,15 +705,12 @@ public class OutputGenerator {
      * @param parallel   whether to use ForkJoinPool (ignored for small lists)
      * @return the merged geometry, or {@code null} if empty
      */
-    public static Geometry mergeGeometriesBatched(List<Geometry> geometries,
-                                                   int batchSize,
-                                                   boolean parallel) {
+    public static Geometry mergeGeometriesBatched(List<Geometry> geometries, int batchSize, boolean parallel) {
         if (geometries == null || geometries.isEmpty()) return null;
         if (geometries.size() == 1) return geometries.get(0);
 
         if (parallel && geometries.size() > PARALLEL_THRESHOLD) {
-            return ForkJoinPool.commonPool().invoke(
-                    new GeometryUnionTask(geometries, 0, geometries.size()));
+            return ForkJoinPool.commonPool().invoke(new GeometryUnionTask(geometries, 0, geometries.size()));
         }
 
         // Iterative hierarchical batched union
@@ -796,8 +780,7 @@ public class OutputGenerator {
      * Same algorithm as DLPixelClassifier.gaussianSmoothProbabilities() but operates
      * on the merged (full-region) probability map for cross-tile boundary smoothing.
      */
-    private static float[][][] gaussianSmoothProbabilities(float[][][] probMap,
-                                                            int width, int height, double sigma) {
+    private static float[][][] gaussianSmoothProbabilities(float[][][] probMap, int width, int height, double sigma) {
         int radius = (int) Math.ceil(sigma * 2.5);
         if (radius < 1) return probMap;
 

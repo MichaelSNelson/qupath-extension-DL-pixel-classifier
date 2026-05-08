@@ -1,5 +1,16 @@
 package qupath.ext.dlclassifier.controller;
 
+import java.io.IOException;
+import java.nio.file.*;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -19,16 +30,6 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
-
-import java.io.IOException;
-import java.nio.file.*;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.Optional;
-import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 /**
  * Workflow for managing trained classifiers.
@@ -76,14 +77,14 @@ public class ModelManagementWorkflow {
      */
     private void showModelManagerDialog() {
         dialogStage = new Stage();
-        dialogStage.setTitle("DL Classifier Manager");
+        dialogStage.setTitle("Manage Classifiers");
         dialogStage.initOwner(qupath.getStage());
 
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(10));
 
         // Header
-        Label headerLabel = new Label("Trained Classifiers");
+        Label headerLabel = new Label("Trained DL Pixel Classifiers");
         headerLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
         BorderPane.setMargin(headerLabel, new Insets(0, 0, 10, 0));
         root.setTop(headerLabel);
@@ -131,7 +132,8 @@ public class ModelManagementWorkflow {
 
         // Name column
         TableColumn<ClassifierMetadata, String> nameCol = new TableColumn<>("Name");
-        nameCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().getName()));
+        nameCol.setCellValueFactory(
+                data -> new SimpleStringProperty(data.getValue().getName()));
         nameCol.setPrefWidth(150);
 
         // Type column
@@ -148,8 +150,8 @@ public class ModelManagementWorkflow {
 
         // Classes column
         TableColumn<ClassifierMetadata, String> classesCol = new TableColumn<>("Classes");
-        classesCol.setCellValueFactory(data ->
-                new SimpleStringProperty(String.valueOf(data.getValue().getNumClasses())));
+        classesCol.setCellValueFactory(
+                data -> new SimpleStringProperty(String.valueOf(data.getValue().getNumClasses())));
         classesCol.setPrefWidth(60);
 
         // Created column
@@ -164,8 +166,10 @@ public class ModelManagementWorkflow {
         classifierTable.getColumns().addAll(List.of(nameCol, typeCol, classesCol, createdCol));
 
         // Selection listener
-        classifierTable.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> updateDetailsPane(newVal));
+        classifierTable
+                .getSelectionModel()
+                .selectedItemProperty()
+                .addListener((obs, oldVal, newVal) -> updateDetailsPane(newVal));
 
         VBox.setVgrow(classifierTable, Priority.ALWAYS);
         box.getChildren().add(classifierTable);
@@ -232,18 +236,32 @@ public class ModelManagementWorkflow {
 
         addDetailRow(archGrid, row++, "Model Type:", metadata.getModelType().toUpperCase());
         addDetailRow(archGrid, row++, "Backbone:", metadata.getBackbone());
-        addDetailRow(archGrid, row++, "Input Size:",
-                metadata.getInputWidth() + " x " + metadata.getInputHeight());
+        addDetailRow(archGrid, row++, "Input Size:", metadata.getInputWidth() + " x " + metadata.getInputHeight());
         String channelDisplay = String.valueOf(metadata.getInputChannels());
         if (metadata.getContextScale() > 1) {
             channelDisplay += " (x2 with context = " + metadata.getEffectiveInputChannels() + ")";
         }
         addDetailRow(archGrid, row++, "Input Channels:", channelDisplay);
-        if (metadata.getDownsample() > 1.0) {
-            addDetailRow(archGrid, row++, "Downsample:", String.valueOf(metadata.getDownsample()) + "x");
-        }
+        // Show downsample/context unconditionally so the user can confirm the
+        // values that were saved (1.0/1 are meaningful: "trained at full res
+        // with no context").
+        addDetailRow(archGrid, row++, "Downsample:", formatDownsample(metadata.getDownsample()));
+        addDetailRow(archGrid, row++, "Context Scale:", metadata.getContextScale() + "x");
         if (metadata.getContextScale() > 1) {
-            addDetailRow(archGrid, row++, "Context Scale:", metadata.getContextScale() + "x");
+            // Effective downsample of the wide-view context tile = base
+            // downsample times the context scale factor.
+            double ctxDs = metadata.getDownsample() * metadata.getContextScale();
+            addDetailRow(archGrid, row++, "Context Downsample:", formatDownsample(ctxDs));
+        }
+        if (metadata.getTrainingPixelSizeMicrons() > 0 && !Double.isNaN(metadata.getTrainingPixelSizeMicrons())) {
+            addDetailRow(
+                    archGrid,
+                    row++,
+                    "Training Pixel Size:",
+                    String.format("%.4f um/px", metadata.getTrainingPixelSizeMicrons()));
+        }
+        if (metadata.getTrainingTileSizePx() > 0) {
+            addDetailRow(archGrid, row++, "Training Tile Size:", metadata.getTrainingTileSizePx() + " px");
         }
 
         detailsPane.getChildren().add(archGrid);
@@ -289,14 +307,37 @@ public class ModelManagementWorkflow {
 
             addDetailRow(trainingGrid, row++, "Epochs:", String.valueOf(metadata.getTrainingEpochs()));
             addDetailRow(trainingGrid, row++, "Final Loss:", String.format("%.4f", metadata.getFinalLoss()));
-            addDetailRow(trainingGrid, row++, "Final Accuracy:",
-                    String.format("%.1f%%", metadata.getFinalAccuracy() * 100));
+            addDetailRow(
+                    trainingGrid, row++, "Final Accuracy:", String.format("%.1f%%", metadata.getFinalAccuracy() * 100));
 
-            if (metadata.getTrainingImageName() != null && !metadata.getTrainingImageName().isEmpty()) {
+            if (metadata.getTrainingImageName() != null
+                    && !metadata.getTrainingImageName().isEmpty()) {
                 addDetailRow(trainingGrid, row++, "Training Image:", metadata.getTrainingImageName());
             }
 
             detailsPane.getChildren().add(trainingGrid);
+        }
+
+        // Training Settings section: iterate the full hyperparameter map so
+        // future training fields show up here automatically without a
+        // parallel update. Hidden when the model predates trainingSettings
+        // serialization or the map is empty.
+        Map<String, Object> trainingSettings = metadata.getTrainingSettings();
+        if (trainingSettings != null && !trainingSettings.isEmpty()) {
+            detailsPane.getChildren().add(new Separator());
+            Label settingsHeader = new Label("Training Settings");
+            settingsHeader.setStyle("-fx-font-weight: bold;");
+            detailsPane.getChildren().add(settingsHeader);
+
+            GridPane settingsGrid = new GridPane();
+            settingsGrid.setHgap(10);
+            settingsGrid.setVgap(5);
+            int settingsRow = 0;
+            for (Map.Entry<String, Object> e : trainingSettings.entrySet()) {
+                addDetailRow(
+                        settingsGrid, settingsRow++, humanizeKey(e.getKey()) + ":", formatSettingValue(e.getValue()));
+            }
+            detailsPane.getChildren().add(settingsGrid);
         }
 
         // Channel config section
@@ -311,12 +352,13 @@ public class ModelManagementWorkflow {
             channelGrid.setVgap(5);
             row = 0;
 
-            addDetailRow(channelGrid, row++, "Channels:",
-                    String.join(", ", metadata.getExpectedChannelNames()));
-            addDetailRow(channelGrid, row++, "Normalization:",
+            addDetailRow(channelGrid, row++, "Channels:", String.join(", ", metadata.getExpectedChannelNames()));
+            addDetailRow(
+                    channelGrid,
+                    row++,
+                    "Normalization:",
                     metadata.getNormalizationStrategy().name());
-            addDetailRow(channelGrid, row++, "Bit Depth:",
-                    metadata.getBitDepthTrained() + "-bit");
+            addDetailRow(channelGrid, row++, "Bit Depth:", metadata.getBitDepthTrained() + "-bit");
 
             detailsPane.getChildren().add(channelGrid);
         }
@@ -391,6 +433,81 @@ public class ModelManagementWorkflow {
     }
 
     /**
+     * Format a downsample factor for display. Avoids "1.0x" trailing zero
+     * noise and keeps two decimals when needed.
+     */
+    private static String formatDownsample(double ds) {
+        if (ds == Math.floor(ds) && !Double.isInfinite(ds)) {
+            return String.format(Locale.ROOT, "%.0fx", ds);
+        }
+        return String.format(Locale.ROOT, "%.2fx", ds);
+    }
+
+    /**
+     * Convert a snake_case settings key into a Title Case label so the
+     * Training Settings grid reads naturally without hand-curated labels.
+     */
+    private static String humanizeKey(String key) {
+        if (key == null || key.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(key.length());
+        boolean upper = true;
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            if (c == '_' || c == '-') {
+                sb.append(' ');
+                upper = true;
+            } else if (upper) {
+                sb.append(Character.toUpperCase(c));
+                upper = false;
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Render a setting value compactly. Lists/maps would be unreadable in a
+     * single-row grid, so we collapse them; primitives use their default
+     * toString.
+     */
+    private static String formatSettingValue(Object value) {
+        if (value == null) return "-";
+        if (value instanceof Double || value instanceof Float) {
+            double d = ((Number) value).doubleValue();
+            if (d == Math.floor(d) && !Double.isInfinite(d) && Math.abs(d) < 1e15) {
+                return String.format(Locale.ROOT, "%.0f", d);
+            }
+            return String.format(Locale.ROOT, "%.6g", d).replaceAll("0+$", "").replaceAll("\\.$", "");
+        }
+        if (value instanceof Number) {
+            return value.toString();
+        }
+        if (value instanceof Map) {
+            Map<?, ?> map = (Map<?, ?>) value;
+            if (map.isEmpty()) return "(none)";
+            StringBuilder sb = new StringBuilder();
+            int i = 0;
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                if (i++ > 0) sb.append(", ");
+                sb.append(e.getKey()).append("=").append(formatSettingValue(e.getValue()));
+            }
+            return sb.toString();
+        }
+        if (value instanceof List) {
+            List<?> list = (List<?>) value;
+            if (list.isEmpty()) return "(none)";
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(formatSettingValue(list.get(i)));
+            }
+            return sb.toString();
+        }
+        return value.toString();
+    }
+
+    /**
      * Creates the button pane.
      */
     private HBox createButtonPane() {
@@ -399,13 +516,15 @@ public class ModelManagementWorkflow {
 
         Button deleteBtn = new Button("Delete");
         deleteBtn.setOnAction(e -> deleteSelectedClassifier());
-        deleteBtn.disableProperty().bind(
-                classifierTable.getSelectionModel().selectedItemProperty().isNull());
+        deleteBtn
+                .disableProperty()
+                .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
 
         Button exportBtn = new Button("Export...");
         exportBtn.setOnAction(e -> exportSelectedClassifier());
-        exportBtn.disableProperty().bind(
-                classifierTable.getSelectionModel().selectedItemProperty().isNull());
+        exportBtn
+                .disableProperty()
+                .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
 
         Button importBtn = new Button("Import...");
         importBtn.setOnAction(e -> importClassifier());
@@ -459,9 +578,8 @@ public class ModelManagementWorkflow {
 
         boolean confirm = Dialogs.showConfirmDialog(
                 "Delete Classifier",
-                "Are you sure you want to delete the classifier '" + selected.getName() + "'?\n\n" +
-                        "This action cannot be undone."
-        );
+                "Are you sure you want to delete the classifier '" + selected.getName() + "'?\n\n"
+                        + "This action cannot be undone.");
 
         if (!confirm) {
             return;
@@ -502,8 +620,7 @@ public class ModelManagementWorkflow {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Export Classifier");
         fileChooser.setInitialFileName(selected.getName().replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".zip");
-        fileChooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
 
         java.io.File saveFile = fileChooser.showSaveDialog(dialogStage);
         if (saveFile == null) {
@@ -513,24 +630,22 @@ public class ModelManagementWorkflow {
         try {
             Path zipPath = saveFile.toPath();
             try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipPath));
-                 Stream<Path> paths = Files.walk(classifierDir)) {
-                paths.filter(p -> !Files.isDirectory(p))
-                        .forEach(filePath -> {
-                            try {
-                                String entryName = classifierDir.relativize(filePath).toString()
-                                        .replace('\\', '/');
-                                zos.putNextEntry(new ZipEntry(entryName));
-                                Files.copy(filePath, zos);
-                                zos.closeEntry();
-                            } catch (IOException ex) {
-                                logger.warn("Failed to add file to ZIP: {}", filePath, ex);
-                            }
-                        });
+                    Stream<Path> paths = Files.walk(classifierDir)) {
+                paths.filter(p -> !Files.isDirectory(p)).forEach(filePath -> {
+                    try {
+                        String entryName =
+                                classifierDir.relativize(filePath).toString().replace('\\', '/');
+                        zos.putNextEntry(new ZipEntry(entryName));
+                        Files.copy(filePath, zos);
+                        zos.closeEntry();
+                    } catch (IOException ex) {
+                        logger.warn("Failed to add file to ZIP: {}", filePath, ex);
+                    }
+                });
             }
 
             logger.info("Exported classifier '{}' to {}", selected.getName(), zipPath);
-            Dialogs.showInfoNotification("Export Complete",
-                    "Classifier exported to:\n" + zipPath.getFileName());
+            Dialogs.showInfoNotification("Export Complete", "Classifier exported to:\n" + zipPath.getFileName());
 
         } catch (IOException e) {
             logger.error("Failed to export classifier", e);
@@ -544,8 +659,7 @@ public class ModelManagementWorkflow {
     private void importClassifier() {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Import Classifier");
-        fileChooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
 
         java.io.File selectedFile = fileChooser.showOpenDialog(dialogStage);
         if (selectedFile == null) {
@@ -577,8 +691,7 @@ public class ModelManagementWorkflow {
             // Validate: metadata.json must exist
             Path metadataFile = tempDir.resolve("metadata.json");
             if (!Files.exists(metadataFile)) {
-                Dialogs.showErrorMessage("Import Error",
-                        "Invalid classifier archive: metadata.json not found.");
+                Dialogs.showErrorMessage("Import Error", "Invalid classifier archive: metadata.json not found.");
                 return;
             }
 
@@ -586,8 +699,8 @@ public class ModelManagementWorkflow {
             ClassifierMetadata imported = modelManager.importClassifier(tempDir);
             if (imported != null) {
                 logger.info("Imported classifier: {}", imported.getName());
-                Dialogs.showInfoNotification("Import Complete",
-                        "Classifier '" + imported.getName() + "' imported successfully.");
+                Dialogs.showInfoNotification(
+                        "Import Complete", "Classifier '" + imported.getName() + "' imported successfully.");
                 refreshClassifierList();
             }
 
@@ -598,11 +711,14 @@ public class ModelManagementWorkflow {
             // Clean up temp directory
             if (tempDir != null) {
                 try (Stream<Path> paths = Files.walk(tempDir)) {
-                    paths.sorted(java.util.Comparator.reverseOrder())
-                            .forEach(p -> {
-                                try { Files.deleteIfExists(p); } catch (IOException ignored) {}
-                            });
-                } catch (IOException ignored) {}
+                    paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                        }
+                    });
+                } catch (IOException ignored) {
+                }
             }
         }
     }

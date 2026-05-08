@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.util.ResourceBundle;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -19,8 +20,6 @@ import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.service.ApposeService;
-
-import java.util.ResourceBundle;
 
 /**
  * Setup wizard dialog for first-time DL environment installation.
@@ -125,15 +124,9 @@ public class SetupEnvironmentDialog {
         HBox buttonBox = new HBox(8, spacer, beginButton, cancelButton);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
 
-        contentBox.getChildren().addAll(
-                titleLabel,
-                descLabel,
-                downloadLabel,
-                meteredLabel,
-                envLocLabel,
-                envPathLabel,
-                buttonBox
-        );
+        contentBox
+                .getChildren()
+                .addAll(titleLabel, descLabel, downloadLabel, meteredLabel, envLocLabel, envPathLabel, buttonBox);
     }
 
     private void showInProgressView() {
@@ -160,13 +153,7 @@ public class SetupEnvironmentDialog {
         HBox buttonBox = new HBox(8, spacer, cancelButton);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
 
-        contentBox.getChildren().addAll(
-                titleLabel,
-                inProgressLabel,
-                statusLabel,
-                progressBar,
-                buttonBox
-        );
+        contentBox.getChildren().addAll(titleLabel, inProgressLabel, statusLabel, progressBar, buttonBox);
     }
 
     private void showCompleteView() {
@@ -222,20 +209,9 @@ public class SetupEnvironmentDialog {
                     + "-fx-border-color: #ffcc80; -fx-border-width: 1; "
                     + "-fx-background-color: #fff3e0; -fx-padding: 8;");
 
-            contentBox.getChildren().addAll(
-                    titleLabel,
-                    completeLabel,
-                    detailLabel,
-                    gpuWarning,
-                    buttonBox
-            );
+            contentBox.getChildren().addAll(titleLabel, completeLabel, detailLabel, gpuWarning, buttonBox);
         } else {
-            contentBox.getChildren().addAll(
-                    titleLabel,
-                    completeLabel,
-                    detailLabel,
-                    buttonBox
-            );
+            contentBox.getChildren().addAll(titleLabel, completeLabel, detailLabel, buttonBox);
         }
     }
 
@@ -267,12 +243,7 @@ public class SetupEnvironmentDialog {
         HBox buttonBox = new HBox(8, spacer, retryButton, cancelButton);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
 
-        contentBox.getChildren().addAll(
-                titleLabel,
-                failedLabel,
-                errorLabel,
-                buttonBox
-        );
+        contentBox.getChildren().addAll(titleLabel, failedLabel, errorLabel, buttonBox);
     }
 
     // ==================== Setup Execution ====================
@@ -280,30 +251,32 @@ public class SetupEnvironmentDialog {
     private void startSetup() {
         showInProgressView();
 
-        Thread setupThread = new Thread(() -> {
-            try {
-                // ONNX is always included -- required for model export
-                ApposeService.getInstance().initialize(
-                        status -> Platform.runLater(() -> {
-                            if (statusLabel != null) {
-                                statusLabel.setText(status);
+        Thread setupThread = new Thread(
+                () -> {
+                    try {
+                        // ONNX is always included -- required for model export
+                        ApposeService.getInstance()
+                                .initialize(
+                                        status -> Platform.runLater(() -> {
+                                            if (statusLabel != null) {
+                                                statusLabel.setText(status);
+                                            }
+                                        }),
+                                        true);
+
+                        Platform.runLater(() -> {
+                            showCompleteView();
+                            if (onComplete != null) {
+                                onComplete.run();
                             }
-                        }),
-                        true
-                );
+                        });
 
-                Platform.runLater(() -> {
-                    showCompleteView();
-                    if (onComplete != null) {
-                        onComplete.run();
+                    } catch (Exception e) {
+                        logger.error("Environment setup failed", e);
+                        Platform.runLater(() -> showErrorView(e.getMessage()));
                     }
-                });
-
-            } catch (Exception e) {
-                logger.error("Environment setup failed", e);
-                Platform.runLater(() -> showErrorView(e.getMessage()));
-            }
-        }, "DLClassifier-EnvironmentSetup");
+                },
+                "DLClassifier-EnvironmentSetup");
         setupThread.setDaemon(true);
         setupThread.start();
     }

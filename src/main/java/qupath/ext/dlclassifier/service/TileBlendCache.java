@@ -1,9 +1,5 @@
 package qupath.ext.dlclassifier.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -11,6 +7,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.InferenceConfig;
 
 /**
  * Manages a bounded cache of probability maps for tile boundary blending.
@@ -57,12 +56,12 @@ public class TileBlendCache {
     private volatile int empiricalStepY = -1;
 
     /** Debounced scheduler for viewer refresh after new tiles are cached. */
-    private final ScheduledExecutorService refreshScheduler =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "dl-overlay-refresh");
-                t.setDaemon(true);
-                return t;
-            });
+    private final ScheduledExecutorService refreshScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "dl-overlay-refresh");
+        t.setDaemon(true);
+        return t;
+    });
+
     private volatile ScheduledFuture<?> pendingRefresh;
 
     /** Cooldown period between overlay refreshes (ms). */
@@ -89,9 +88,12 @@ public class TileBlendCache {
      * @param maxBlendDist    maximum blend distance (-1 = use full inputPadding)
      * @param refreshCallback called when a deferred overlay refresh fires
      */
-    public TileBlendCache(int maxSize, int inputPadding,
-                          InferenceConfig.BlendMode blendMode, int maxBlendDist,
-                          Runnable refreshCallback) {
+    public TileBlendCache(
+            int maxSize,
+            int inputPadding,
+            InferenceConfig.BlendMode blendMode,
+            int maxBlendDist,
+            Runnable refreshCallback) {
         this.maxSize = maxSize;
         this.inputPadding = inputPadding;
         this.blendMode = blendMode;
@@ -185,8 +187,7 @@ public class TileBlendCache {
      * @param height    prob map height (= tileSize, the inputShape given to QuPath)
      * @return blended probability map (new array, original not modified)
      */
-    public float[][][] blendWithNeighbors(float[][][] probMap, int requestX, int requestY,
-                                           int width, int height) {
+    public float[][][] blendWithNeighbors(float[][][] probMap, int requestX, int requestY, int width, int height) {
         // CENTER_CROP: every visible pixel is at the center of its tile, no blending needed
         if (blendMode == InferenceConfig.BlendMode.CENTER_CROP) {
             return probMap;
@@ -196,23 +197,23 @@ public class TileBlendCache {
         int stepX = empiricalStepX;
         int stepY = empiricalStepY;
         if (stepX <= 0 && stepY <= 0) {
-            return probMap;  // Step not yet computed, skip blending
+            return probMap; // Step not yet computed, skip blending
         }
 
         if (inputPadding <= 0) {
-            return probMap;  // No padding = no overlap = can't blend
+            return probMap; // No padding = no overlap = can't blend
         }
 
         int numClasses = probMap[0][0].length;
 
         // Look up cached neighbors using empirical step
-        float[][][] left   = (stepX > 0) ? probCache.get(cacheKey(requestX - stepX, requestY)) : null;
-        float[][][] right  = (stepX > 0) ? probCache.get(cacheKey(requestX + stepX, requestY)) : null;
-        float[][][] top    = (stepY > 0) ? probCache.get(cacheKey(requestX, requestY - stepY)) : null;
+        float[][][] left = (stepX > 0) ? probCache.get(cacheKey(requestX - stepX, requestY)) : null;
+        float[][][] right = (stepX > 0) ? probCache.get(cacheKey(requestX + stepX, requestY)) : null;
+        float[][][] top = (stepY > 0) ? probCache.get(cacheKey(requestX, requestY - stepY)) : null;
         float[][][] bottom = (stepY > 0) ? probCache.get(cacheKey(requestX, requestY + stepY)) : null;
 
         if (left == null && right == null && top == null && bottom == null) {
-            return probMap;  // No neighbors available
+            return probMap; // No neighbors available
         }
 
         // Blend distance: configurable max or full inputPadding
@@ -229,15 +230,14 @@ public class TileBlendCache {
             int rh = Math.min(height, right.length);
             for (int y = 0; y < rh; y++) {
                 for (int d = 0; d < blendDist; d++) {
-                    int xSelf  = width - inputPadding - 1 - d;  // visible col near right edge
-                    int xRight = inputPadding - 1 - d;          // same image loc in right neighbor
+                    int xSelf = width - inputPadding - 1 - d; // visible col near right edge
+                    int xRight = inputPadding - 1 - d; // same image loc in right neighbor
                     if (xSelf < 0 || xRight < 0 || xRight >= right[y].length) break;
                     float wSelf = blendWeight(d, blendDist);
                     float wNeighbor = 1.0f - wSelf;
                     int nc = Math.min(numClasses, right[y][xRight].length);
                     for (int c = 0; c < nc; c++) {
-                        blended[y][xSelf][c] = wSelf * probMap[y][xSelf][c]
-                                + wNeighbor * right[y][xRight][c];
+                        blended[y][xSelf][c] = wSelf * probMap[y][xSelf][c] + wNeighbor * right[y][xRight][c];
                     }
                 }
             }
@@ -249,15 +249,14 @@ public class TileBlendCache {
             int lh = Math.min(height, left.length);
             for (int y = 0; y < lh; y++) {
                 for (int d = 0; d < blendDist; d++) {
-                    int xSelf = inputPadding + d;           // visible col near left edge
-                    int xLeft = width - inputPadding + d;   // same image loc in left neighbor
+                    int xSelf = inputPadding + d; // visible col near left edge
+                    int xLeft = width - inputPadding + d; // same image loc in left neighbor
                     if (xSelf >= width || xLeft >= left[y].length) break;
                     float wSelf = blendWeight(d, blendDist);
                     float wNeighbor = 1.0f - wSelf;
                     int nc = Math.min(numClasses, left[y][xLeft].length);
                     for (int c = 0; c < nc; c++) {
-                        blended[y][xSelf][c] = wSelf * probMap[y][xSelf][c]
-                                + wNeighbor * left[y][xLeft][c];
+                        blended[y][xSelf][c] = wSelf * probMap[y][xSelf][c] + wNeighbor * left[y][xLeft][c];
                     }
                 }
             }
@@ -269,8 +268,8 @@ public class TileBlendCache {
         // with bottom neighbor's top padding region
         if (bottom != null) {
             for (int d = 0; d < blendDist; d++) {
-                int ySelf   = height - inputPadding - 1 - d;  // visible row near bottom edge
-                int yBottom = inputPadding - 1 - d;            // same image loc in bottom neighbor
+                int ySelf = height - inputPadding - 1 - d; // visible row near bottom edge
+                int yBottom = inputPadding - 1 - d; // same image loc in bottom neighbor
                 if (ySelf < 0 || yBottom < 0 || yBottom >= bottom.length) break;
                 float wSelf = blendWeight(d, blendDist);
                 float wNeighbor = 1.0f - wSelf;
@@ -278,8 +277,7 @@ public class TileBlendCache {
                 for (int x = 0; x < bw; x++) {
                     int nc = Math.min(numClasses, bottom[yBottom][x].length);
                     for (int c = 0; c < nc; c++) {
-                        blended[ySelf][x][c] = wSelf * blended[ySelf][x][c]
-                                + wNeighbor * bottom[yBottom][x][c];
+                        blended[ySelf][x][c] = wSelf * blended[ySelf][x][c] + wNeighbor * bottom[yBottom][x][c];
                     }
                 }
             }
@@ -289,8 +287,8 @@ public class TileBlendCache {
         // with top neighbor's bottom padding region
         if (top != null) {
             for (int d = 0; d < blendDist; d++) {
-                int ySelf = inputPadding + d;            // visible row near top edge
-                int yTop  = height - inputPadding + d;   // same image loc in top neighbor
+                int ySelf = inputPadding + d; // visible row near top edge
+                int yTop = height - inputPadding + d; // same image loc in top neighbor
                 if (ySelf >= height || yTop >= top.length) break;
                 float wSelf = blendWeight(d, blendDist);
                 float wNeighbor = 1.0f - wSelf;
@@ -298,8 +296,7 @@ public class TileBlendCache {
                 for (int x = 0; x < tw; x++) {
                     int nc = Math.min(numClasses, top[yTop][x].length);
                     for (int c = 0; c < nc; c++) {
-                        blended[ySelf][x][c] = wSelf * blended[ySelf][x][c]
-                                + wNeighbor * top[yTop][x][c];
+                        blended[ySelf][x][c] = wSelf * blended[ySelf][x][c] + wNeighbor * top[yTop][x][c];
                     }
                 }
             }
@@ -322,24 +319,28 @@ public class TileBlendCache {
     public void scheduleRefresh() {
         long elapsed = System.currentTimeMillis() - lastRefreshTime;
         if (lastRefreshTime > 0 && elapsed < REFRESH_COOLDOWN_MS) {
-            logger.debug("BLEND scheduleRefresh skipped ({}ms since last refresh, cooldown={}ms)",
-                    elapsed, REFRESH_COOLDOWN_MS);
+            logger.debug(
+                    "BLEND scheduleRefresh skipped ({}ms since last refresh, cooldown={}ms)",
+                    elapsed,
+                    REFRESH_COOLDOWN_MS);
             return;
         }
 
         ScheduledFuture<?> prev = pendingRefresh;
         if (prev != null) prev.cancel(false);
         logger.debug("BLEND scheduling refresh in 1s (cache size={})", probCache.size());
-        pendingRefresh = refreshScheduler.schedule(() -> {
-            lastRefreshTime = System.currentTimeMillis();
-            try {
-                logger.debug("Refreshing overlay for tile blending ({} cached prob maps)",
-                        probCache.size());
-                refreshCallback.run();
-            } catch (Exception e) {
-                logger.debug("Deferred overlay refresh failed: {}", e.getMessage());
-            }
-        }, 1000, TimeUnit.MILLISECONDS);
+        pendingRefresh = refreshScheduler.schedule(
+                () -> {
+                    lastRefreshTime = System.currentTimeMillis();
+                    try {
+                        logger.debug("Refreshing overlay for tile blending ({} cached prob maps)", probCache.size());
+                        refreshCallback.run();
+                    } catch (Exception e) {
+                        logger.debug("Deferred overlay refresh failed: {}", e.getMessage());
+                    }
+                },
+                1000,
+                TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -379,7 +380,7 @@ public class TileBlendCache {
      * @return self-weight in [0.5, 1.0]
      */
     private float blendWeight(int d, int blendDist) {
-        float t = (d + 0.5f) / blendDist;  // 0 at boundary, 1 at interior
+        float t = (d + 0.5f) / blendDist; // 0 at boundary, 1 at interior
         if (blendMode == InferenceConfig.BlendMode.GAUSSIAN) {
             // Cosine bell: smooth S-curve transition
             return (float) (0.5 * (1.0 + Math.cos(Math.PI * (1.0 - t))));
@@ -405,8 +406,7 @@ public class TileBlendCache {
             }
             if (minGap != Integer.MAX_VALUE) {
                 empiricalStepX = minGap;
-                logger.info("BLEND empirical stepX = {} (from {} positions)",
-                        minGap, seenTileX.size());
+                logger.info("BLEND empirical stepX = {} (from {} positions)", minGap, seenTileX.size());
             }
         }
         if (seenTileY.size() >= 2 && empiricalStepY < 0) {
@@ -421,8 +421,7 @@ public class TileBlendCache {
             }
             if (minGap != Integer.MAX_VALUE) {
                 empiricalStepY = minGap;
-                logger.info("BLEND empirical stepY = {} (from {} positions)",
-                        minGap, seenTileY.size());
+                logger.info("BLEND empirical stepY = {} (from {} positions)", minGap, seenTileY.size());
             }
         }
     }

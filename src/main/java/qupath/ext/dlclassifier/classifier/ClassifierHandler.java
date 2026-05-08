@@ -1,15 +1,14 @@
 package qupath.ext.dlclassifier.classifier;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import javafx.scene.Node;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 /**
  * Core extensibility interface for the DL pixel classifier system.
@@ -173,8 +172,14 @@ public interface ClassifierHandler {
         CONTINUE_TRAINING("Continue training from saved model");
 
         private final String displayName;
-        WeightInitStrategy(String displayName) { this.displayName = displayName; }
-        public String getDisplayName() { return displayName; }
+
+        WeightInitStrategy(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public String getDisplayName() {
+            return displayName;
+        }
     }
 
     /**
@@ -184,9 +189,10 @@ public interface ClassifierHandler {
      * @return supported strategies
      */
     default Set<WeightInitStrategy> getSupportedWeightInitStrategies() {
-        return Set.of(WeightInitStrategy.SCRATCH,
-                      WeightInitStrategy.BACKBONE_PRETRAINED,
-                      WeightInitStrategy.CONTINUE_TRAINING);
+        return Set.of(
+                WeightInitStrategy.SCRATCH,
+                WeightInitStrategy.BACKBONE_PRETRAINED,
+                WeightInitStrategy.CONTINUE_TRAINING);
     }
 
     /**
@@ -219,9 +225,8 @@ public interface ClassifierHandler {
      * @param classNames   the classification class names
      * @return metadata object describing the trained classifier
      */
-    ClassifierMetadata buildMetadata(TrainingConfig config,
-                                     ChannelConfiguration channelConfig,
-                                     List<String> classNames);
+    ClassifierMetadata buildMetadata(
+            TrainingConfig config, ChannelConfiguration channelConfig, List<String> classNames);
 
     /**
      * Interface for classifier-specific training UI components.
@@ -255,7 +260,7 @@ public interface ClassifierHandler {
          *
          * @param params map of parameter names to values
          */
-        default void applyParameters(Map<String, Object> params) { }
+        default void applyParameters(Map<String, Object> params) {}
 
         /**
          * Locks or unlocks architecture controls.
@@ -264,6 +269,6 @@ public interface ClassifierHandler {
          *
          * @param locked true to disable architecture controls, false to re-enable
          */
-        default void setLocked(boolean locked) { }
+        default void setLocked(boolean locked) {}
     }
 }

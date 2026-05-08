@@ -1,11 +1,12 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import javafx.beans.value.ChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
@@ -20,9 +21,6 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
  * Modal dialog for configuring advanced data augmentation strengths and probabilities.
@@ -168,10 +166,18 @@ class AdvancedAugmentationDialog {
     private TitledPane buildSpatialGroup() {
         GridPane grid = newGrid();
         int row = 0;
-        addRow(grid, row++, "Flip probability:", pFlipSpinner,
+        addRow(
+                grid,
+                row++,
+                "Flip probability:",
+                pFlipSpinner,
                 "Probability of horizontal/vertical flip when flip toggles are enabled.\n"
                         + "Applies to both horizontal and vertical flip.");
-        addRow(grid, row++, "Rotation probability:", pRotateSpinner,
+        addRow(
+                grid,
+                row++,
+                "Rotation probability:",
+                pRotateSpinner,
                 "Probability of 90 deg rotation when the rotation toggle is enabled.\n"
                         + "Also controls the probability of small-angle rotation (half this value).");
         return group("Spatial transforms", grid);
@@ -180,19 +186,37 @@ class AdvancedAugmentationDialog {
     private TitledPane buildIntensityGroup() {
         GridPane grid = newGrid();
         int row = 0;
-        addRow(grid, row++, "Brightness limit:", brightnessLimitSpinner,
+        addRow(
+                grid,
+                row++,
+                "Brightness limit:",
+                brightnessLimitSpinner,
                 "Maximum brightness adjustment as a fraction (0.0 - 0.5).\n"
                         + "Applied for both brightfield and fluorescence modes.");
-        addRow(grid, row++, "Contrast limit:", contrastLimitSpinner,
+        addRow(
+                grid,
+                row++,
+                "Contrast limit:",
+                contrastLimitSpinner,
                 "Maximum contrast adjustment as a fraction (0.0 - 0.5).\n"
                         + "Applied for both brightfield and fluorescence modes.");
-        addRow(grid, row++, "Gamma min:", gammaMinSpinner,
-                "Minimum gamma (percent) for brightfield mode only.\n"
-                        + "Values below 100 darken midtones.");
-        addRow(grid, row++, "Gamma max:", gammaMaxSpinner,
-                "Maximum gamma (percent) for brightfield mode only.\n"
-                        + "Values above 100 brighten midtones.");
-        addRow(grid, row++, "Intensity probability:", pColorSpinner,
+        addRow(
+                grid,
+                row++,
+                "Gamma min:",
+                gammaMinSpinner,
+                "Minimum gamma (percent) for brightfield mode only.\n" + "Values below 100 darken midtones.");
+        addRow(
+                grid,
+                row++,
+                "Gamma max:",
+                gammaMaxSpinner,
+                "Maximum gamma (percent) for brightfield mode only.\n" + "Values above 100 brighten midtones.");
+        addRow(
+                grid,
+                row++,
+                "Intensity probability:",
+                pColorSpinner,
                 "Probability that any intensity transform is applied per image.\n"
                         + "Set to 0 to disable, regardless of intensity mode selection.");
         return group("Intensity (color jitter)", grid);
@@ -201,13 +225,24 @@ class AdvancedAugmentationDialog {
     private TitledPane buildElasticGroup() {
         GridPane grid = newGrid();
         int row = 0;
-        addRow(grid, row++, "Alpha (magnitude):", elasticAlphaSpinner,
-                "Elastic deformation magnitude.\n"
-                        + "Higher values produce larger warps; 0 = no deformation.");
-        addRow(grid, row++, "Sigma ratio:", elasticSigmaRatioSpinner,
+        addRow(
+                grid,
+                row++,
+                "Alpha (magnitude):",
+                elasticAlphaSpinner,
+                "Elastic deformation magnitude.\n" + "Higher values produce larger warps; 0 = no deformation.");
+        addRow(
+                grid,
+                row++,
+                "Sigma ratio:",
+                elasticSigmaRatioSpinner,
                 "Smoothness of the deformation field as a fraction of alpha.\n"
                         + "Lower values give sharper, more chaotic warps.");
-        addRow(grid, row++, "Elastic probability:", pElasticSpinner,
+        addRow(
+                grid,
+                row++,
+                "Elastic probability:",
+                pElasticSpinner,
                 "Probability of applying elastic deformation when the elastic toggle is on.\n"
                         + "Grid distortion runs at half this probability.");
         return group("Elastic deformation", grid);
@@ -216,11 +251,23 @@ class AdvancedAugmentationDialog {
     private TitledPane buildNoiseGroup() {
         GridPane grid = newGrid();
         int row = 0;
-        addRow(grid, row++, "Noise std min:", noiseStdMinSpinner,
+        addRow(
+                grid,
+                row++,
+                "Noise std min:",
+                noiseStdMinSpinner,
                 "Minimum Gaussian noise standard deviation as a fraction of image max.");
-        addRow(grid, row++, "Noise std max:", noiseStdMaxSpinner,
+        addRow(
+                grid,
+                row++,
+                "Noise std max:",
+                noiseStdMaxSpinner,
                 "Maximum Gaussian noise standard deviation as a fraction of image max.");
-        addRow(grid, row++, "Noise probability:", pNoiseSpinner,
+        addRow(
+                grid,
+                row++,
+                "Noise probability:",
+                pNoiseSpinner,
                 "Probability of applying Gaussian noise per image. Set to 0 to disable.");
         return group("Gaussian noise", grid);
     }
@@ -334,8 +381,7 @@ class AdvancedAugmentationDialog {
         p.put("p_noise", DLClassifierPreferences.getAugPNoise());
         p.put("noise_std_min", DLClassifierPreferences.getAugNoiseStdMin());
         p.put("noise_std_max", DLClassifierPreferences.getAugNoiseStdMax());
-        p.put("scale_jitter_limit",
-                DLClassifierPreferences.getAugScaleJitterLimit());
+        p.put("scale_jitter_limit", DLClassifierPreferences.getAugScaleJitterLimit());
         return p;
     }
 }

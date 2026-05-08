@@ -3,10 +3,10 @@ package qupath.ext.dlclassifier.model;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.Objects;
 
 /**
@@ -350,8 +350,8 @@ public class ClassifierMetadata {
 
     @Override
     public String toString() {
-        return String.format("ClassifierMetadata{id='%s', name='%s', type=%s, classes=%d}",
-                id, name, modelType, classes.size());
+        return String.format(
+                "ClassifierMetadata{id='%s', name='%s', type=%s, classes=%d}", id, name, modelType, classes.size());
     }
 
     public static Builder builder() {

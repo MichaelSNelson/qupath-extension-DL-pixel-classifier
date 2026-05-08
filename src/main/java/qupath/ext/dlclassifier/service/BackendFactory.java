@@ -42,11 +42,8 @@ public final class BackendFactory {
         if (appose.isAvailable()) {
             return new ApposeClassifierBackend();
         }
-        String error = appose.getInitError() != null
-                ? appose.getInitError()
-                : "Appose environment not initialized";
-        throw new IllegalStateException(
-                "DL classifier backend not available: " + error
+        String error = appose.getInitError() != null ? appose.getInitError() : "Appose environment not initialized";
+        throw new IllegalStateException("DL classifier backend not available: " + error
                 + ". Use Extensions > DL Pixel Classifier > Setup DL Environment to install.");
     }
 }

@@ -1,7 +1,34 @@
 package qupath.ext.dlclassifier.controller;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javafx.application.Platform;
+import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.layout.GridPane;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.BuildInfo;
@@ -12,9 +39,7 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
-
-import java.time.LocalDateTime;
-import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
+import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
@@ -22,49 +47,17 @@ import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
-import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
+import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.utilities.AnnotationExtractor;
 import qupath.fx.dialogs.Dialogs;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.scripting.QP;
-import qupath.lib.images.ImageData;
-import qupath.lib.objects.PathObject;
-import qupath.lib.projects.ProjectImageEntry;
-
-import javafx.geometry.Insets;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.Label;
-import javafx.scene.control.Spinner;
-import javafx.scene.control.SpinnerValueFactory;
-import javafx.scene.control.TextField;
-import javafx.scene.layout.GridPane;
-
 import qupath.lib.common.ColorTools;
-
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
-import java.nio.channels.OverlappingFileLockException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.images.ImageData;
+import qupath.lib.projects.ProjectImageEntry;
+import qupath.lib.scripting.QP;
 
 /**
  * Workflow for training a new deep learning pixel classifier.
@@ -94,8 +87,8 @@ public class TrainingWorkflow {
      * Uses OS-level {@link FileLock} so the lock is automatically released if
      * the process crashes.
      */
-    private static final Path TRAINING_LOCK_PATH = Path.of(
-            System.getProperty("java.io.tmpdir"), "dl-classifier-training.lock");
+    private static final Path TRAINING_LOCK_PATH =
+            Path.of(System.getProperty("java.io.tmpdir"), "dl-classifier-training.lock");
 
     private static RandomAccessFile lockRaf;
     private static FileChannel lockChannel;
@@ -161,12 +154,19 @@ public class TrainingWorkflow {
         closeLockResources();
         try {
             Files.deleteIfExists(TRAINING_LOCK_PATH);
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 
     private static void closeLockResources() {
-        try { if (lockChannel != null) lockChannel.close(); } catch (IOException ignored) {}
-        try { if (lockRaf != null) lockRaf.close(); } catch (IOException ignored) {}
+        try {
+            if (lockChannel != null) lockChannel.close();
+        } catch (IOException ignored) {
+        }
+        try {
+            if (lockRaf != null) lockRaf.close();
+        } catch (IOException ignored) {
+        }
         lockChannel = null;
         lockRaf = null;
     }
@@ -177,10 +177,11 @@ public class TrainingWorkflow {
      */
     static void writeActiveMarker(Path tempDir) {
         try {
-            Files.writeString(tempDir.resolve(ACTIVE_MARKER),
+            Files.writeString(
+                    tempDir.resolve(ACTIVE_MARKER),
                     "Training in progress - do not delete\n"
-                    + "PID: " + ProcessHandle.current().pid() + "\n"
-                    + "Started: " + java.time.Instant.now() + "\n");
+                            + "PID: " + ProcessHandle.current().pid() + "\n"
+                            + "Started: " + java.time.Instant.now() + "\n");
         } catch (IOException e) {
             logger.debug("Could not write active marker in {}", tempDir, e);
         }
@@ -225,16 +226,31 @@ public class TrainingWorkflow {
             String message,
             String focusClassName,
             double focusClassIoU,
-            boolean focusClassTargetMet
-    ) {
+            boolean focusClassTargetMet) {
         /** Compact constructor without focus class info. */
-        public TrainingResult(String classifierId, String classifierName,
-                              double finalLoss, double finalAccuracy,
-                              int bestEpoch, double bestMeanIoU,
-                              int epochsCompleted, boolean success, String message) {
-            this(classifierId, classifierName, finalLoss, finalAccuracy,
-                    bestEpoch, bestMeanIoU, epochsCompleted, success, message,
-                    null, 0.0, true);
+        public TrainingResult(
+                String classifierId,
+                String classifierName,
+                double finalLoss,
+                double finalAccuracy,
+                int bestEpoch,
+                double bestMeanIoU,
+                int epochsCompleted,
+                boolean success,
+                String message) {
+            this(
+                    classifierId,
+                    classifierName,
+                    finalLoss,
+                    finalAccuracy,
+                    bestEpoch,
+                    bestMeanIoU,
+                    epochsCompleted,
+                    success,
+                    message,
+                    null,
+                    0.0,
+                    true);
         }
     }
 
@@ -349,9 +365,13 @@ public class TrainingWorkflow {
         private final List<String> classes;
         private final ImageData<BufferedImage> imageData;
 
-        private TrainingRunner(String name, String description,
-                               TrainingConfig config, ChannelConfiguration channels,
-                               List<String> classes, ImageData<BufferedImage> imageData) {
+        private TrainingRunner(
+                String name,
+                String description,
+                TrainingConfig config,
+                ChannelConfiguration channels,
+                List<String> classes,
+                ImageData<BufferedImage> imageData) {
             this.name = name;
             this.description = description;
             this.config = config;
@@ -372,15 +392,13 @@ public class TrainingWorkflow {
             }
             if (imgData == null) {
                 logger.warn("No image data available for training");
-                return new TrainingResult(null, name, 0.0, 0.0, 0, 0.0, 0, false,
-                        "No image data available");
+                return new TrainingResult(null, name, 0.0, 0.0, 0, 0.0, 0, false, "No image data available");
             }
 
-            ClassifierHandler handler = ClassifierRegistry.getHandler(config.getModelType())
-                    .orElse(ClassifierRegistry.getDefaultHandler());
+            ClassifierHandler handler =
+                    ClassifierRegistry.getHandler(config.getModelType()).orElse(ClassifierRegistry.getDefaultHandler());
 
-            return trainCore(name, description, handler, config, channels, classes,
-                    imgData, null, null);
+            return trainCore(name, description, handler, config, channels, classes, imgData, null, null);
         }
     }
 
@@ -397,42 +415,46 @@ public class TrainingWorkflow {
 
         // Quick prerequisite: project must be open (instant check on FX thread)
         if (qupath.getProject() == null) {
-            showError("No Project",
-                    "A QuPath project must be open to train a classifier.\n\n" +
-                    "Classifiers are saved within the project, and training data\n" +
-                    "is exported from project images.\n\n" +
-                    "Please create or open a project first.");
+            showError(
+                    "No Project",
+                    "A QuPath project must be open to train a classifier.\n\n"
+                            + "Classifiers are saved within the project, and training data\n"
+                            + "is exported from project images.\n\n"
+                            + "Please create or open a project first.");
             return;
         }
 
         // Backend health check may block while Appose initializes.
         // Run it on a background thread with a status notification.
-        Dialogs.showInfoNotification("DL Pixel Classifier",
-                "Connecting to classification backend...");
+        Dialogs.showInfoNotification("DL Pixel Classifier", "Connecting to classification backend...");
 
         CompletableFuture.supplyAsync(() -> DLClassifierChecks.checkServerHealth())
-                .thenAcceptAsync(healthy -> {
-                    if (healthy) {
-                        showTrainingDialog();
-                    } else {
-                        String versionWarning = ApposeClassifierBackend.getVersionWarning();
-                        if (versionWarning != null && !versionWarning.isEmpty()) {
-                            showError("Python Environment Update Required",
-                                    "The Python environment is out of date and must be rebuilt.\n\n" +
-                                    "Go to Extensions > DL Pixel Classifier > Rebuild Python Environment\n" +
-                                    "to update. Training is disabled until the environment matches\n" +
-                                    "the installed extension version.");
-                        } else {
-                            showError("Server Unavailable",
-                                    "Cannot connect to classification backend.\n\n" +
-                                    "If this is the first launch, the Python environment\n" +
-                                    "may still be downloading (~2-4 GB). Check the QuPath\n" +
-                                    "log for progress and try again in a few minutes.\n\n" +
-                                    "Alternatively, start the Python server manually and\n" +
-                                    "disable 'Use Appose' in Edit > Preferences.");
-                        }
-                    }
-                }, Platform::runLater);
+                .thenAcceptAsync(
+                        healthy -> {
+                            if (healthy) {
+                                showTrainingDialog();
+                            } else {
+                                String versionWarning = ApposeClassifierBackend.getVersionWarning();
+                                if (versionWarning != null && !versionWarning.isEmpty()) {
+                                    showError(
+                                            "Python Environment Update Required",
+                                            "The Python environment is out of date and must be rebuilt.\n\n"
+                                                    + "Go to Extensions > DL Pixel Classifier > Rebuild Python Environment\n"
+                                                    + "to update. Training is disabled until the environment matches\n"
+                                                    + "the installed extension version.");
+                                } else {
+                                    showError(
+                                            "Server Unavailable",
+                                            "Cannot connect to classification backend.\n\n"
+                                                    + "If this is the first launch, the Python environment\n"
+                                                    + "may still be downloading (~2-4 GB). Check the QuPath\n"
+                                                    + "log for progress and try again in a few minutes.\n\n"
+                                                    + "Alternatively, start the Python server manually and\n"
+                                                    + "disable 'Use Appose' in Edit > Preferences.");
+                                }
+                            }
+                        },
+                        Platform::runLater);
     }
 
     /**
@@ -445,38 +467,36 @@ public class TrainingWorkflow {
             return true;
         }
 
-        javafx.scene.control.CheckBox neverAgain = new javafx.scene.control.CheckBox(
-                "Don't show this message again");
+        javafx.scene.control.CheckBox neverAgain = new javafx.scene.control.CheckBox("Don't show this message again");
 
-        javafx.scene.control.Label message = new javafx.scene.control.Label(
-                "Deep learning pixel classifiers are powerful but significantly slower "
-                + "than QuPath's built-in pixel classifiers and most other segmentation "
-                + "methods. They require training on annotated examples before they can "
-                + "be used.\n\n"
-                + "Performance considerations:\n"
-                + "  - A modern NVIDIA GPU with CUDA support is strongly recommended.\n"
-                + "    Without GPU acceleration, training can be extremely slow.\n"
-                + "  - Fast storage (SSD/NVMe) and a modern CPU also help, but training\n"
-                + "    will always take time -- minutes to hours depending on dataset size.\n\n"
-                + "Tips for creating training annotations efficiently:\n"
-                + "  - Use QuPath's built-in Pixel Classifier to generate initial annotations,\n"
-                + "    then correct mistakes manually.\n"
-                + "  - Use the Segment Anything Model (SAM) extension for targeted regions,\n"
-                + "    then refine the results.\n"
-                + "  - Editing existing annotations is much faster than drawing from scratch.\n"
-                + "  - High-quality annotations give high-quality results, and more is better.\n"
-                + "    Beware of getting sloppy at the end of a long annotation session --\n"
-                + "    consistency in labeling is important.");
+        javafx.scene.control.Label message =
+                new javafx.scene.control.Label("Deep learning pixel classifiers are powerful but significantly slower "
+                        + "than QuPath's built-in pixel classifiers and most other segmentation "
+                        + "methods. They require training on annotated examples before they can "
+                        + "be used.\n\n"
+                        + "Performance considerations:\n"
+                        + "  - A modern NVIDIA GPU with CUDA support is strongly recommended.\n"
+                        + "    Without GPU acceleration, training can be extremely slow.\n"
+                        + "  - Fast storage (SSD/NVMe) and a modern CPU also help, but training\n"
+                        + "    will always take time -- minutes to hours depending on dataset size.\n\n"
+                        + "Tips for creating training annotations efficiently:\n"
+                        + "  - Use QuPath's built-in Pixel Classifier to generate initial annotations,\n"
+                        + "    then correct mistakes manually.\n"
+                        + "  - Use the Segment Anything Model (SAM) extension for targeted regions,\n"
+                        + "    then refine the results.\n"
+                        + "  - Editing existing annotations is much faster than drawing from scratch.\n"
+                        + "  - High-quality annotations give high-quality results, and more is better.\n"
+                        + "    Beware of getting sloppy at the end of a long annotation session --\n"
+                        + "    consistency in labeling is important.");
         message.setWrapText(true);
         message.setMaxWidth(520);
 
-        javafx.scene.control.Hyperlink tipsLink = new javafx.scene.control.Hyperlink(
-                "Tips & Tricks Guide");
+        javafx.scene.control.Hyperlink tipsLink = new javafx.scene.control.Hyperlink("Tips & Tricks Guide");
         tipsLink.setOnAction(ev -> {
             try {
-                java.awt.Desktop.getDesktop().browse(java.net.URI.create(
-                        "https://github.com/uw-loci/qupath-extension-dl-pixel-classifier"
-                        + "/blob/main/docs/TIPS_AND_TRICKS.md"));
+                java.awt.Desktop.getDesktop()
+                        .browse(java.net.URI.create("https://github.com/uw-loci/qupath-extension-dl-pixel-classifier"
+                                + "/blob/main/docs/TIPS_AND_TRICKS.md"));
             } catch (Exception ex) {
                 logger.debug("Could not open Tips & Tricks URL: {}", ex.getMessage());
             }
@@ -489,8 +509,9 @@ public class TrainingWorkflow {
         dialog.setTitle("Getting Started with DL Pixel Classification");
         dialog.setHeaderText("Before you begin");
         dialog.getDialogPane().setContent(content);
-        dialog.getDialogPane().getButtonTypes().addAll(
-                javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
+        dialog.getDialogPane()
+                .getButtonTypes()
+                .addAll(javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
         dialog.getDialogPane().setPrefWidth(560);
 
         var result = dialog.showAndWait();
@@ -518,7 +539,7 @@ public class TrainingWorkflow {
 
                         // Get the classifier handler
                         ClassifierHandler handler = ClassifierRegistry.getHandler(
-                                result.trainingConfig().getModelType())
+                                        result.trainingConfig().getModelType())
                                 .orElse(ClassifierRegistry.getDefaultHandler());
 
                         // Start training with progress monitor
@@ -533,8 +554,7 @@ public class TrainingWorkflow {
                                 result.classColors(),
                                 result.handlerParameters(),
                                 result.trainOnlyImages(),
-                                result.valOnlyImages()
-                        );
+                                result.valOnlyImages());
                     }
                 })
                 .exceptionally(ex -> {
@@ -564,17 +584,18 @@ public class TrainingWorkflow {
      * @param trainOnlyImages image names assigned exclusively to training (may be null/empty)
      * @param valOnlyImages   image names assigned exclusively to validation (may be null/empty)
      */
-    public void trainClassifierWithProgress(String classifierName,
-                                            String description,
-                                            ClassifierHandler handler,
-                                            TrainingConfig trainingConfig,
-                                            ChannelConfiguration channelConfig,
-                                            List<String> classNames,
-                                            List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                            Map<String, Integer> classColors,
-                                            Map<String, Object> handlerParameters,
-                                            Set<String> trainOnlyImages,
-                                            Set<String> valOnlyImages) {
+    public void trainClassifierWithProgress(
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            Map<String, Integer> classColors,
+            Map<String, Object> handlerParameters,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages) {
         // Check for unsaved changes before training
         if (!checkUnsavedChanges(selectedImages)) {
             return;
@@ -585,11 +606,12 @@ public class TrainingWorkflow {
 
         // Prevent concurrent training across QuPath instances
         if (!acquireTrainingLock()) {
-            Dialogs.showErrorMessage("Training In Progress",
+            Dialogs.showErrorMessage(
+                    "Training In Progress",
                     "Another QuPath instance is already training a DL classifier.\n\n"
-                    + "Only one training session can run at a time.\n"
-                    + "Wait for the other training to finish, or close the other "
-                    + "QuPath instance before starting a new training run.");
+                            + "Only one training session can run at a time.\n"
+                            + "Wait for the other training to finish, or close the other "
+                            + "QuPath instance before starting a new training run.");
             return;
         }
 
@@ -629,17 +651,16 @@ public class TrainingWorkflow {
 
         // Generate classifierId early so model files can be saved directly
         // to the project directory during training (not just at the end).
-        String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                + "_" + System.currentTimeMillis();
+        String classifierId =
+                classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_" + System.currentTimeMillis();
 
         // Create project-local model output directory
         Path modelOutputDir = null;
         try {
             var project = qupath.getProject();
             if (project != null) {
-                modelOutputDir = project.getPath().getParent()
-                        .resolve("classifiers/dl")
-                        .resolve(classifierId);
+                modelOutputDir =
+                        project.getPath().getParent().resolve("classifiers/dl").resolve(classifierId);
                 Files.createDirectories(modelOutputDir);
                 trainingConfig.setModelOutputDir(modelOutputDir.toString());
                 logger.info("Model output directory: {}", modelOutputDir);
@@ -695,8 +716,7 @@ public class TrainingWorkflow {
                                         : -1;
                                 progress.setOverallProgress(pct);
                             },
-                            () -> false
-                    );
+                            () -> false);
 
                     progress.setStatus("Complete");
                     progress.setOverallProgress(1.0);
@@ -710,19 +730,19 @@ public class TrainingWorkflow {
                     // model.pt, metadata.json, disagreement/). If the path points
                     // to a file (legacy/fallback), fall back to its parent.
                     Path modelPathCandidate = Path.of(modelPath);
-                    Path modelDir = Files.isDirectory(modelPathCandidate)
-                            ? modelPathCandidate
-                            : modelPathCandidate.getParent();
+                    Path modelDir =
+                            Files.isDirectory(modelPathCandidate) ? modelPathCandidate : modelPathCandidate.getParent();
                     qupath.ext.dlclassifier.model.ClassifierMetadata metadata = null;
                     try {
                         metadata = new ModelManager().loadMetadata(modelDir);
                     } catch (Exception metaErr) {
-                        logger.debug("Could not load classifier metadata for session support: {}",
-                                metaErr.getMessage());
+                        logger.debug(
+                                "Could not load classifier metadata for session support: {}", metaErr.getMessage());
                     }
                     if (metadata == null) {
-                        logger.warn("No classifier metadata found at {} -- "
-                                + "Save/Load Session will be disabled", modelDir);
+                        logger.warn(
+                                "No classifier metadata found at {} -- " + "Save/Load Session will be disabled",
+                                modelDir);
                     }
                     final qupath.ext.dlclassifier.model.ClassifierMetadata finalMetadata = metadata;
                     final Path finalModelDir = modelDir;
@@ -760,8 +780,7 @@ public class TrainingWorkflow {
                 // fires (ProgressMonitorController.onTrainingJobStarted), so
                 // this branch should be unreachable. If it fires, a new
                 // regression has reintroduced the race.
-                logger.warn("Pause clicked but currentJobId is null -- "
-                        + "button-disable fix regressed?");
+                logger.warn("Pause clicked but currentJobId is null -- " + "button-disable fix regressed?");
                 progress.log("ERROR: Pause clicked before training job id was assigned. "
                         + "Nothing will happen -- please report this.");
             }
@@ -770,30 +789,57 @@ public class TrainingWorkflow {
         // Wire resume callback -- uses the SAME classifierId/modelOutputDir
         progress.setOnResume(v -> {
             CompletableFuture.runAsync(() -> handleResume(
-                    currentJobId[0], classifierName, description, handler,
-                    trainingConfig, channelConfig, classNames,
-                    selectedImages, progress, currentJobId,
-                    finalClassifierId, finalModelOutputDir,
-                    trainingDataPathHolder, modelPathHolder));
+                    currentJobId[0],
+                    classifierName,
+                    description,
+                    handler,
+                    trainingConfig,
+                    channelConfig,
+                    classNames,
+                    selectedImages,
+                    progress,
+                    currentJobId,
+                    finalClassifierId,
+                    finalModelOutputDir,
+                    trainingDataPathHolder,
+                    modelPathHolder));
         });
 
         // Wire complete-early callback -- uses the SAME classifierId/modelOutputDir
         progress.setOnCompleteEarly(v -> {
             CompletableFuture.runAsync(() -> handleCompleteEarly(
-                    currentJobId[0], classifierName, description, handler,
-                    trainingConfig, channelConfig, classNames,
-                    selectedImages, progress, classColors,
-                    finalClassifierId, finalModelOutputDir, modelPathHolder));
+                    currentJobId[0],
+                    classifierName,
+                    description,
+                    handler,
+                    trainingConfig,
+                    channelConfig,
+                    classNames,
+                    selectedImages,
+                    progress,
+                    classColors,
+                    finalClassifierId,
+                    finalModelOutputDir,
+                    modelPathHolder));
         });
 
         // Wire continue-training callback -- resumes from completion checkpoint
         progress.setOnContinueTraining(v -> {
             CompletableFuture.runAsync(() -> handleResume(
-                    currentJobId[0], classifierName, description, handler,
-                    trainingConfig, channelConfig, classNames,
-                    selectedImages, progress, currentJobId,
-                    finalClassifierId, finalModelOutputDir,
-                    trainingDataPathHolder, modelPathHolder));
+                    currentJobId[0],
+                    classifierName,
+                    description,
+                    handler,
+                    trainingConfig,
+                    channelConfig,
+                    classNames,
+                    selectedImages,
+                    progress,
+                    currentJobId,
+                    finalClassifierId,
+                    finalModelOutputDir,
+                    trainingDataPathHolder,
+                    modelPathHolder));
         });
 
         // Suspend overlay during training to prevent Appose "thread death" races
@@ -803,11 +849,23 @@ public class TrainingWorkflow {
 
         CompletableFuture.runAsync(() -> {
             try {
-                TrainingResult result = trainCore(classifierName, description, handler,
-                        trainingConfig, channelConfig, classNames,
-                        null, selectedImages, progress, currentJobId,
-                        classColors, finalClassifierId, finalModelOutputDir,
-                        trainingDataPathHolder, modelPathHolder, handlerParameters,
+                TrainingResult result = trainCore(
+                        classifierName,
+                        description,
+                        handler,
+                        trainingConfig,
+                        channelConfig,
+                        classNames,
+                        null,
+                        selectedImages,
+                        progress,
+                        currentJobId,
+                        classColors,
+                        finalClassifierId,
+                        finalModelOutputDir,
+                        trainingDataPathHolder,
+                        modelPathHolder,
+                        handlerParameters,
                         trainOnlyImages != null ? trainOnlyImages : Collections.emptySet(),
                         valOnlyImages != null ? valOnlyImages : Collections.emptySet());
 
@@ -819,12 +877,14 @@ public class TrainingWorkflow {
                         StringBuilder sb = new StringBuilder();
                         sb.append(String.format(
                                 "Classifier trained successfully!\nBest model: epoch %d\n"
-                                + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
-                                result.bestEpoch(), result.finalLoss(),
-                                result.finalAccuracy() * 100, result.bestMeanIoU()));
+                                        + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                                result.bestEpoch(),
+                                result.finalLoss(),
+                                result.finalAccuracy() * 100,
+                                result.bestMeanIoU()));
                         if (result.focusClassName() != null) {
-                            sb.append(String.format("\nFocus class '%s' IoU: %.4f",
-                                    result.focusClassName(), result.focusClassIoU()));
+                            sb.append(String.format(
+                                    "\nFocus class '%s' IoU: %.4f", result.focusClassName(), result.focusClassIoU()));
                             if (!result.focusClassTargetMet()) {
                                 sb.append(" [TARGET NOT MET]");
                             }
@@ -843,19 +903,17 @@ public class TrainingWorkflow {
                         String warningMsg = completionMsg;
                         progress.complete(true, completionMsg);
                         Platform.runLater(() -> {
-                            var alert = new javafx.scene.control.Alert(
-                                    javafx.scene.control.Alert.AlertType.WARNING);
+                            var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING);
                             alert.setTitle("Focus Class Target Not Met");
                             alert.setHeaderText(String.format(
-                                    "Focus class '%s' did not reach the target IoU",
-                                    result.focusClassName()));
+                                    "Focus class '%s' did not reach the target IoU", result.focusClassName()));
                             alert.setContentText(String.format(
                                     "Best IoU: %.4f\n\n"
-                                    + "The model was saved but may not perform well "
-                                    + "for class '%s'. Consider:\n"
-                                    + "- Adding more training annotations for this class\n"
-                                    + "- Training for more epochs\n"
-                                    + "- Checking that the class appears in the validation split",
+                                            + "The model was saved but may not perform well "
+                                            + "for class '%s'. Consider:\n"
+                                            + "- Adding more training annotations for this class\n"
+                                            + "- Training for more epochs\n"
+                                            + "- Checking that the class appears in the validation split",
                                     result.focusClassIoU(), result.focusClassName()));
                             alert.show();
                         });
@@ -907,17 +965,28 @@ public class TrainingWorkflow {
      * @param progress       progress monitor (nullable for headless execution)
      * @return the training result
      */
-    static TrainingResult trainCore(String classifierName,
-                                    String description,
-                                    ClassifierHandler handler,
-                                    TrainingConfig trainingConfig,
-                                    ChannelConfiguration channelConfig,
-                                    List<String> classNames,
-                                    ImageData<BufferedImage> imageData,
-                                    List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                    ProgressMonitorController progress) {
-        return trainCore(classifierName, description, handler, trainingConfig,
-                channelConfig, classNames, imageData, selectedImages, progress, null, null);
+    static TrainingResult trainCore(
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            ImageData<BufferedImage> imageData,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            ProgressMonitorController progress) {
+        return trainCore(
+                classifierName,
+                description,
+                handler,
+                trainingConfig,
+                channelConfig,
+                classNames,
+                imageData,
+                selectedImages,
+                progress,
+                null,
+                null);
     }
 
     /**
@@ -936,20 +1005,32 @@ public class TrainingWorkflow {
      * @param classColors    map of class name to packed RGB color, or null
      * @return the training result
      */
-    static TrainingResult trainCore(String classifierName,
-                                    String description,
-                                    ClassifierHandler handler,
-                                    TrainingConfig trainingConfig,
-                                    ChannelConfiguration channelConfig,
-                                    List<String> classNames,
-                                    ImageData<BufferedImage> imageData,
-                                    List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                    ProgressMonitorController progress,
-                                    String[] jobIdHolder,
-                                    Map<String, Integer> classColors) {
-        return trainCore(classifierName, description, handler, trainingConfig,
-                channelConfig, classNames, imageData, selectedImages, progress,
-                jobIdHolder, classColors, null, null);
+    static TrainingResult trainCore(
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            ImageData<BufferedImage> imageData,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            ProgressMonitorController progress,
+            String[] jobIdHolder,
+            Map<String, Integer> classColors) {
+        return trainCore(
+                classifierName,
+                description,
+                handler,
+                trainingConfig,
+                channelConfig,
+                classNames,
+                imageData,
+                selectedImages,
+                progress,
+                jobIdHolder,
+                classColors,
+                null,
+                null);
     }
 
     /**
@@ -970,23 +1051,39 @@ public class TrainingWorkflow {
      * @param modelOutputDir  project-local model output directory, or null for default
      * @return the training result
      */
-    static TrainingResult trainCore(String classifierName,
-                                    String description,
-                                    ClassifierHandler handler,
-                                    TrainingConfig trainingConfig,
-                                    ChannelConfiguration channelConfig,
-                                    List<String> classNames,
-                                    ImageData<BufferedImage> imageData,
-                                    List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                    ProgressMonitorController progress,
-                                    String[] jobIdHolder,
-                                    Map<String, Integer> classColors,
-                                    String classifierId,
-                                    Path modelOutputDir) {
-        return trainCore(classifierName, description, handler, trainingConfig,
-                channelConfig, classNames, imageData, selectedImages, progress,
-                jobIdHolder, classColors, classifierId, modelOutputDir, null, null, null,
-                Collections.emptySet(), Collections.emptySet());
+    static TrainingResult trainCore(
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            ImageData<BufferedImage> imageData,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            ProgressMonitorController progress,
+            String[] jobIdHolder,
+            Map<String, Integer> classColors,
+            String classifierId,
+            Path modelOutputDir) {
+        return trainCore(
+                classifierName,
+                description,
+                handler,
+                trainingConfig,
+                channelConfig,
+                classNames,
+                imageData,
+                selectedImages,
+                progress,
+                jobIdHolder,
+                classColors,
+                classifierId,
+                modelOutputDir,
+                null,
+                null,
+                null,
+                Collections.emptySet(),
+                Collections.emptySet());
     }
 
     /**
@@ -1013,24 +1110,25 @@ public class TrainingWorkflow {
      * @param valOnlyImages         image names assigned exclusively to validation (may be null/empty)
      * @return the training result
      */
-    static TrainingResult trainCore(String classifierName,
-                                    String description,
-                                    ClassifierHandler handler,
-                                    TrainingConfig trainingConfig,
-                                    ChannelConfiguration channelConfig,
-                                    List<String> classNames,
-                                    ImageData<BufferedImage> imageData,
-                                    List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                    ProgressMonitorController progress,
-                                    String[] jobIdHolder,
-                                    Map<String, Integer> classColors,
-                                    String classifierId,
-                                    Path modelOutputDir,
-                                    Path[] trainingDataPathHolder,
-                                    String[] modelPathHolder,
-                                    Map<String, Object> handlerParameters,
-                                    Set<String> trainOnlyImages,
-                                    Set<String> valOnlyImages) {
+    static TrainingResult trainCore(
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            ImageData<BufferedImage> imageData,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            ProgressMonitorController progress,
+            String[] jobIdHolder,
+            Map<String, Integer> classColors,
+            String classifierId,
+            Path modelOutputDir,
+            Path[] trainingDataPathHolder,
+            String[] modelPathHolder,
+            Map<String, Object> handlerParameters,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages) {
         Path tempDir = null;
         try {
             if (progress != null) {
@@ -1081,8 +1179,7 @@ public class TrainingWorkflow {
                             maxH = Math.max(maxH, entryData.getServer().getHeight());
                             entryData.getServer().close();
                         } catch (Exception e) {
-                            logger.warn("Could not read dimensions for {}: {}",
-                                    entry.getImageName(), e.getMessage());
+                            logger.warn("Could not read dimensions for {}: {}", entry.getImageName(), e.getMessage());
                         }
                     }
                 } else if (imageData != null) {
@@ -1091,28 +1188,32 @@ public class TrainingWorkflow {
                 }
 
                 int uncappedSize = trainingConfig.computeEffectiveTileSize(maxW, maxH);
-                effectiveTileSize = trainingConfig.computeEffectiveTileSize(
-                        maxW, maxH, maxHandlerTileSize);
+                effectiveTileSize = trainingConfig.computeEffectiveTileSize(maxW, maxH, maxHandlerTileSize);
 
                 if (effectiveTileSize < uncappedSize) {
-                    logger.warn("Whole-image tile size capped from {}px to {}px "
-                            + "(max for {} architecture). The image will be tiled "
-                            + "instead of processed whole.",
-                            uncappedSize, effectiveTileSize, handler.getType());
+                    logger.warn(
+                            "Whole-image tile size capped from {}px to {}px "
+                                    + "(max for {} architecture). The image will be tiled "
+                                    + "instead of processed whole.",
+                            uncappedSize,
+                            effectiveTileSize,
+                            handler.getType());
                     if (progress != null) {
                         progress.log(String.format(
                                 "Whole-image mode: tile size capped at %dpx (max for %s). "
-                                + "Image (%dx%d) will be tiled -- ViT self-attention is O(n^2) "
-                                + "and %dpx would create too many patches to learn from.",
-                                effectiveTileSize, handler.getDisplayName(),
-                                maxW, maxH, uncappedSize));
+                                        + "Image (%dx%d) will be tiled -- ViT self-attention is O(n^2) "
+                                        + "and %dpx would create too many patches to learn from.",
+                                effectiveTileSize, handler.getDisplayName(), maxW, maxH, uncappedSize));
                     }
                 } else {
-                    logger.info("Whole-image mode: max dimensions {}x{}, effective tile size {}",
-                            maxW, maxH, effectiveTileSize);
+                    logger.info(
+                            "Whole-image mode: max dimensions {}x{}, effective tile size {}",
+                            maxW,
+                            maxH,
+                            effectiveTileSize);
                     if (progress != null) {
-                        progress.log("Whole-image mode: effective tile size " + effectiveTileSize
-                                + "px (from " + maxW + "x" + maxH + " image)");
+                        progress.log("Whole-image mode: effective tile size " + effectiveTileSize + "px (from " + maxW
+                                + "x" + maxH + " image)");
                     }
                 }
             } else {
@@ -1124,26 +1225,29 @@ public class TrainingWorkflow {
 
             // Auto-reduce batch size for large tiles to prevent GPU OOM
             trainingConfig.adjustBatchForTileSize(effectiveTileSize);
-            if (trainingConfig.getBatchSize() == 1 && progress != null
+            if (trainingConfig.getBatchSize() == 1
+                    && progress != null
                     && trainingConfig.getGradientAccumulationSteps() > 1) {
                 progress.log(String.format(
                         "Large tile size (%dpx): batch reduced to 1, gradient accumulation %d "
-                        + "(effective batch %d)",
-                        effectiveTileSize, trainingConfig.getGradientAccumulationSteps(),
+                                + "(effective batch %d)",
+                        effectiveTileSize,
+                        trainingConfig.getGradientAccumulationSteps(),
                         trainingConfig.getGradientAccumulationSteps()));
             }
 
             // Compute context padding: real image data around each tile to match inference geometry.
             // Disabled for whole-image mode (no surrounding data available).
-            int contextPadding = trainingConfig.isWholeImage() ? 0
+            int contextPadding = trainingConfig.isWholeImage()
+                    ? 0
                     : computeTrainingContextPadding(effectiveTileSize, trainingConfig);
             if (contextPadding > 0) {
                 int paddedSize = effectiveTileSize + 2 * contextPadding;
-                logger.info("Context padding: {}px per side (tiles will be {}x{})",
-                        contextPadding, paddedSize, paddedSize);
+                logger.info(
+                        "Context padding: {}px per side (tiles will be {}x{})", contextPadding, paddedSize, paddedSize);
                 if (progress != null) {
-                    progress.log("Context padding: " + contextPadding + "px per side (tiles will be "
-                            + paddedSize + "x" + paddedSize + ")");
+                    progress.log("Context padding: " + contextPadding + "px per side (tiles will be " + paddedSize + "x"
+                            + paddedSize + ")");
                 }
             }
 
@@ -1167,8 +1271,7 @@ public class TrainingWorkflow {
                         trainingConfig.getContextScale(),
                         contextPadding,
                         trainOnlyImages,
-                        valOnlyImages
-                );
+                        valOnlyImages);
                 patchCount = exportResult.totalPatches();
             } else {
                 // Single-image export
@@ -1179,8 +1282,7 @@ public class TrainingWorkflow {
                         trainingConfig.getLineStrokeWidth(),
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
-                        contextPadding
-                );
+                        contextPadding);
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -1192,8 +1294,7 @@ public class TrainingWorkflow {
             }
 
             if (progress != null && progress.isCancelled()) {
-                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
-                        "Training cancelled by user");
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false, "Training cancelled by user");
             }
 
             // Get appropriate backend (Appose or HTTP) and start training
@@ -1238,8 +1339,8 @@ public class TrainingWorkflow {
                                     String deviceMsg = formatDeviceMessage(
                                             trainingProgress.device(), trainingProgress.deviceInfo());
                                     progress.log(deviceMsg);
-                                    progress.setStatus("Initializing model for "
-                                            + trainingProgress.totalEpochs() + " epoch run...");
+                                    progress.setStatus("Initializing model for " + trainingProgress.totalEpochs()
+                                            + " epoch run...");
                                 } else if ("training_config".equals(trainingProgress.setupPhase())) {
                                     // Training configuration summary
                                     progress.log("--- Training Configuration ---");
@@ -1264,19 +1365,17 @@ public class TrainingWorkflow {
                                         String summary = String.format(
                                                 "Bounded subset: %s / %s patches (%s%% coverage)",
                                                 subsetSize, fullSize, coverage);
-                                        Dialogs.showInfoNotification(
-                                                "Bounded cache active", summary);
+                                        Dialogs.showInfoNotification("Bounded cache active", summary);
                                         progress.log("");
                                         progress.log("=== BOUNDED CACHE ACTIVE ===");
                                         progress.log("  " + summary);
-                                        progress.log("  RAM: " + subsetGb + " GB cached / "
-                                                + availGb + " GB available");
-                                        progress.log("  The model will train ONLY on this "
-                                                + "subset for the entire run.");
+                                        progress.log(
+                                                "  RAM: " + subsetGb + " GB cached / " + availGb + " GB available");
+                                        progress.log(
+                                                "  The model will train ONLY on this " + "subset for the entire run.");
                                         progress.log("  Patches outside the subset are NOT seen.");
                                         progress.log("============================");
-                                        progress.setDetail(summary
-                                                + "  -  full dataset NOT in this run");
+                                        progress.setDetail(summary + "  -  full dataset NOT in this run");
                                     }
                                 } else if ("training_batch".equals(trainingProgress.setupPhase())) {
                                     // Batch-level progress within an epoch (for long epochs on slow devices)
@@ -1285,12 +1384,15 @@ public class TrainingWorkflow {
                                         String batch = cfg.getOrDefault("batch", "?");
                                         String totalBatches = cfg.getOrDefault("total_batches", "?");
                                         String batchEpoch = cfg.getOrDefault("epoch", "?");
-                                        String totalEp = cfg.getOrDefault("total_epochs", String.valueOf(trainingProgress.totalEpochs()));
+                                        String totalEp = cfg.getOrDefault(
+                                                "total_epochs", String.valueOf(trainingProgress.totalEpochs()));
                                         String elapsed = cfg.getOrDefault("elapsed_seconds", "");
                                         String elapsedStr = elapsed.isEmpty() ? "" : " (" + elapsed + "s)";
-                                        progress.setStatus(String.format("Epoch %s/%s - batch %s/%s%s",
+                                        progress.setStatus(String.format(
+                                                "Epoch %s/%s - batch %s/%s%s",
                                                 batchEpoch, totalEp, batch, totalBatches, elapsedStr));
-                                        progress.setDetail(String.format("Batch %s/%s - loss: %s",
+                                        progress.setDetail(String.format(
+                                                "Batch %s/%s - loss: %s",
                                                 batch, totalBatches, cfg.getOrDefault("batch_loss", "?")));
                                     }
                                 } else {
@@ -1303,17 +1405,21 @@ public class TrainingWorkflow {
                             // Update status on first real epoch
                             if (lastLoggedEpoch.get() < 0) {
                                 String runLabel = (classifierName != null && !classifierName.isEmpty())
-                                        ? " " + classifierName : "";
-                                progress.setStatus("Training" + runLabel
-                                        + " (" + trainingProgress.totalEpochs() + " epochs)...");
+                                        ? " " + classifierName
+                                        : "";
+                                progress.setStatus(
+                                        "Training" + runLabel + " (" + trainingProgress.totalEpochs() + " epochs)...");
                             }
 
                             // Always update progress bar and detail text (lightweight, keeps UI responsive)
                             double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                             progress.setOverallProgress(progressValue);
-                            progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
-                                    trainingProgress.epoch(), trainingProgress.totalEpochs(),
-                                    trainingProgress.loss(), trainingProgress.meanIoU()));
+                            progress.setDetail(String.format(
+                                    "Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
+                                    trainingProgress.epoch(),
+                                    trainingProgress.totalEpochs(),
+                                    trainingProgress.loss(),
+                                    trainingProgress.meanIoU()));
 
                             // Only log and update charts once per epoch
                             int currentEpoch = trainingProgress.epoch();
@@ -1324,8 +1430,7 @@ public class TrainingWorkflow {
                                         trainingProgress.loss(),
                                         trainingProgress.valLoss(),
                                         trainingProgress.perClassIoU(),
-                                        trainingProgress.perClassLoss()
-                                );
+                                        trainingProgress.perClassLoss());
 
                                 // Store latest metrics for post-training diagnostic hints
                                 if (trainingProgress.perClassIoU() != null) {
@@ -1343,21 +1448,27 @@ public class TrainingWorkflow {
                                 StringBuilder logMsg = new StringBuilder();
                                 logMsg.append(String.format(
                                         "Epoch %d: train_loss=%s, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
-                                        trainingProgress.epoch(), tlFmt,
-                                        trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
+                                        trainingProgress.epoch(),
+                                        tlFmt,
+                                        trainingProgress.valLoss(),
+                                        trainingProgress.accuracy() * 100,
                                         trainingProgress.meanIoU()));
                                 progress.log(logMsg.toString());
 
-                                if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
+                                if (trainingProgress.perClassIoU() != null
+                                        && !trainingProgress.perClassIoU().isEmpty()) {
                                     StringBuilder iouLine = new StringBuilder("  IoU:");
-                                    for (var entry : trainingProgress.perClassIoU().entrySet()) {
+                                    for (var entry :
+                                            trainingProgress.perClassIoU().entrySet()) {
                                         iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
                                     }
                                     progress.log(iouLine.toString());
                                 }
-                                if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
+                                if (trainingProgress.perClassLoss() != null
+                                        && !trainingProgress.perClassLoss().isEmpty()) {
                                     StringBuilder lossLine = new StringBuilder("  Loss:");
-                                    for (var entry : trainingProgress.perClassLoss().entrySet()) {
+                                    for (var entry :
+                                            trainingProgress.perClassLoss().entrySet()) {
                                         lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
                                     }
                                     progress.log(lossLine.toString());
@@ -1374,15 +1485,22 @@ public class TrainingWorkflow {
                         if (progress != null) {
                             progress.onTrainingJobStarted();
                         }
-                    }
-            );
+                    });
 
             if (serverResult.isPaused()) {
                 if (progress != null) {
                     progress.log("Training paused at epoch " + serverResult.lastEpoch());
                     progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
                 }
-                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
+                return new TrainingResult(
+                        null,
+                        classifierName,
+                        0,
+                        0,
+                        0,
+                        0.0,
+                        0,
+                        false,
                         "Training paused at epoch " + serverResult.lastEpoch());
             }
 
@@ -1393,27 +1511,29 @@ public class TrainingWorkflow {
 
                 if (saveMode == ProgressMonitorController.CancelSaveMode.DO_NOT_SAVE
                         || !serverResult.isCancelledWithSave()) {
-                    return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
-                            "Training cancelled by user");
+                    return new TrainingResult(
+                            null, classifierName, 0, 0, 0, 0.0, 0, false, "Training cancelled by user");
                 }
 
                 // User chose to save -- pick the appropriate model path
                 String savedModelPath = (saveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH
-                        && serverResult.lastModelPath() != null)
+                                && serverResult.lastModelPath() != null)
                         ? serverResult.lastModelPath()
                         : serverResult.modelPath();
 
                 String epochLabel = (saveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH)
-                        ? "last epoch" : "best epoch (" + serverResult.bestEpoch() + ")";
+                        ? "last epoch"
+                        : "best epoch (" + serverResult.bestEpoch() + ")";
                 logger.info("Saving cancelled training ({}) from: {}", epochLabel, savedModelPath);
                 if (progress != null) {
                     progress.log("Saving " + epochLabel + " model...");
                     progress.setStatus("Saving classifier...");
                 }
 
-                String effectiveId = classifierId != null ? classifierId
-                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                          + "_" + System.currentTimeMillis();
+                String effectiveId = classifierId != null
+                        ? classifierId
+                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_"
+                                + System.currentTimeMillis();
                 List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
                 ClassifierMetadata cancelMetadata = ClassifierMetadata.builder()
                         .id(effectiveId)
@@ -1437,18 +1557,20 @@ public class TrainingWorkflow {
                         .build();
                 boolean filesInPlace = modelOutputDir != null;
                 ModelManager modelManager = new ModelManager();
-                modelManager.saveClassifier(cancelMetadata, Path.of(savedModelPath),
-                        true, filesInPlace);
+                modelManager.saveClassifier(cancelMetadata, Path.of(savedModelPath), true, filesInPlace);
                 String msg = "Saved " + epochLabel + " model as " + effectiveId;
                 logger.info(msg);
                 if (progress != null) progress.log(msg);
                 return new TrainingResult(
-                        effectiveId, classifierName,
-                        serverResult.finalLoss(), serverResult.finalAccuracy(),
-                        serverResult.bestEpoch(), serverResult.bestMeanIoU(),
-                        serverResult.lastEpoch(), true,
-                        "Training cancelled -- " + epochLabel + " model saved"
-                );
+                        effectiveId,
+                        classifierName,
+                        serverResult.finalLoss(),
+                        serverResult.finalAccuracy(),
+                        serverResult.bestEpoch(),
+                        serverResult.bestMeanIoU(),
+                        serverResult.lastEpoch(),
+                        true,
+                        "Training cancelled -- " + epochLabel + " model saved");
             }
 
             logger.info("Training completed. Model saved to: {}", serverResult.modelPath());
@@ -1461,9 +1583,9 @@ public class TrainingWorkflow {
             if (progress != null) progress.setStatus("Saving classifier...");
 
             // Use pre-generated classifierId if provided (GUI path), otherwise generate
-            String effectiveId = classifierId != null ? classifierId
-                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                      + "_" + System.currentTimeMillis();
+            String effectiveId = classifierId != null
+                    ? classifierId
+                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_" + System.currentTimeMillis();
 
             List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
 
@@ -1492,8 +1614,7 @@ public class TrainingWorkflow {
             // in the project directory -- skip the copy step.
             boolean filesInPlace = modelOutputDir != null;
             ModelManager modelManager = new ModelManager();
-            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
-                    true, filesInPlace);
+            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()), true, filesInPlace);
             if (progress != null) progress.log("Classifier saved: " + metadata.getId());
 
             // Build diagnostic hints from final training metrics
@@ -1509,8 +1630,7 @@ public class TrainingWorkflow {
             for (var iouEntry : lastPerClassIoU.get().entrySet()) {
                 if (iouEntry.getValue() != null && iouEntry.getValue() == 0.0) {
                     hints.add(String.format(
-                            "Class '%s' was never learned. Check annotation quality/quantity.",
-                            iouEntry.getKey()));
+                            "Class '%s' was never learned. Check annotation quality/quantity.", iouEntry.getKey()));
                 }
             }
             if (!hints.isEmpty()) {
@@ -1535,8 +1655,7 @@ public class TrainingWorkflow {
                     completionMessage,
                     serverResult.focusClassName(),
                     serverResult.focusClassIoU(),
-                    serverResult.focusClassTargetMet()
-            );
+                    serverResult.focusClassTargetMet());
 
         } catch (Exception e) {
             logger.error("Training failed", e);
@@ -1545,8 +1664,8 @@ public class TrainingWorkflow {
             if (modelOutputDir != null) {
                 cleanupTempDir(modelOutputDir);
             }
-            return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
-                    "Training failed: " + e.getMessage());
+            return new TrainingResult(
+                    null, classifierName, 0, 0, 0, 0.0, 0, false, "Training failed: " + e.getMessage());
         } finally {
             // Skip cleanup if caller wants to keep training data for post-training review
             if (trainingDataPathHolder == null) {
@@ -1566,11 +1685,23 @@ public class TrainingWorkflow {
      * @deprecated Use {@link #trainClassifierWithProgress} instead
      */
     @Deprecated
-    public void trainClassifier(ClassifierHandler handler,
-                                TrainingConfig trainingConfig,
-                                ChannelConfiguration channelConfig,
-                                List<String> classNames) {
-        trainClassifierWithProgress("Untitled", "", handler, trainingConfig, channelConfig, classNames, null, null, null, Collections.emptySet(), Collections.emptySet());
+    public void trainClassifier(
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames) {
+        trainClassifierWithProgress(
+                "Untitled",
+                "",
+                handler,
+                trainingConfig,
+                channelConfig,
+                classNames,
+                null,
+                null,
+                null,
+                Collections.emptySet(),
+                Collections.emptySet());
     }
 
     /**
@@ -1579,20 +1710,21 @@ public class TrainingWorkflow {
      * This method runs on a background thread and uses Platform.runLater
      * for any UI interactions (dialogs, unsaved changes check).
      */
-    private void handleResume(String jobId,
-                              String classifierName,
-                              String description,
-                              ClassifierHandler handler,
-                              TrainingConfig trainingConfig,
-                              ChannelConfiguration channelConfig,
-                              List<String> classNames,
-                              List<ProjectImageEntry<BufferedImage>> selectedImages,
-                              ProgressMonitorController progress,
-                              String[] currentJobId,
-                              String classifierId,
-                              Path modelOutputDir,
-                              Path[] trainingDataPathHolder,
-                              String[] modelPathHolder) {
+    private void handleResume(
+            String jobId,
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            ProgressMonitorController progress,
+            String[] currentJobId,
+            String classifierId,
+            Path modelOutputDir,
+            Path[] trainingDataPathHolder,
+            String[] modelPathHolder) {
         Path tempDir = null;
         try {
             // 1. Check for unsaved changes (on FX thread)
@@ -1675,8 +1807,7 @@ public class TrainingWorkflow {
                             maxH = Math.max(maxH, entryData.getServer().getHeight());
                             entryData.getServer().close();
                         } catch (Exception e) {
-                            logger.warn("Could not read dimensions for {}: {}",
-                                    entry.getImageName(), e.getMessage());
+                            logger.warn("Could not read dimensions for {}: {}", entry.getImageName(), e.getMessage());
                         }
                     }
                 } else {
@@ -1686,8 +1817,7 @@ public class TrainingWorkflow {
                         maxH = currentImageData.getServer().getHeight();
                     }
                 }
-                effectiveTileSize = trainingConfig.computeEffectiveTileSize(
-                        maxW, maxH, resumeMaxTile);
+                effectiveTileSize = trainingConfig.computeEffectiveTileSize(maxW, maxH, resumeMaxTile);
                 progress.log("Whole-image mode: effective tile size " + effectiveTileSize + "px");
             } else {
                 effectiveTileSize = trainingConfig.getTileSize();
@@ -1698,7 +1828,8 @@ public class TrainingWorkflow {
             trainingConfig.adjustBatchForTileSize(effectiveTileSize);
 
             Map<String, Double> resumeMultipliers = trainingConfig.getClassWeightMultipliers();
-            int contextPadding = trainingConfig.isWholeImage() ? 0
+            int contextPadding = trainingConfig.isWholeImage()
+                    ? 0
                     : computeTrainingContextPadding(effectiveTileSize, trainingConfig);
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
@@ -1713,15 +1844,18 @@ public class TrainingWorkflow {
                         resumeMultipliers,
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
-                        contextPadding
-                );
+                        contextPadding);
                 patchCount = exportResult.totalPatches();
             } else {
                 ImageData<BufferedImage> imageData = qupath.getImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(
-                        imageData, effectiveTileSize, channelConfig,
-                        trainingConfig.getLineStrokeWidth(), trainingConfig.getDownsample(),
-                        trainingConfig.getContextScale(), contextPadding);
+                        imageData,
+                        effectiveTileSize,
+                        channelConfig,
+                        trainingConfig.getLineStrokeWidth(),
+                        trainingConfig.getDownsample(),
+                        trainingConfig.getContextScale(),
+                        contextPadding);
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -1732,8 +1866,8 @@ public class TrainingWorkflow {
             // Log frozen layer configuration
             List<String> frozen = trainingConfig.getFrozenLayers();
             if (frozen != null && !frozen.isEmpty()) {
-                progress.log("Transfer learning: " + frozen.size() + " layer groups frozen: "
-                        + String.join(", ", frozen));
+                progress.log(
+                        "Transfer learning: " + frozen.size() + " layer groups frozen: " + String.join(", ", frozen));
             } else if (trainingConfig.isUsePretrainedWeights()) {
                 progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
             }
@@ -1758,8 +1892,8 @@ public class TrainingWorkflow {
                         // Handle setup phase updates (same filter as initial training)
                         if (trainingProgress.isSetupPhase()) {
                             if ("initializing".equals(trainingProgress.status())) {
-                                String deviceMsg = formatDeviceMessage(
-                                        trainingProgress.device(), trainingProgress.deviceInfo());
+                                String deviceMsg =
+                                        formatDeviceMessage(trainingProgress.device(), trainingProgress.deviceInfo());
                                 progress.log(deviceMsg);
                             } else if ("training_config".equals(trainingProgress.setupPhase())) {
                                 progress.log("--- Resumed Training Configuration ---");
@@ -1777,8 +1911,7 @@ public class TrainingWorkflow {
                                             cfg.getOrDefault("subset_size", "?"),
                                             cfg.getOrDefault("full_size", "?"),
                                             cfg.getOrDefault("coverage_pct", "?"));
-                                    Dialogs.showInfoNotification(
-                                            "Bounded cache active", summary);
+                                    Dialogs.showInfoNotification("Bounded cache active", summary);
                                     progress.log("=== BOUNDED CACHE ACTIVE === " + summary);
                                     progress.setDetail(summary);
                                 }
@@ -1788,13 +1921,15 @@ public class TrainingWorkflow {
                                     String batch = cfg.getOrDefault("batch", "?");
                                     String totalBatches = cfg.getOrDefault("total_batches", "?");
                                     String batchEpoch = cfg.getOrDefault("epoch", "?");
-                                    String totalEp = cfg.getOrDefault("total_epochs",
-                                            String.valueOf(trainingProgress.totalEpochs()));
+                                    String totalEp = cfg.getOrDefault(
+                                            "total_epochs", String.valueOf(trainingProgress.totalEpochs()));
                                     String elapsed = cfg.getOrDefault("elapsed_seconds", "");
                                     String elapsedStr = elapsed.isEmpty() ? "" : " (" + elapsed + "s)";
-                                    progress.setStatus(String.format("Epoch %s/%s - batch %s/%s%s",
+                                    progress.setStatus(String.format(
+                                            "Epoch %s/%s - batch %s/%s%s",
                                             batchEpoch, totalEp, batch, totalBatches, elapsedStr));
-                                    progress.setDetail(String.format("Batch %s/%s - loss: %s",
+                                    progress.setDetail(String.format(
+                                            "Batch %s/%s - loss: %s",
                                             batch, totalBatches, cfg.getOrDefault("batch_loss", "?")));
                                 }
                             } else {
@@ -1811,9 +1946,12 @@ public class TrainingWorkflow {
                         // Always update progress bar and detail text (lightweight, keeps UI responsive)
                         double progressValue = (double) trainingProgress.epoch() / trainingProgress.totalEpochs();
                         progress.setOverallProgress(progressValue);
-                        progress.setDetail(String.format("Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
-                                trainingProgress.epoch(), trainingProgress.totalEpochs(),
-                                trainingProgress.loss(), trainingProgress.meanIoU()));
+                        progress.setDetail(String.format(
+                                "Epoch %d/%d - Loss: %.4f - mIoU: %.4f",
+                                trainingProgress.epoch(),
+                                trainingProgress.totalEpochs(),
+                                trainingProgress.loss(),
+                                trainingProgress.meanIoU()));
 
                         // Only log and update charts once per epoch
                         int currentEpoch = trainingProgress.epoch();
@@ -1832,19 +1970,23 @@ public class TrainingWorkflow {
                             StringBuilder logMsg = new StringBuilder();
                             logMsg.append(String.format(
                                     "Epoch %d: train_loss=%s, val_loss=%.4f, acc=%.1f%%, mIoU=%.4f",
-                                    trainingProgress.epoch(), tlFmt,
-                                    trainingProgress.valLoss(), trainingProgress.accuracy() * 100,
+                                    trainingProgress.epoch(),
+                                    tlFmt,
+                                    trainingProgress.valLoss(),
+                                    trainingProgress.accuracy() * 100,
                                     trainingProgress.meanIoU()));
                             progress.log(logMsg.toString());
 
-                            if (trainingProgress.perClassIoU() != null && !trainingProgress.perClassIoU().isEmpty()) {
+                            if (trainingProgress.perClassIoU() != null
+                                    && !trainingProgress.perClassIoU().isEmpty()) {
                                 StringBuilder iouLine = new StringBuilder("  IoU:");
                                 for (var entry : trainingProgress.perClassIoU().entrySet()) {
                                     iouLine.append(String.format(" %s=%.3f", entry.getKey(), entry.getValue()));
                                 }
                                 progress.log(iouLine.toString());
                             }
-                            if (trainingProgress.perClassLoss() != null && !trainingProgress.perClassLoss().isEmpty()) {
+                            if (trainingProgress.perClassLoss() != null
+                                    && !trainingProgress.perClassLoss().isEmpty()) {
                                 StringBuilder lossLine = new StringBuilder("  Loss:");
                                 for (var entry : trainingProgress.perClassLoss().entrySet()) {
                                     lossLine.append(String.format(" %s=%.4f", entry.getKey(), entry.getValue()));
@@ -1860,8 +2002,7 @@ public class TrainingWorkflow {
                         }
                         // Python worker is now ready to receive pause signals.
                         progress.onTrainingJobStarted();
-                    }
-            );
+                    });
 
             // 6. Handle result -- may be paused again, completed, or cancelled
             if (serverResult.isPaused()) {
@@ -1869,23 +2010,25 @@ public class TrainingWorkflow {
                 progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
                 currentJobId[0] = serverResult.jobId();
             } else if (serverResult.isCancelled()) {
-                ProgressMonitorController.CancelSaveMode resumeSaveMode =
-                        progress.getCancelSaveMode();
+                ProgressMonitorController.CancelSaveMode resumeSaveMode = progress.getCancelSaveMode();
                 if (resumeSaveMode != ProgressMonitorController.CancelSaveMode.DO_NOT_SAVE
                         && serverResult.isCancelledWithSave()) {
                     // Save the model from the resumed training
                     String savedPath = (resumeSaveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH
-                            && serverResult.lastModelPath() != null)
+                                    && serverResult.lastModelPath() != null)
                             ? serverResult.lastModelPath()
                             : serverResult.modelPath();
                     progress.log("Saving cancelled model from resumed training...");
                     progress.setStatus("Saving classifier...");
-                    String rId = classifierId != null ? classifierId
-                            : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                              + "_" + System.currentTimeMillis();
+                    String rId = classifierId != null
+                            ? classifierId
+                            : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_"
+                                    + System.currentTimeMillis();
                     List<ClassifierMetadata.ClassInfo> rClassInfo = buildClassInfoList(classNames, null);
                     ClassifierMetadata rMeta = ClassifierMetadata.builder()
-                            .id(rId).name(classifierName).description(description)
+                            .id(rId)
+                            .name(classifierName)
+                            .description(description)
                             .modelType(trainingConfig.getModelType())
                             .backbone(trainingConfig.getBackbone())
                             .inputChannels(channelConfig.getSelectedChannels().size())
@@ -1912,9 +2055,10 @@ public class TrainingWorkflow {
                 // Completed -- save the classifier
                 progress.setStatus("Saving classifier...");
                 // Use the same classifierId from the initial training
-                String effectiveId = classifierId != null ? classifierId
-                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                          + "_" + System.currentTimeMillis();
+                String effectiveId = classifierId != null
+                        ? classifierId
+                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_"
+                                + System.currentTimeMillis();
 
                 List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, null);
 
@@ -1941,18 +2085,21 @@ public class TrainingWorkflow {
 
                 boolean filesInPlace = modelOutputDir != null;
                 ModelManager modelManager = new ModelManager();
-                modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
-                        true, filesInPlace);
+                modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()), true, filesInPlace);
                 progress.log("Classifier saved: " + metadata.getId());
 
                 // Update jobId so "Continue Training" can find the new checkpoint
                 currentJobId[0] = serverResult.jobId();
 
-                progress.complete(true, String.format(
-                        "Classifier trained successfully!\nBest model: epoch %d\n" +
-                        "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
-                        serverResult.bestEpoch(), serverResult.finalLoss(),
-                        serverResult.finalAccuracy() * 100, serverResult.bestMeanIoU()));
+                progress.complete(
+                        true,
+                        String.format(
+                                "Classifier trained successfully!\nBest model: epoch %d\n"
+                                        + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                                serverResult.bestEpoch(),
+                                serverResult.finalLoss(),
+                                serverResult.finalAccuracy() * 100,
+                                serverResult.bestMeanIoU()));
             }
 
         } catch (Exception e) {
@@ -1979,19 +2126,20 @@ public class TrainingWorkflow {
      * Loads the best model from the training checkpoint and saves it as
      * the final classifier.
      */
-    private void handleCompleteEarly(String jobId,
-                                     String classifierName,
-                                     String description,
-                                     ClassifierHandler handler,
-                                     TrainingConfig trainingConfig,
-                                     ChannelConfiguration channelConfig,
-                                     List<String> classNames,
-                                     List<ProjectImageEntry<BufferedImage>> selectedImages,
-                                     ProgressMonitorController progress,
-                                     Map<String, Integer> classColors,
-                                     String classifierId,
-                                     Path modelOutputDir,
-                                     String[] modelPathHolder) {
+    private void handleCompleteEarly(
+            String jobId,
+            String classifierName,
+            String description,
+            ClassifierHandler handler,
+            TrainingConfig trainingConfig,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            ProgressMonitorController progress,
+            Map<String, Integer> classColors,
+            String classifierId,
+            Path modelOutputDir,
+            String[] modelPathHolder) {
         try {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
@@ -2000,7 +2148,9 @@ public class TrainingWorkflow {
             }
 
             ApposeClassifierBackend.CheckpointInfo checkpoint = apposeBackend.getCheckpointInfo(jobId);
-            if (checkpoint == null || checkpoint.path() == null || checkpoint.path().isEmpty()) {
+            if (checkpoint == null
+                    || checkpoint.path() == null
+                    || checkpoint.path().isEmpty()) {
                 progress.complete(false, "No checkpoint available for this training job");
                 return;
             }
@@ -2019,9 +2169,9 @@ public class TrainingWorkflow {
 
             // Save metadata (same pattern as normal completion)
             progress.setStatus("Saving classifier...");
-            String effectiveId = classifierId != null ? classifierId
-                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
-                      + "_" + System.currentTimeMillis();
+            String effectiveId = classifierId != null
+                    ? classifierId
+                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_" + System.currentTimeMillis();
 
             // Compute effective tile size for metadata
             int effectiveTileSize = trainingConfig.getTileSize();
@@ -2035,8 +2185,7 @@ public class TrainingWorkflow {
                             maxH = Math.max(maxH, entryData.getServer().getHeight());
                             entryData.getServer().close();
                         } catch (Exception e) {
-                            logger.warn("Could not read dimensions for {}: {}",
-                                    entry.getImageName(), e.getMessage());
+                            logger.warn("Could not read dimensions for {}: {}", entry.getImageName(), e.getMessage());
                         }
                     }
                 } else {
@@ -2074,8 +2223,7 @@ public class TrainingWorkflow {
 
             boolean filesInPlace = modelOutputDir != null;
             ModelManager modelManager = new ModelManager();
-            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()),
-                    true, filesInPlace);
+            modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()), true, filesInPlace);
             progress.log("Classifier saved: " + metadata.getId());
 
             // Set model path so Review Training Areas can find the model
@@ -2086,20 +2234,20 @@ public class TrainingWorkflow {
             // Clean up training checkpoint files from the model directory.
             // These are only needed for crash recovery and resume -- the final
             // model.pt is the only file needed for inference.
-            Path modelDir = modelOutputDir != null ? modelOutputDir
-                    : Path.of(serverResult.modelPath());
+            Path modelDir = modelOutputDir != null ? modelOutputDir : Path.of(serverResult.modelPath());
             if (Files.isDirectory(modelDir)) {
                 try (var files = Files.list(modelDir)) {
                     files.filter(p -> {
-                        String name = p.getFileName().toString();
-                        return name.startsWith("best_in_progress_")
-                                || name.startsWith("checkpoint_");
-                    }).forEach(p -> {
-                        try {
-                            Files.deleteIfExists(p);
-                            logger.debug("Cleaned up training artifact: {}", p.getFileName());
-                        } catch (IOException ignored) {}
-                    });
+                                String name = p.getFileName().toString();
+                                return name.startsWith("best_in_progress_") || name.startsWith("checkpoint_");
+                            })
+                            .forEach(p -> {
+                                try {
+                                    Files.deleteIfExists(p);
+                                    logger.debug("Cleaned up training artifact: {}", p.getFileName());
+                                } catch (IOException ignored) {
+                                }
+                            });
                 } catch (IOException e) {
                     logger.debug("Could not clean up training artifacts: {}", e.getMessage());
                 }
@@ -2110,11 +2258,15 @@ public class TrainingWorkflow {
             progress.setOnContinueTraining(null);
             progress.setOnResume(null);
 
-            progress.complete(true, String.format(
-                    "Training completed early!\nBest model: epoch %d\n"
-                    + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
-                    serverResult.bestEpoch(), serverResult.finalLoss(),
-                    serverResult.finalAccuracy() * 100, serverResult.bestMeanIoU()));
+            progress.complete(
+                    true,
+                    String.format(
+                            "Training completed early!\nBest model: epoch %d\n"
+                                    + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                            serverResult.bestEpoch(),
+                            serverResult.finalLoss(),
+                            serverResult.finalAccuracy() * 100,
+                            serverResult.bestMeanIoU()));
 
         } catch (Exception e) {
             logger.error("Complete early failed", e);
@@ -2131,10 +2283,8 @@ public class TrainingWorkflow {
      * @param currentBatch  current batch size
      * @return optional resume params, or empty if user cancelled
      */
-    private Optional<ResumeParams> showResumeParamDialog(int epochsCompleted,
-                                                          int originalEpochs,
-                                                          double currentLR,
-                                                          int currentBatch) {
+    private Optional<ResumeParams> showResumeParamDialog(
+            int epochsCompleted, int originalEpochs, double currentLR, int currentBatch) {
         Dialog<ResumeParams> dialog = new Dialog<>();
         dialog.setTitle("Resume Training");
         dialog.setHeaderText("How many additional epochs?");
@@ -2158,8 +2308,8 @@ public class TrainingWorkflow {
         // Default additional epochs to the remaining portion of the original
         // configured count (or at least 10 if we have already hit the target).
         int defaultAdditional = Math.max(originalEpochs - epochsCompleted, 10);
-        Spinner<Integer> epochSpinner = new Spinner<>(
-                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 1000, defaultAdditional));
+        Spinner<Integer> epochSpinner =
+                new Spinner<>(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 1000, defaultAdditional));
         epochSpinner.setEditable(true);
         epochSpinner.setPrefWidth(120);
 
@@ -2169,8 +2319,7 @@ public class TrainingWorkflow {
 
         // Reassure the user that other hyperparameters are unchanged on resume
         // (they still take effect through currentLR / currentBatch below).
-        Label hint = new Label(
-                "Learning rate and batch size are unchanged from the original run.");
+        Label hint = new Label("Learning rate and batch size are unchanged from the original run.");
         hint.setStyle("-fx-text-fill: #666; -fx-font-style: italic; -fx-font-size: 11px;");
         hint.setWrapText(true);
         grid.add(hint, 0, row, 2, 1);
@@ -2231,12 +2380,10 @@ public class TrainingWorkflow {
                         logger.error("Failed to auto-save current image data", e);
                         return Dialogs.showConfirmDialog(
                                 "Save Failed",
-                                "Could not auto-save the current image:\n" +
-                                e.getMessage() + "\n\n" +
-                                "Unsaved annotation changes will NOT be included\n" +
-                                "in multi-image training.\n\n" +
-                                "Continue anyway?"
-                        );
+                                "Could not auto-save the current image:\n" + e.getMessage()
+                                        + "\n\n" + "Unsaved annotation changes will NOT be included\n"
+                                        + "in multi-image training.\n\n"
+                                        + "Continue anyway?");
                     }
                 }
             }
@@ -2264,6 +2411,7 @@ public class TrainingWorkflow {
         settings.put("overlap", config.getOverlap());
         settings.put("line_stroke_width", config.getLineStrokeWidth());
         settings.put("use_pretrained_weights", config.isUsePretrainedWeights());
+        settings.put("freeze_encoder_layers", config.getFreezeEncoderLayers());
         settings.put("frozen_layers", config.getFrozenLayers());
         settings.put("scheduler_type", config.getSchedulerType());
         settings.put("loss_function", config.getLossFunction());
@@ -2314,16 +2462,16 @@ public class TrainingWorkflow {
      * Uses the class colors from the training dialog when available,
      * falling back to a distinct color palette.
      */
-    static List<ClassifierMetadata.ClassInfo> buildClassInfoList(List<String> classNames,
-                                                                  Map<String, Integer> classColors) {
+    static List<ClassifierMetadata.ClassInfo> buildClassInfoList(
+            List<String> classNames, Map<String, Integer> classColors) {
         List<ClassifierMetadata.ClassInfo> classInfoList = new ArrayList<>();
         for (int i = 0; i < classNames.size(); i++) {
             String name = classNames.get(i);
             String hexColor;
             if (classColors != null && classColors.containsKey(name)) {
                 int packed = classColors.get(name);
-                hexColor = String.format("#%02X%02X%02X",
-                        ColorTools.red(packed), ColorTools.green(packed), ColorTools.blue(packed));
+                hexColor = String.format(
+                        "#%02X%02X%02X", ColorTools.red(packed), ColorTools.green(packed), ColorTools.blue(packed));
             } else {
                 hexColor = getDefaultClassColor(i);
             }
@@ -2338,8 +2486,8 @@ public class TrainingWorkflow {
      */
     private static String getDefaultClassColor(int classIndex) {
         String[] palette = {
-                "#FF0000", "#00AA00", "#0000FF", "#FFFF00",
-                "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"
+            "#FF0000", "#00AA00", "#0000FF", "#FFFF00",
+            "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"
         };
         return palette[classIndex % palette.length];
     }
@@ -2365,10 +2513,8 @@ public class TrainingWorkflow {
      * two agree to within a factor of two and that is good enough for the
      * user to decide whether to cancel and flip the preference off.
      */
-    private static void logInMemoryCacheEstimate(ProgressMonitorController progress,
-                                                 TrainingConfig config,
-                                                 ChannelConfiguration channels,
-                                                 int patchCount) {
+    private static void logInMemoryCacheEstimate(
+            ProgressMonitorController progress, TrainingConfig config, ChannelConfiguration channels, int patchCount) {
         if (progress == null) return;
         String mode = config.getInMemoryDataset();
         if ("off".equals(mode)) {
@@ -2400,19 +2546,15 @@ public class TrainingWorkflow {
         }
 
         double estGb = totalBytes / 1e9;
-        String header = String.format(
-                "In-memory cache: ~%.2f GB needed for %d patches (mode=%s)",
-                estGb, patchCount, mode);
+        String header =
+                String.format("In-memory cache: ~%.2f GB needed for %d patches (mode=%s)", estGb, patchCount, mode);
         if (availableBytes <= 0) {
-            progress.log(header + ". Free RAM unknown -- Python will make the "
-                    + "final decision based on psutil.");
+            progress.log(header + ". Free RAM unknown -- Python will make the " + "final decision based on psutil.");
             return;
         }
         double availGb = availableBytes / 1e9;
         double usedPct = 100.0 * totalBytes / availableBytes;
-        String body = String.format(
-                " / %.2f GB OS free RAM (would use %.0f%% of free).",
-                availGb, usedPct);
+        String body = String.format(" / %.2f GB OS free RAM (would use %.0f%% of free).", availGb, usedPct);
         progress.log(header + body);
 
         if ("auto".equals(mode)) {
@@ -2447,7 +2589,8 @@ public class TrainingWorkflow {
         switch (device) {
             case "cuda":
                 String gpuName = (deviceInfo != null && !deviceInfo.isEmpty() && !"CPU".equals(deviceInfo))
-                        ? deviceInfo : "NVIDIA GPU";
+                        ? deviceInfo
+                        : "NVIDIA GPU";
                 return "Training on " + gpuName + " (CUDA)";
             case "mps":
                 return "Training on Apple Silicon (MPS)";
@@ -2505,14 +2648,13 @@ public class TrainingWorkflow {
     private static void cleanupTempDir(Path tempDir) {
         if (tempDir == null || !Files.exists(tempDir)) return;
         try (java.util.stream.Stream<Path> paths = Files.walk(tempDir)) {
-            paths.sorted(java.util.Comparator.reverseOrder())
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException e) {
-                            logger.warn("Failed to delete temp file: {}", path);
-                        }
-                    });
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException e) {
+                    logger.warn("Failed to delete temp file: {}", path);
+                }
+            });
             logger.info("Cleaned up training temp directory: {}", tempDir);
         } catch (IOException e) {
             logger.warn("Failed to clean up training temp directory: {}", tempDir, e);

@@ -1,11 +1,5 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
-import qupath.ext.dlclassifier.classifier.ClassifierHandler;
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.model.TrainingConfig;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -13,6 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import qupath.ext.dlclassifier.classifier.ClassifierHandler;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.TrainingConfig;
 
 /**
  * Handler for the Fast Pretrained architecture -- SMP U-Net with a small
@@ -53,22 +52,14 @@ import java.util.Set;
 public class FastPretrainedHandler implements ClassifierHandler {
 
     /** Small pretrained encoders. Order matters: index 0 is the default. */
-    public static final List<String> BACKBONES = List.of(
-            "timm-tf_efficientnet_lite0",
-            "timm-mobilenetv3_small_100"
-    );
+    public static final List<String> BACKBONES = List.of("timm-tf_efficientnet_lite0", "timm-mobilenetv3_small_100");
 
     private static final Map<String, String> BACKBONE_DISPLAY_NAMES = Map.of(
-            "timm-tf_efficientnet_lite0",
-                    "EfficientNet-Lite0 (ImageNet, ~4.2M params, recommended)",
-            "timm-mobilenetv3_small_100",
-                    "MobileNetV3-Small (ImageNet, ~2.0M params, fastest)"
-    );
+            "timm-tf_efficientnet_lite0", "EfficientNet-Lite0 (ImageNet, ~4.2M params, recommended)",
+            "timm-mobilenetv3_small_100", "MobileNetV3-Small (ImageNet, ~2.0M params, fastest)");
 
     /** Most SMP encoders need tile sizes divisible by 32. */
-    public static final List<Integer> TILE_SIZES = List.of(
-            128, 192, 256, 384, 512
-    );
+    public static final List<Integer> TILE_SIZES = List.of(128, 192, 256, 384, 512);
 
     @Override
     public String getType() {
@@ -156,8 +147,7 @@ public class FastPretrainedHandler implements ClassifierHandler {
         int numChannels = channelConfig.getNumChannels();
         if (numChannels < getMinChannels()) {
             return Optional.of(String.format(
-                    "Fast Pretrained requires at least %d channel(s), but %d selected",
-                    getMinChannels(), numChannels));
+                    "Fast Pretrained requires at least %d channel(s), but %d selected", getMinChannels(), numChannels));
         }
         if (numChannels > getMaxChannels()) {
             return Optional.of(String.format(
@@ -175,9 +165,8 @@ public class FastPretrainedHandler implements ClassifierHandler {
         params.put("architecture", "fast-pretrained");
         params.put("available_backbones", BACKBONES);
 
-        String backbone = config != null && config.getBackbone() != null
-                ? config.getBackbone()
-                : "timm-tf_efficientnet_lite0";
+        String backbone =
+                config != null && config.getBackbone() != null ? config.getBackbone() : "timm-tf_efficientnet_lite0";
         params.put("backbone", backbone);
         params.put("decoder_channels", List.of(128, 64, 32, 16, 8));
 
@@ -198,7 +187,8 @@ public class FastPretrainedHandler implements ClassifierHandler {
 
     @Override
     public Set<WeightInitStrategy> getSupportedWeightInitStrategies() {
-        return Set.of(WeightInitStrategy.SCRATCH,
+        return Set.of(
+                WeightInitStrategy.SCRATCH,
                 WeightInitStrategy.BACKBONE_PRETRAINED,
                 WeightInitStrategy.CONTINUE_TRAINING);
     }
@@ -209,23 +199,18 @@ public class FastPretrainedHandler implements ClassifierHandler {
     }
 
     @Override
-    public ClassifierMetadata buildMetadata(TrainingConfig config,
-                                            ChannelConfiguration channelConfig,
-                                            List<String> classNames) {
-        String timestamp = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        String id = String.format("fastpre_%s_%s",
-                config.getBackbone().replace("timm-", "").replace("-", "_"),
-                timestamp);
+    public ClassifierMetadata buildMetadata(
+            TrainingConfig config, ChannelConfiguration channelConfig, List<String> classNames) {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String id = String.format(
+                "fastpre_%s_%s", config.getBackbone().replace("timm-", "").replace("-", "_"), timestamp);
 
         ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
                 .id(id)
                 .name(String.format("Fast Pretrained %s Classifier", config.getBackbone()))
                 .description(String.format(
                         "Fast Pretrained U-Net with %s backbone, %d channels, %d classes",
-                        config.getBackbone(),
-                        channelConfig.getNumChannels(),
-                        classNames.size()))
+                        config.getBackbone(), channelConfig.getNumChannels(), classNames.size()))
                 .modelType("fast-pretrained")
                 .backbone(config.getBackbone())
                 .inputSize(config.getTileSize(), config.getTileSize())
@@ -244,16 +229,7 @@ public class FastPretrainedHandler implements ClassifierHandler {
     }
 
     private String getDefaultColor(int index) {
-        String[] colors = {
-                "#808080",
-                "#FF0000",
-                "#00FF00",
-                "#0000FF",
-                "#FFFF00",
-                "#FF00FF",
-                "#00FFFF",
-                "#FFA500"
-        };
+        String[] colors = {"#808080", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500"};
         return colors[index % colors.length];
     }
 }

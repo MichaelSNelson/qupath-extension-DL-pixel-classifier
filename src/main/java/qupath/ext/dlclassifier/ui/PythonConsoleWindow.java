@@ -1,22 +1,5 @@
 package qupath.ext.dlclassifier.ui;
 
-import javafx.application.Platform;
-import javafx.geometry.Insets;
-import javafx.scene.Scene;
-import javafx.scene.control.Button;
-import javafx.scene.control.CheckBox;
-import javafx.scene.control.TextArea;
-import javafx.scene.control.ToolBar;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.VBox;
-import javafx.scene.text.Font;
-import javafx.stage.FileChooser;
-import javafx.stage.Stage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.gui.QuPathGUI;
-
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
@@ -29,6 +12,20 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javafx.application.Platform;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.ToolBar;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.text.Font;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.gui.QuPathGUI;
 
 /**
  * Singleton JavaFX window displaying live Python process output from Appose.
@@ -132,7 +129,7 @@ public class PythonConsoleWindow {
      */
     public static void startFileLogging() {
         synchronized (logFileLock) {
-            if (logFileWriter != null) return;  // already logging
+            if (logFileWriter != null) return; // already logging
             try {
                 var qupath = QuPathGUI.getInstance();
                 if (qupath == null || qupath.getProject() == null) return;
@@ -140,11 +137,10 @@ public class PythonConsoleWindow {
                 Path logDir = projectDir.resolve("logs").resolve("dl-pixel-classifier");
                 Files.createDirectories(logDir);
 
-                String timestamp = LocalDateTime.now()
-                        .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+                String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
                 logFilePath = logDir.resolve("session_" + timestamp + ".log");
-                logFileWriter = Files.newBufferedWriter(logFilePath, StandardCharsets.UTF_8,
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                logFileWriter = Files.newBufferedWriter(
+                        logFilePath, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 
                 // Write header
                 logFileWriter.write("# DL Pixel Classifier Python Log");
@@ -206,7 +202,7 @@ public class PythonConsoleWindow {
     }
 
     private static void writeToLogFile(String formatted) {
-        var writer = logFileWriter;  // volatile read
+        var writer = logFileWriter; // volatile read
         if (writer == null) return;
         synchronized (logFileLock) {
             if (logFileWriter == null) return;
@@ -332,11 +328,12 @@ public class PythonConsoleWindow {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Save Python Console Log");
         fileChooser.setInitialFileName("python_console.log");
-        fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("Log files", "*.log"),
-                new FileChooser.ExtensionFilter("Text files", "*.txt"),
-                new FileChooser.ExtensionFilter("All files", "*.*")
-        );
+        fileChooser
+                .getExtensionFilters()
+                .addAll(
+                        new FileChooser.ExtensionFilter("Log files", "*.log"),
+                        new FileChooser.ExtensionFilter("Text files", "*.txt"),
+                        new FileChooser.ExtensionFilter("All files", "*.*"));
 
         File file = fileChooser.showSaveDialog(stage);
         if (file == null) return;

@@ -1,12 +1,5 @@
 package qupath.ext.dlclassifier.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.regions.RegionRequest;
-
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.Raster;
@@ -16,6 +9,12 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.regions.RegionRequest;
 
 /**
  * Computes image-level normalization statistics for the DL pixel classifier.
@@ -65,14 +64,14 @@ public final class NormalizationStatsComputer {
      * @param downsample    downsample factor for tile reading
      * @return channelConfig with precomputed stats, or original if not applicable
      */
-    public static ChannelConfiguration compute(ImageServer<BufferedImage> server,
-                                                ClassifierMetadata metadata,
-                                                ChannelConfiguration channelConfig,
-                                                int contextScale,
-                                                double downsample) {
+    public static ChannelConfiguration compute(
+            ImageServer<BufferedImage> server,
+            ClassifierMetadata metadata,
+            ChannelConfiguration channelConfig,
+            int contextScale,
+            double downsample) {
         // FIXED_RANGE uses user-specified values, no sampling needed
-        if (channelConfig.getNormalizationStrategy() ==
-                ChannelConfiguration.NormalizationStrategy.FIXED_RANGE) {
+        if (channelConfig.getNormalizationStrategy() == ChannelConfiguration.NormalizationStrategy.FIXED_RANGE) {
             logger.info("FIXED_RANGE normalization: skipping image-level stats");
             return channelConfig;
         }
@@ -86,23 +85,22 @@ public final class NormalizationStatsComputer {
             // Newer models trained after the effective_channels fix already have
             // stats for all channels (detail + context).
             if (contextScale > 1 && stats.size() < expectedChannels) {
-                logger.info("Expanding {} training stats to {} for context channels",
-                        stats.size(), expectedChannels);
+                logger.info("Expanding {} training stats to {} for context channels", stats.size(), expectedChannels);
                 List<Map<String, Double>> baseStats = new ArrayList<>(stats);
                 while (stats.size() < expectedChannels) {
                     // Duplicate from base stats cyclically
                     stats.add(baseStats.get(stats.size() % baseStats.size()));
                 }
             }
-            logger.info("Using training dataset normalization stats from model metadata " +
-                    "({} channels)", stats.size());
+            logger.info(
+                    "Using training dataset normalization stats from model metadata " + "({} channels)", stats.size());
             return channelConfig.withPrecomputedStats(stats);
         }
 
         // Priority 2: Compute image-level stats via sampling
         try {
-            List<Map<String, Double>> stats = computeImageNormalizationStats(
-                    server, metadata, channelConfig, downsample);
+            List<Map<String, Double>> stats =
+                    computeImageNormalizationStats(server, metadata, channelConfig, downsample);
             if (stats != null && !stats.isEmpty()) {
                 // For multi-scale context: duplicate detail stats for context channels.
                 // Context tiles come from the same image at a different scale, so the
@@ -116,13 +114,17 @@ public final class NormalizationStatsComputer {
                     }
                     stats = expanded;
                 }
-                logger.info("Computed image-level normalization stats from {} sample tiles " +
-                        "({} channels)", STATS_GRID_SIZE * STATS_GRID_SIZE, stats.size());
+                logger.info(
+                        "Computed image-level normalization stats from {} sample tiles " + "({} channels)",
+                        STATS_GRID_SIZE * STATS_GRID_SIZE,
+                        stats.size());
                 return channelConfig.withPrecomputedStats(stats);
             }
         } catch (Exception e) {
-            logger.warn("Failed to compute image-level normalization stats, " +
-                    "falling back to per-tile normalization: {}", e.getMessage());
+            logger.warn(
+                    "Failed to compute image-level normalization stats, "
+                            + "falling back to per-tile normalization: {}",
+                    e.getMessage());
         }
 
         // Priority 3: Fall back to original config (per-tile normalization)
@@ -146,7 +148,8 @@ public final class NormalizationStatsComputer {
             ImageServer<BufferedImage> server,
             ClassifierMetadata metadata,
             ChannelConfiguration channelConfig,
-            double downsample) throws IOException {
+            double downsample)
+            throws IOException {
         int imgWidth = server.getWidth();
         int imgHeight = server.getHeight();
 
@@ -158,9 +161,7 @@ public final class NormalizationStatsComputer {
 
         // Determine number of channels we'll be extracting
         List<Integer> selectedChannels = channelConfig.getSelectedChannels();
-        int numChannels = selectedChannels.isEmpty()
-                ? server.nChannels()
-                : selectedChannels.size();
+        int numChannels = selectedChannels.isEmpty() ? server.nChannels() : selectedChannels.size();
 
         // Collect pixel samples per channel
         List<List<Float>> channelSamples = new ArrayList<>();
@@ -169,8 +170,7 @@ public final class NormalizationStatsComputer {
         }
 
         // Compute grid step sizes (full resolution coordinates)
-        int gridSize = Math.min(STATS_GRID_SIZE, Math.max(1,
-                Math.min(imgWidth / tileW, imgHeight / tileH)));
+        int gridSize = Math.min(STATS_GRID_SIZE, Math.max(1, Math.min(imgWidth / tileW, imgHeight / tileH)));
         int stepX = (imgWidth - tileW) / Math.max(1, gridSize - 1);
         int stepY = (imgHeight - tileH) / Math.max(1, gridSize - 1);
 
@@ -185,8 +185,7 @@ public final class NormalizationStatsComputer {
                 int x = Math.min(gx * stepX, imgWidth - tileW);
                 int y = Math.min(gy * stepY, imgHeight - tileH);
 
-                RegionRequest req = RegionRequest.createInstance(
-                        server.getPath(), downsample, x, y, tileW, tileH);
+                RegionRequest req = RegionRequest.createInstance(server.getPath(), downsample, x, y, tileW, tileH);
                 BufferedImage tile = server.readRegion(req);
                 if (tile == null) continue;
 
@@ -278,10 +277,15 @@ public final class NormalizationStatsComputer {
             stats.put("std", std);
             channelStats.add(stats);
 
-            logger.debug("Channel {} stats: p1={}, p99={}, min={}, max={}, mean={}, std={}",
-                    c, String.format("%.4f", p1), String.format("%.4f", p99),
-                    String.format("%.4f", min), String.format("%.4f", max),
-                    String.format("%.4f", mean), String.format("%.4f", std));
+            logger.debug(
+                    "Channel {} stats: p1={}, p99={}, min={}, max={}, mean={}, std={}",
+                    c,
+                    String.format("%.4f", p1),
+                    String.format("%.4f", p99),
+                    String.format("%.4f", min),
+                    String.format("%.4f", max),
+                    String.format("%.4f", mean),
+                    String.format("%.4f", std));
         }
 
         return channelStats;

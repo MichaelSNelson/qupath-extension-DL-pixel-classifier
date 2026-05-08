@@ -1,14 +1,5 @@
 package qupath.ext.dlclassifier.scripting;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.model.InferenceConfig.ApplicationScope;
-import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.service.ApposeService;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +8,13 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.InferenceConfig.ApplicationScope;
+import qupath.ext.dlclassifier.model.TrainingConfig;
+import qupath.ext.dlclassifier.service.ApposeService;
 
 /**
  * Generates runnable Groovy scripts from dialog configuration values.
@@ -136,10 +134,8 @@ public class ScriptGenerator {
      * @param scope         the application scope
      * @return a runnable Groovy script string
      */
-    public static String generateInferenceScript(String classifierId,
-                                                  InferenceConfig config,
-                                                  ChannelConfiguration channelConfig,
-                                                  ApplicationScope scope) {
+    public static String generateInferenceScript(
+            String classifierId, InferenceConfig config, ChannelConfiguration channelConfig, ApplicationScope scope) {
         EmissionStats stats = new EmissionStats();
         StringBuilder sb = new StringBuilder();
 
@@ -150,8 +146,12 @@ public class ScriptGenerator {
         appendInferenceTargetRegions(sb, scope);
         appendInferenceWorkflowRun(sb);
 
-        logger.info("Generated inference script for classifier '{}' (scope={}): emitted {} fields, skipped {} fields",
-                classifierId, scope, stats.emitted, stats.skipped);
+        logger.info(
+                "Generated inference script for classifier '{}' (scope={}): emitted {} fields, skipped {} fields",
+                classifierId,
+                scope,
+                stats.emitted,
+                stats.skipped);
         if (logger.isDebugEnabled() && !stats.skippedNames.isEmpty()) {
             logger.debug("Inference script skipped fields: {}", stats.skippedNames);
         }
@@ -204,7 +204,9 @@ public class ScriptGenerator {
                 appendLine(sb, "import qupath.lib.roi.ROIs");
                 appendLine(sb, "import qupath.lib.regions.ImagePlane");
                 appendLine(sb, "def server = getCurrentServer()");
-                appendLine(sb, "def fullROI = ROIs.createRectangleROI(0, 0, server.getWidth(), server.getHeight(), ImagePlane.getDefaultPlane())");
+                appendLine(
+                        sb,
+                        "def fullROI = ROIs.createRectangleROI(0, 0, server.getWidth(), server.getHeight(), ImagePlane.getDefaultPlane())");
                 appendLine(sb, "def annotations = [PathObjects.createAnnotationObject(fullROI)]");
                 break;
             case SELECTED_ANNOTATIONS:
@@ -235,7 +237,9 @@ public class ScriptGenerator {
         appendLine(sb, BUILDER_INDENT + ".build()");
         appendLine(sb, BUILDER_INDENT + ".run()");
         appendLine(sb, "");
-        appendLine(sb, "println \"Done! Processed ${result.processedAnnotations()} annotations, ${result.processedTiles()} tiles\"");
+        appendLine(
+                sb,
+                "println \"Done! Processed ${result.processedAnnotations()} annotations, ${result.processedTiles()} tiles\"");
         appendLine(sb, "if (!result.success()) {");
         appendLine(sb, "    println \"WARNING: ${result.message()}\"");
         appendLine(sb, "}");
@@ -268,11 +272,12 @@ public class ScriptGenerator {
      * @param selectedClasses the selected class names
      * @return a runnable Groovy script string
      */
-    public static String generateTrainingScript(String classifierName,
-                                                 String description,
-                                                 TrainingConfig config,
-                                                 ChannelConfiguration channelConfig,
-                                                 List<String> selectedClasses) {
+    public static String generateTrainingScript(
+            String classifierName,
+            String description,
+            TrainingConfig config,
+            ChannelConfiguration channelConfig,
+            List<String> selectedClasses) {
         EmissionStats stats = new EmissionStats();
         StringBuilder sb = new StringBuilder();
 
@@ -282,8 +287,12 @@ public class ScriptGenerator {
         appendSelectedClasses(sb, selectedClasses);
         appendTrainingWorkflowRun(sb, classifierName, description);
 
-        logger.info("Generated training script for classifier '{}' (type={}): emitted {} fields, skipped {} fields",
-                classifierName, config.getModelType(), stats.emitted, stats.skipped);
+        logger.info(
+                "Generated training script for classifier '{}' (type={}): emitted {} fields, skipped {} fields",
+                classifierName,
+                config.getModelType(),
+                stats.emitted,
+                stats.skipped);
         if (logger.isDebugEnabled() && !stats.skippedNames.isEmpty()) {
             logger.debug("Training script skipped fields: {}", stats.skippedNames);
         }
@@ -390,8 +399,16 @@ public class ScriptGenerator {
     private static void appendDurationFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Training Duration & Checkpointing ---");
         emit(sb, stats, "epochs", builderCall("epochs", String.valueOf(config.getEpochs())));
-        emit(sb, stats, "earlyStoppingMetric", builderCall("earlyStoppingMetric", quote(config.getEarlyStoppingMetric())));
-        emit(sb, stats, "earlyStoppingPatience", builderCall("earlyStoppingPatience", String.valueOf(config.getEarlyStoppingPatience())));
+        emit(
+                sb,
+                stats,
+                "earlyStoppingMetric",
+                builderCall("earlyStoppingMetric", quote(config.getEarlyStoppingMetric())));
+        emit(
+                sb,
+                stats,
+                "earlyStoppingPatience",
+                builderCall("earlyStoppingPatience", String.valueOf(config.getEarlyStoppingPatience())));
 
         // Default false; emit only when the user opted in.
         if (config.isProgressiveResize()) {
@@ -422,7 +439,10 @@ public class ScriptGenerator {
 
         int accumulationSteps = config.getGradientAccumulationSteps();
         if (accumulationSteps > 1) {
-            emit(sb, stats, "gradientAccumulationSteps",
+            emit(
+                    sb,
+                    stats,
+                    "gradientAccumulationSteps",
                     builderCall("gradientAccumulationSteps", String.valueOf(accumulationSteps)));
         } else {
             skip(stats, "gradientAccumulationSteps");
@@ -440,7 +460,10 @@ public class ScriptGenerator {
 
         double trainingMpp = config.getTrainingPixelSizeMicrons();
         if (Double.isFinite(trainingMpp)) {
-            emit(sb, stats, "trainingPixelSizeMicrons",
+            emit(
+                    sb,
+                    stats,
+                    "trainingPixelSizeMicrons",
                     builderCall("trainingPixelSizeMicrons", formatDouble(trainingMpp)));
         } else {
             skip(stats, "trainingPixelSizeMicrons");
@@ -460,7 +483,10 @@ public class ScriptGenerator {
     private static void appendLearningRateFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Learning Rate & Optimizer ---");
         emit(sb, stats, "learningRate", builderCall("learningRate", formatDouble(config.getLearningRate())));
-        emit(sb, stats, "discriminativeLrRatio",
+        emit(
+                sb,
+                stats,
+                "discriminativeLrRatio",
                 builderCall("discriminativeLrRatio", formatDouble(config.getDiscriminativeLrRatio())));
         emit(sb, stats, "weightDecay", builderCall("weightDecay", formatDouble(config.getWeightDecay())));
         emit(sb, stats, "useLrFinder", builderCall("useLrFinder", String.valueOf(config.isUseLrFinder())));
@@ -496,8 +522,8 @@ public class ScriptGenerator {
      * Emits the loss-family-specific parameters that ride along with the
      * chosen loss. Skipped entirely when the loss keyword does not match.
      */
-    private static void appendLossFamilyParams(StringBuilder sb, TrainingConfig config,
-                                               EmissionStats stats, String loss) {
+    private static void appendLossFamilyParams(
+            StringBuilder sb, TrainingConfig config, EmissionStats stats, String loss) {
         // focalGamma is only meaningful for focal-family losses ("focal",
         // "focal_dice"); for any other loss the value is ignored at runtime.
         if (loss != null && loss.contains(LOSS_KEYWORD_FOCAL)) {
@@ -511,10 +537,8 @@ public class ScriptGenerator {
         // so user-tuned values like sigma=2 are not silently reverted to the
         // builder default 3.0 when the script runs.
         if (loss != null && loss.contains(LOSS_KEYWORD_BOUNDARY)) {
-            emit(sb, stats, "boundarySigma",
-                    builderCall("boundarySigma", formatDouble(config.getBoundarySigma())));
-            emit(sb, stats, "boundaryWMin",
-                    builderCall("boundaryWMin", formatDouble(config.getBoundaryWMin())));
+            emit(sb, stats, "boundarySigma", builderCall("boundarySigma", formatDouble(config.getBoundarySigma())));
+            emit(sb, stats, "boundaryWMin", builderCall("boundaryWMin", formatDouble(config.getBoundaryWMin())));
         } else {
             skip(stats, "boundarySigma");
             skip(stats, "boundaryWMin");
@@ -528,12 +552,13 @@ public class ScriptGenerator {
      */
     private static void appendOhemFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
         if (isOhemEngaged(config)) {
-            emit(sb, stats, "ohemHardRatio",
-                    builderCall("ohemHardRatio", formatDouble(config.getOhemHardRatio())));
-            emit(sb, stats, "ohemHardRatioStart",
+            emit(sb, stats, "ohemHardRatio", builderCall("ohemHardRatio", formatDouble(config.getOhemHardRatio())));
+            emit(
+                    sb,
+                    stats,
+                    "ohemHardRatioStart",
                     builderCall("ohemHardRatioStart", formatDouble(config.getOhemHardRatioStart())));
-            emit(sb, stats, "ohemSchedule",
-                    builderCall("ohemSchedule", quote(config.getOhemSchedule())));
+            emit(sb, stats, "ohemSchedule", builderCall("ohemSchedule", quote(config.getOhemSchedule())));
         } else {
             skip(stats, "ohemHardRatio");
             skip(stats, "ohemHardRatioStart");
@@ -555,8 +580,7 @@ public class ScriptGenerator {
      * OHEM is off.
      */
     private static boolean isOhemEngaged(TrainingConfig config) {
-        return config.getOhemHardRatio() < OHEM_RATIO_DISABLED
-                || !OHEM_SCHEDULE_FIXED.equals(config.getOhemSchedule());
+        return config.getOhemHardRatio() < OHEM_RATIO_DISABLED || !OHEM_SCHEDULE_FIXED.equals(config.getOhemSchedule());
     }
 
     /**
@@ -599,14 +623,21 @@ public class ScriptGenerator {
         }
 
         if (config.getLineStrokeWidth() > 0) {
-            emit(sb, stats, "lineStrokeWidth", builderCall("lineStrokeWidth", String.valueOf(config.getLineStrokeWidth())));
+            emit(
+                    sb,
+                    stats,
+                    "lineStrokeWidth",
+                    builderCall("lineStrokeWidth", String.valueOf(config.getLineStrokeWidth())));
         } else {
             skip(stats, "lineStrokeWidth");
         }
 
         Map<String, Double> classWeights = config.getClassWeightMultipliers();
         if (classWeights != null && !classWeights.isEmpty()) {
-            emit(sb, stats, "classWeightMultipliers",
+            emit(
+                    sb,
+                    stats,
+                    "classWeightMultipliers",
                     buildMapLiteral(BUILDER_INDENT + ".classWeightMultipliers", classWeights));
         } else {
             skip(stats, "classWeightMultipliers");
@@ -638,7 +669,10 @@ public class ScriptGenerator {
         }
 
         if (config.getDataLoaderWorkers() != 0) {
-            emit(sb, stats, "dataLoaderWorkers",
+            emit(
+                    sb,
+                    stats,
+                    "dataLoaderWorkers",
                     builderCall("dataLoaderWorkers", String.valueOf(config.getDataLoaderWorkers())));
         } else {
             skip(stats, "dataLoaderWorkers");
@@ -654,11 +688,17 @@ public class ScriptGenerator {
      */
     private static void appendTransferLearningFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Transfer Learning & Layer Freezing ---");
-        emit(sb, stats, "usePretrainedWeights",
+        emit(
+                sb,
+                stats,
+                "usePretrainedWeights",
                 builderCall("usePretrainedWeights", String.valueOf(config.isUsePretrainedWeights())));
 
         if (config.getFreezeEncoderLayers() > 0) {
-            emit(sb, stats, "freezeEncoderLayers",
+            emit(
+                    sb,
+                    stats,
+                    "freezeEncoderLayers",
                     builderCall("freezeEncoderLayers", String.valueOf(config.getFreezeEncoderLayers())));
         } else {
             skip(stats, "freezeEncoderLayers");
@@ -684,7 +724,10 @@ public class ScriptGenerator {
         if (focusClass != null && !focusClass.isEmpty()) {
             emit(sb, stats, "focusClass", builderCall("focusClass", quote(focusClass)));
             if (config.getFocusClassMinIoU() > 0) {
-                emit(sb, stats, "focusClassMinIoU",
+                emit(
+                        sb,
+                        stats,
+                        "focusClassMinIoU",
                         builderCall("focusClassMinIoU", formatDouble(config.getFocusClassMinIoU())));
             } else {
                 skip(stats, "focusClassMinIoU");
@@ -714,8 +757,7 @@ public class ScriptGenerator {
             skip(stats, "hasPerImageSplitRoles");
         }
 
-        emit(sb, stats, "validationSplit",
-                builderCall("validationSplit", formatDouble(config.getValidationSplit())));
+        emit(sb, stats, "validationSplit", builderCall("validationSplit", formatDouble(config.getValidationSplit())));
     }
 
     // ====================================================================
@@ -738,8 +780,13 @@ public class ScriptGenerator {
         appendLine(sb, BUILDER_INDENT + "// --- Tiling & Geometry ---");
         emit(sb, stats, "tileSize", builderCall("tileSize", String.valueOf(config.getTileSize())));
         emit(sb, stats, "overlap", builderCall("overlap", String.valueOf(config.getOverlap())));
-        emit(sb, stats, "blendMode",
-                builderCall("blendMode", "InferenceConfig.BlendMode." + config.getBlendMode().name()));
+        emit(
+                sb,
+                stats,
+                "blendMode",
+                builderCall(
+                        "blendMode",
+                        "InferenceConfig.BlendMode." + config.getBlendMode().name()));
     }
 
     /**
@@ -751,18 +798,30 @@ public class ScriptGenerator {
      */
     private static void appendInferenceOutputFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Output Configuration ---");
-        emit(sb, stats, "outputType",
-                builderCall("outputType", "InferenceConfig.OutputType." + config.getOutputType().name()));
+        emit(
+                sb,
+                stats,
+                "outputType",
+                builderCall(
+                        "outputType",
+                        "InferenceConfig.OutputType." + config.getOutputType().name()));
 
         if (config.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
-            emit(sb, stats, "objectType",
-                    builderCall("objectType", "InferenceConfig.OutputObjectType." + config.getObjectType().name()));
-            emit(sb, stats, "minObjectSize",
+            emit(
+                    sb,
+                    stats,
+                    "objectType",
+                    builderCall(
+                            "objectType",
+                            "InferenceConfig.OutputObjectType."
+                                    + config.getObjectType().name()));
+            emit(
+                    sb,
+                    stats,
+                    "minObjectSize",
                     builderCall("minObjectSize", formatDouble(config.getMinObjectSizeMicrons())));
-            emit(sb, stats, "holeFilling",
-                    builderCall("holeFilling", formatDouble(config.getHoleFillingMicrons())));
-            emit(sb, stats, "boundarySmoothing",
-                    builderCall("smoothing", formatDouble(config.getBoundarySmoothing())));
+            emit(sb, stats, "holeFilling", builderCall("holeFilling", formatDouble(config.getHoleFillingMicrons())));
+            emit(sb, stats, "boundarySmoothing", builderCall("smoothing", formatDouble(config.getBoundarySmoothing())));
         } else {
             skip(stats, "objectType");
             skip(stats, "minObjectSize");
@@ -777,9 +836,15 @@ public class ScriptGenerator {
      */
     private static void appendInferenceSmoothingFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Smoothing & Output Format ---");
-        emit(sb, stats, "overlaySmoothingSigma",
+        emit(
+                sb,
+                stats,
+                "overlaySmoothingSigma",
                 builderCall("overlaySmoothingSigma", formatDouble(config.getOverlaySmoothingSigma())));
-        emit(sb, stats, "useCompactArgmaxOutput",
+        emit(
+                sb,
+                stats,
+                "useCompactArgmaxOutput",
                 builderCall("useCompactArgmaxOutput", String.valueOf(config.isUseCompactArgmaxOutput())));
     }
 
@@ -791,9 +856,15 @@ public class ScriptGenerator {
         appendLine(sb, BUILDER_INDENT + "// --- Inference Strategy ---");
         emit(sb, stats, "useGPU", builderCall("useGPU", String.valueOf(config.isUseGPU())));
         emit(sb, stats, "useTTA", builderCall("useTTA", String.valueOf(config.isUseTTA())));
-        emit(sb, stats, "multiPassAveraging",
+        emit(
+                sb,
+                stats,
+                "multiPassAveraging",
                 builderCall("multiPassAveraging", String.valueOf(config.isMultiPassAveraging())));
-        emit(sb, stats, "maxTilesInMemory",
+        emit(
+                sb,
+                stats,
+                "maxTilesInMemory",
                 builderCall("maxTilesInMemory", String.valueOf(config.getMaxTilesInMemory())));
     }
 
@@ -809,11 +880,14 @@ public class ScriptGenerator {
     private static void appendChannelConfig(StringBuilder sb, ChannelConfiguration channelConfig) {
         appendLine(sb, "// Configure channels");
         appendLine(sb, "def channelConfig = ChannelConfiguration.builder()");
-        appendLine(sb, BUILDER_INDENT + ".selectedChannels(" + formatIntList(channelConfig.getSelectedChannels()) + ")");
+        appendLine(
+                sb, BUILDER_INDENT + ".selectedChannels(" + formatIntList(channelConfig.getSelectedChannels()) + ")");
         appendLine(sb, BUILDER_INDENT + ".channelNames(" + formatStringList(channelConfig.getChannelNames()) + ")");
         appendLine(sb, BUILDER_INDENT + ".bitDepth(" + channelConfig.getBitDepth() + ")");
-        appendLine(sb, BUILDER_INDENT + ".normalizationStrategy(ChannelConfiguration.NormalizationStrategy."
-                + channelConfig.getNormalizationStrategy().name() + ")");
+        appendLine(
+                sb,
+                BUILDER_INDENT + ".normalizationStrategy(ChannelConfiguration.NormalizationStrategy."
+                        + channelConfig.getNormalizationStrategy().name() + ")");
         appendLine(sb, BUILDER_INDENT + ".build()");
         appendLine(sb, "");
     }
@@ -976,8 +1050,7 @@ public class ScriptGenerator {
      */
     private static String quote(String value) {
         if (value == null) return "null";
-        String escaped = value
-                .replace("\\", "\\\\")
+        String escaped = value.replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
@@ -991,9 +1064,7 @@ public class ScriptGenerator {
      */
     private static String formatStringList(List<String> items) {
         if (items == null || items.isEmpty()) return "[]";
-        return items.stream()
-                .map(ScriptGenerator::quote)
-                .collect(Collectors.joining(", ", "[", "]"));
+        return items.stream().map(ScriptGenerator::quote).collect(Collectors.joining(", ", "[", "]"));
     }
 
     /**
@@ -1002,9 +1073,7 @@ public class ScriptGenerator {
      */
     private static String formatIntList(List<Integer> items) {
         if (items == null || items.isEmpty()) return "[]";
-        return items.stream()
-                .map(String::valueOf)
-                .collect(Collectors.joining(", ", "[", "]"));
+        return items.stream().map(String::valueOf).collect(Collectors.joining(", ", "[", "]"));
     }
 
     // ====================================================================

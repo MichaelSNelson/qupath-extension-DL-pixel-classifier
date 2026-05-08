@@ -1,5 +1,16 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
@@ -17,22 +28,8 @@ import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.objects.PathObject;
-import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
-
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.stream.Collectors;
 
 /**
  * Dialog for configuring self-supervised pretraining (SimCLR / BYOL)
@@ -54,19 +51,22 @@ public class SSLPretrainingDialog {
 
     private static final Logger logger = LoggerFactory.getLogger(SSLPretrainingDialog.class);
 
-    private static final Set<String> IMAGE_EXTENSIONS = Set.of(
-            ".png", ".tif", ".tiff", ".jpg", ".jpeg", ".bmp", ".raw");
+    private static final Set<String> IMAGE_EXTENSIONS =
+            Set.of(".png", ".tif", ".tiff", ".jpg", ".jpeg", ".bmp", ".raw");
 
     /** Backbone names that are ViT/foundation models -- not compatible with SMP SSL pretraining. */
-    private static final Set<String> EXCLUDED_BACKBONES = Set.of(
-            "h-optimus-0", "virchow", "hibou-l", "hibou-b", "midnight", "dinov2-large");
+    private static final Set<String> EXCLUDED_BACKBONES =
+            Set.of("h-optimus-0", "virchow", "hibou-l", "hibou-b", "midnight", "dinov2-large");
 
     /** CNN-only backbones for SSL pretraining. */
     private static final List<String> SSL_BACKBONES = UNetHandler.BACKBONES.stream()
             .filter(b -> !EXCLUDED_BACKBONES.contains(b))
             .toList();
 
-    public enum SourceMode { PROJECT_IMAGES, PRE_EXTRACTED_FOLDER }
+    public enum SourceMode {
+        PROJECT_IMAGES,
+        PRE_EXTRACTED_FOLDER
+    }
 
     /**
      * Result record containing all configuration needed to launch SSL
@@ -81,8 +81,7 @@ public class SSLPretrainingDialog {
             List<String> annotationClasses,
             int extractionTileSize,
             double extractionDownsample,
-            int maxTilesTotal
-    ) {}
+            int maxTilesTotal) {}
 
     // Method & architecture controls
     private final ComboBox<String> methodCombo;
@@ -139,31 +138,31 @@ public class SSLPretrainingDialog {
 
     private SSLPretrainingDialog() {
         // --- Method selection ---
-        methodCombo = new ComboBox<>(FXCollections.observableArrayList(
-                "BYOL", "SimCLR (contrastive, larger batches)"));
+        methodCombo = new ComboBox<>(FXCollections.observableArrayList("BYOL", "SimCLR (contrastive, larger batches)"));
         methodCombo.setValue("BYOL");
         methodCombo.setMaxWidth(Double.MAX_VALUE);
-        TooltipHelper.install(methodCombo,
-                "Self-supervised pretraining method. BOTH methods consume\n" +
-                "the same flat tile dataset -- you do NOT need to provide\n" +
-                "paired images. SimCLR generates its 'pair' internally by\n" +
-                "running each tile through two random augmentations.\n\n" +
-                "Dataset-size guide (number of tiles, not source images):\n" +
-                "  small  : < 20,000 tiles\n" +
-                "  medium : 20,000 - 200,000 tiles\n" +
-                "  large  : > 200,000 tiles\n" +
-                "These thresholds are also used by the other SSL tooltips.\n\n" +
-                "SimCLR: Contrastive learning. For each tile, two random\n" +
-                "augmentations form a positive pair; every other tile in\n" +
-                "the batch is a negative. The model learns to pull positives\n" +
-                "together and push negatives apart. Needs many negatives\n" +
-                "per step, so larger batches help (>= 128 ideal, 64 minimum)\n" +
-                "and it's best on medium/large datasets.\n\n" +
-                "BYOL: Self-distillation -- no negatives needed at all. A\n" +
-                "student network predicts the output of an EMA-averaged\n" +
-                "teacher on a different augmentation of the same tile.\n" +
-                "Works on small datasets (< 20,000 tiles) and small batches\n" +
-                "(16-32) where SimCLR would underperform.");
+        TooltipHelper.install(
+                methodCombo,
+                "Self-supervised pretraining method. BOTH methods consume\n"
+                        + "the same flat tile dataset -- you do NOT need to provide\n"
+                        + "paired images. SimCLR generates its 'pair' internally by\n"
+                        + "running each tile through two random augmentations.\n\n"
+                        + "Dataset-size guide (number of tiles, not source images):\n"
+                        + "  small  : < 20,000 tiles\n"
+                        + "  medium : 20,000 - 200,000 tiles\n"
+                        + "  large  : > 200,000 tiles\n"
+                        + "These thresholds are also used by the other SSL tooltips.\n\n"
+                        + "SimCLR: Contrastive learning. For each tile, two random\n"
+                        + "augmentations form a positive pair; every other tile in\n"
+                        + "the batch is a negative. The model learns to pull positives\n"
+                        + "together and push negatives apart. Needs many negatives\n"
+                        + "per step, so larger batches help (>= 128 ideal, 64 minimum)\n"
+                        + "and it's best on medium/large datasets.\n\n"
+                        + "BYOL: Self-distillation -- no negatives needed at all. A\n"
+                        + "student network predicts the output of an EMA-averaged\n"
+                        + "teacher on a different augmentation of the same tile.\n"
+                        + "Works on small datasets (< 20,000 tiles) and small batches\n"
+                        + "(16-32) where SimCLR would underperform.");
 
         // --- Backbone selection ---
         backboneCombo = new ComboBox<>(FXCollections.observableArrayList(SSL_BACKBONES));
@@ -171,13 +170,14 @@ public class SSLPretrainingDialog {
         backboneCombo.setMaxWidth(Double.MAX_VALUE);
         backboneCombo.setCellFactory(lv -> createBackboneCell());
         backboneCombo.setButtonCell(createBackboneCell());
-        TooltipHelper.install(backboneCombo,
-                "CNN encoder backbone to pretrain.\n" +
-                "Must match the backbone you plan to use for supervised training.\n" +
-                "ResNet-34 is a good default for medium datasets (20k-200k tiles).\n" +
-                "For small datasets (< 20k tiles), ResNet-18 may overfit less;\n" +
-                "for large datasets (> 200k tiles), ResNet-50 has more capacity\n" +
-                "but needs more epochs and GPU memory.");
+        TooltipHelper.install(
+                backboneCombo,
+                "CNN encoder backbone to pretrain.\n"
+                        + "Must match the backbone you plan to use for supervised training.\n"
+                        + "ResNet-34 is a good default for medium datasets (20k-200k tiles).\n"
+                        + "For small datasets (< 20k tiles), ResNet-18 may overfit less;\n"
+                        + "for large datasets (> 200k tiles), ResNet-50 has more capacity\n"
+                        + "but needs more epochs and GPU memory.");
 
         // --- Temperature (SimCLR only) ---
         temperatureSpinner = new Spinner<>(0.05, 1.0, 0.5, 0.05);
@@ -185,12 +185,12 @@ public class SSLPretrainingDialog {
         temperatureSpinner.setPrefWidth(100);
         temperatureLabel = new Label("Temperature:");
         TooltipHelper.install(
-                "SimCLR temperature parameter.\n" +
-                "Lower values make the contrastive loss sharper.\n" +
-                "0.5 is a common default. Try 0.1-0.2 on small datasets\n" +
-                "(< 20,000 tiles) where the model needs sharper distinctions\n" +
-                "between the few examples it has.",
-                temperatureLabel, temperatureSpinner);
+                "SimCLR temperature parameter.\n" + "Lower values make the contrastive loss sharper.\n"
+                        + "0.5 is a common default. Try 0.1-0.2 on small datasets\n"
+                        + "(< 20,000 tiles) where the model needs sharper distinctions\n"
+                        + "between the few examples it has.",
+                temperatureLabel,
+                temperatureSpinner);
 
         // Show/hide temperature based on method
         methodCombo.valueProperty().addListener((obs, old, newVal) -> {
@@ -206,21 +206,22 @@ public class SSLPretrainingDialog {
         projectionDimSpinner = new Spinner<>(64, 512, 256, 64);
         projectionDimSpinner.setEditable(true);
         projectionDimSpinner.setPrefWidth(100);
-        TooltipHelper.install(projectionDimSpinner,
-                "Dimension of the projection head output.\n" +
-                "256 is the standard default for both SimCLR and BYOL.");
+        TooltipHelper.install(
+                projectionDimSpinner,
+                "Dimension of the projection head output.\n" + "256 is the standard default for both SimCLR and BYOL.");
 
         // --- Source model (domain-adaptive pretraining) ---
         sourceModelField = new TextField();
         sourceModelField.setEditable(false);
         sourceModelField.setPromptText("(Optional) Select trained model for domain adaptation...");
         sourceModelField.setMaxWidth(Double.MAX_VALUE);
-        TooltipHelper.install(sourceModelField,
-                "Optional: load encoder weights from a previously trained\n" +
-                "classifier model (.pt file). The encoder will start with\n" +
-                "those learned features and adapt them to the new images\n" +
-                "during SSL pretraining.\n\n" +
-                "Leave empty to train the encoder from scratch.");
+        TooltipHelper.install(
+                sourceModelField,
+                "Optional: load encoder weights from a previously trained\n"
+                        + "classifier model (.pt file). The encoder will start with\n"
+                        + "those learned features and adapt them to the new images\n"
+                        + "during SSL pretraining.\n\n"
+                        + "Leave empty to train the encoder from scratch.");
 
         sourceModelInfoLabel = new Label();
         sourceModelInfoLabel.setWrapText(true);
@@ -232,94 +233,110 @@ public class SSLPretrainingDialog {
         epochsSpinner = new Spinner<>(10, 2000, 100, 10);
         epochsSpinner.setEditable(true);
         epochsSpinner.setPrefWidth(100);
-        TooltipHelper.install(epochsSpinner,
-                "Number of complete passes through the training data.\n" +
-                "More epochs allow the model to learn more.\n" +
-                "Rough guide:\n" +
-                "  small  (< 20k tiles)    : 200-400 epochs\n" +
-                "  medium (20k-200k tiles) : 100-200 epochs\n" +
-                "  large  (> 200k tiles)   : 50-100 epochs\n" +
-                "(Smaller datasets need more passes to see enough variety.)");
+        TooltipHelper.install(
+                epochsSpinner,
+                "Number of complete passes through the training data.\n"
+                        + "More epochs allow the model to learn more.\n"
+                        + "Rough guide:\n"
+                        + "  small  (< 20k tiles)    : 200-400 epochs\n"
+                        + "  medium (20k-200k tiles) : 100-200 epochs\n"
+                        + "  large  (> 200k tiles)   : 50-100 epochs\n"
+                        + "(Smaller datasets need more passes to see enough variety.)");
 
         batchSizeSpinner = new Spinner<>(2, 256, 64, 8);
         batchSizeSpinner.setEditable(true);
         batchSizeSpinner.setPrefWidth(100);
-        TooltipHelper.install(batchSizeSpinner,
-                "Number of images per batch.\n" +
-                "SimCLR benefits from larger batches (64+).\n" +
-                "BYOL works well with smaller batches (16-32).\n" +
-                "Gradient accumulation is auto-applied if needed.");
+        TooltipHelper.install(
+                batchSizeSpinner,
+                "Number of images per batch.\n" + "SimCLR benefits from larger batches (64+).\n"
+                        + "BYOL works well with smaller batches (16-32).\n"
+                        + "Gradient accumulation is auto-applied if needed.");
 
         var lrFactory = new SpinnerValueFactory.DoubleSpinnerValueFactory(1e-5, 1e-2, 3e-4, 1e-5);
         lrFactory.setConverter(new javafx.util.StringConverter<>() {
-            @Override public String toString(Double value) {
+            @Override
+            public String toString(Double value) {
                 return value == null ? "" : String.format("%.5f", value);
             }
-            @Override public Double fromString(String string) {
-                try { return Double.parseDouble(string.trim()); }
-                catch (NumberFormatException e) { return lrFactory.getValue(); }
+
+            @Override
+            public Double fromString(String string) {
+                try {
+                    return Double.parseDouble(string.trim());
+                } catch (NumberFormatException e) {
+                    return lrFactory.getValue();
+                }
             }
         });
         learningRateSpinner = new Spinner<>(lrFactory);
         learningRateSpinner.setEditable(true);
         learningRateSpinner.setPrefWidth(120);
-        TooltipHelper.install(learningRateSpinner,
-                "Step size for the optimizer.\n" +
-                "3e-4 (0.00030) is a good default for SSL pretraining.\n" +
-                "Cosine annealing with warmup is applied automatically.");
+        TooltipHelper.install(
+                learningRateSpinner,
+                "Step size for the optimizer.\n" + "3e-4 (0.00030) is a good default for SSL pretraining.\n"
+                        + "Cosine annealing with warmup is applied automatically.");
 
         warmupEpochsSpinner = new Spinner<>(0, 50, 10, 1);
         warmupEpochsSpinner.setEditable(true);
         warmupEpochsSpinner.setPrefWidth(100);
-        TooltipHelper.install(warmupEpochsSpinner,
-                "Number of epochs to linearly ramp up the learning rate.\n" +
-                "Prevents early instability. 10 is typical for SSL.");
+        TooltipHelper.install(
+                warmupEpochsSpinner,
+                "Number of epochs to linearly ramp up the learning rate.\n"
+                        + "Prevents early instability. 10 is typical for SSL.");
 
         // BYOL paper recommends ~1.5e-6; SimCLR tolerates 1e-4. BatchNorm
         // and bias parameters are excluded from weight decay automatically.
-        var wdFactory = new SpinnerValueFactory.DoubleSpinnerValueFactory(
-                0.0, 1e-2, 1e-6, 1e-6);
+        var wdFactory = new SpinnerValueFactory.DoubleSpinnerValueFactory(0.0, 1e-2, 1e-6, 1e-6);
         wdFactory.setConverter(new javafx.util.StringConverter<Double>() {
-            @Override public String toString(Double v) {
+            @Override
+            public String toString(Double v) {
                 return v == null ? "" : String.format("%.2e", v);
             }
-            @Override public Double fromString(String s) {
-                try { return Double.parseDouble(s); }
-                catch (Exception e) { return 1e-6; }
+
+            @Override
+            public Double fromString(String s) {
+                try {
+                    return Double.parseDouble(s);
+                } catch (Exception e) {
+                    return 1e-6;
+                }
             }
         });
         weightDecaySpinner = new Spinner<>(wdFactory);
         weightDecaySpinner.setEditable(true);
         weightDecaySpinner.setPrefWidth(120);
-        TooltipHelper.install(weightDecaySpinner,
-                "L2 weight decay applied to non-BN, non-bias parameters.\n" +
-                "BYOL: 1e-6 (paper default). SimCLR: 1e-4 typical.\n" +
-                "Higher values can trigger BYOL collapse on small datasets\n" +
-                "(< 20,000 tiles), where the EMA target has less variety to\n" +
-                "anchor against. Stay near 1e-6 below ~20k tiles.");
+        TooltipHelper.install(
+                weightDecaySpinner,
+                "L2 weight decay applied to non-BN, non-bias parameters.\n"
+                        + "BYOL: 1e-6 (paper default). SimCLR: 1e-4 typical.\n"
+                        + "Higher values can trigger BYOL collapse on small datasets\n"
+                        + "(< 20,000 tiles), where the EMA target has less variety to\n"
+                        + "anchor against. Stay near 1e-6 below ~20k tiles.");
 
         emaDecaySpinner = new Spinner<>(0.9, 0.9999, 0.996, 0.001);
         emaDecaySpinner.setEditable(true);
         emaDecaySpinner.setPrefWidth(100);
         emaDecayLabel = new Label("EMA tau (start):");
         TooltipHelper.install(
-                "BYOL target-network EMA decay at the START of training.\n" +
-                "Schedule cosines from this value up to 'EMA tau (end)'.\n" +
-                "0.996 is the BYOL paper default; lower (0.99) helps on\n" +
-                "small datasets (< 20,000 tiles), where the target moves\n" +
-                "too slowly relative to how often the student sees each\n" +
-                "tile and collapse risk is higher.",
-                emaDecayLabel, emaDecaySpinner);
+                "BYOL target-network EMA decay at the START of training.\n"
+                        + "Schedule cosines from this value up to 'EMA tau (end)'.\n"
+                        + "0.996 is the BYOL paper default; lower (0.99) helps on\n"
+                        + "small datasets (< 20,000 tiles), where the target moves\n"
+                        + "too slowly relative to how often the student sees each\n"
+                        + "tile and collapse risk is higher.",
+                emaDecayLabel,
+                emaDecaySpinner);
 
         emaDecayFinalSpinner = new Spinner<>(0.99, 1.0, 1.0, 0.001);
         emaDecayFinalSpinner.setEditable(true);
         emaDecayFinalSpinner.setPrefWidth(100);
         emaDecayFinalLabel = new Label("EMA tau (end):");
         TooltipHelper.install(
-                "BYOL target-network EMA decay at the END of training.\n" +
-                "1.0 freezes the target near the end (BYOL paper recipe).\n" +
-                "Set equal to start to disable scheduling.",
-                emaDecayFinalLabel, emaDecayFinalSpinner);
+                "BYOL target-network EMA decay at the END of training.\n"
+                        + "1.0 freezes the target near the end (BYOL paper recipe).\n"
+                        + "Set equal to start to disable scheduling.",
+                emaDecayFinalLabel,
+                emaDecayFinalSpinner);
 
         // Hide EMA controls in SimCLR mode (only BYOL uses them).
         boolean isBYOLInit = "BYOL".equalsIgnoreCase(methodCombo.getValue());
@@ -333,88 +350,99 @@ public class SSLPretrainingDialog {
         emaDecayFinalSpinner.setManaged(isBYOLInit);
         methodCombo.valueProperty().addListener((obs, oldV, newV) -> {
             boolean isBYOL = "BYOL".equalsIgnoreCase(newV);
-            emaDecayLabel.setVisible(isBYOL); emaDecayLabel.setManaged(isBYOL);
-            emaDecaySpinner.setVisible(isBYOL); emaDecaySpinner.setManaged(isBYOL);
-            emaDecayFinalLabel.setVisible(isBYOL); emaDecayFinalLabel.setManaged(isBYOL);
-            emaDecayFinalSpinner.setVisible(isBYOL); emaDecayFinalSpinner.setManaged(isBYOL);
+            emaDecayLabel.setVisible(isBYOL);
+            emaDecayLabel.setManaged(isBYOL);
+            emaDecaySpinner.setVisible(isBYOL);
+            emaDecaySpinner.setManaged(isBYOL);
+            emaDecayFinalLabel.setVisible(isBYOL);
+            emaDecayFinalLabel.setManaged(isBYOL);
+            emaDecayFinalSpinner.setVisible(isBYOL);
+            emaDecayFinalSpinner.setManaged(isBYOL);
         });
 
         stainAugCheckBox = new CheckBox("HED stain jitter (H&E)");
         stainAugCheckBox.setSelected(true);
-        TooltipHelper.install(stainAugCheckBox,
-                "Apply stain-aware augmentation in HED color space for H&E.\n" +
-                "Models realistic stain variation without breaking morphology.\n" +
-                "Disable for non-H&E brightfield (e.g. IHC, special stains).");
+        TooltipHelper.install(
+                stainAugCheckBox,
+                "Apply stain-aware augmentation in HED color space for H&E.\n"
+                        + "Models realistic stain variation without breaking morphology.\n"
+                        + "Disable for non-H&E brightfield (e.g. IHC, special stains).");
 
         scaleLrByBatchCheckBox = new CheckBox("Scale LR by batch size");
         scaleLrByBatchCheckBox.setSelected(false);
-        TooltipHelper.install(scaleLrByBatchCheckBox,
-                "Apply the BYOL/SimCLR linear LR scaling rule:\n" +
-                "    actual_lr = learning_rate * batch_size / 256\n\n" +
-                "The papers train at batch sizes much larger than 32, and\n" +
-                "their reported LRs assume this scaling. The unscaled value\n" +
-                "(e.g. 3e-4) is closer to a batch=256 setting and can be\n" +
-                "too aggressive at small batch, causing loss instability.\n\n" +
-                "Recommended for small batches (<= 64). Disable to use the\n" +
-                "learning rate exactly as entered.");
+        TooltipHelper.install(
+                scaleLrByBatchCheckBox,
+                "Apply the BYOL/SimCLR linear LR scaling rule:\n"
+                        + "    actual_lr = learning_rate * batch_size / 256\n\n"
+                        + "The papers train at batch sizes much larger than 32, and\n"
+                        + "their reported LRs assume this scaling. The unscaled value\n"
+                        + "(e.g. 3e-4) is closer to a batch=256 setting and can be\n"
+                        + "too aggressive at small batch, causing loss instability.\n\n"
+                        + "Recommended for small batches (<= 64). Disable to use the\n"
+                        + "learning rate exactly as entered.");
 
         // --- Source mode radios ---
         projectModeRadio = new RadioButton("Project images (extract tiles from annotations)");
         projectModeRadio.setToggleGroup(sourceModeGroup);
         projectModeRadio.setSelected(true);
-        TooltipHelper.install(projectModeRadio,
-                "Extract pretraining tiles from images in the currently\n" +
-                "open QuPath project. Only regions covered by annotations\n" +
-                "of the selected classes contribute tiles, so empty slide\n" +
-                "background doesn't waste training compute.");
+        TooltipHelper.install(
+                projectModeRadio,
+                "Extract pretraining tiles from images in the currently\n"
+                        + "open QuPath project. Only regions covered by annotations\n"
+                        + "of the selected classes contribute tiles, so empty slide\n"
+                        + "background doesn't waste training compute.");
 
         folderModeRadio = new RadioButton("Pre-extracted folder");
         folderModeRadio.setToggleGroup(sourceModeGroup);
-        TooltipHelper.install(folderModeRadio,
-                "Use an existing directory of image tiles.\n" +
-                "Supported formats: PNG, TIFF, JPEG, BMP, RAW.\n" +
-                "Subdirectories are scanned recursively.");
+        TooltipHelper.install(
+                folderModeRadio,
+                "Use an existing directory of image tiles.\n" + "Supported formats: PNG, TIFF, JPEG, BMP, RAW.\n"
+                        + "Subdirectories are scanned recursively.");
 
         // --- Project-mode controls ---
         projectImagesList.setCellFactory(lv -> new SSLImageCell());
         projectImagesList.setPrefHeight(130);
-        TooltipHelper.install(projectImagesList,
-                "Select which project images to extract tiles from.\n" +
-                "Check the images you want to include in pretraining.\n" +
-                "The number of classified annotations is shown per image.");
+        TooltipHelper.install(
+                projectImagesList,
+                "Select which project images to extract tiles from.\n"
+                        + "Check the images you want to include in pretraining.\n"
+                        + "The number of classified annotations is shown per image.");
 
         annotationClassList.setCellFactory(lv -> new SSLClassCell());
         annotationClassList.setPrefHeight(80);
         annotationClassList.setPlaceholder(new Label("Select images to see available classes"));
-        TooltipHelper.install(annotationClassList,
-                "Select which annotation classes define regions of interest.\n" +
-                "Tiles are only extracted from areas covered by annotations\n" +
-                "of the checked classes. Uncheck classes you want to exclude\n" +
-                "(e.g., Background).");
+        TooltipHelper.install(
+                annotationClassList,
+                "Select which annotation classes define regions of interest.\n"
+                        + "Tiles are only extracted from areas covered by annotations\n"
+                        + "of the checked classes. Uncheck classes you want to exclude\n"
+                        + "(e.g., Background).");
 
         extractionTileSpinner = new Spinner<>(128, 1024, 256, 64);
         extractionTileSpinner.setEditable(true);
         extractionTileSpinner.setPrefWidth(100);
-        TooltipHelper.install(extractionTileSpinner,
-                "Size of the image tiles extracted from each slide.\n" +
-                "256 is a common default for SSL pretraining.");
+        TooltipHelper.install(
+                extractionTileSpinner,
+                "Size of the image tiles extracted from each slide.\n"
+                        + "256 is a common default for SSL pretraining.");
 
         extractionDownsampleCombo = new ComboBox<>(FXCollections.observableArrayList(1.0, 2.0, 4.0, 8.0));
         extractionDownsampleCombo.setValue(1.0);
         extractionDownsampleCombo.setPrefWidth(100);
-        TooltipHelper.install(extractionDownsampleCombo,
-                "Downsample factor applied when reading tiles.\n" +
-                "1 = full resolution, 2 = half, 4 = quarter.\n" +
-                "Match the downsample you use for supervised training.");
+        TooltipHelper.install(
+                extractionDownsampleCombo,
+                "Downsample factor applied when reading tiles.\n" + "1 = full resolution, 2 = half, 4 = quarter.\n"
+                        + "Match the downsample you use for supervised training.");
 
         maxTilesSpinner = new Spinner<>(100, 500000, 50000, 1000);
         maxTilesSpinner.setEditable(true);
         maxTilesSpinner.setPrefWidth(100);
-        TooltipHelper.install(maxTilesSpinner,
-                "Maximum tiles to keep across all selected images.\n" +
-                "Prevents a single large WSI from overwhelming the pool.\n" +
-                "SSL benefits from diversity: 50k+ tiles is recommended.\n" +
-                "Tiny pools (<10k) risk BYOL representation collapse on long runs.");
+        TooltipHelper.install(
+                maxTilesSpinner,
+                "Maximum tiles to keep across all selected images.\n"
+                        + "Prevents a single large WSI from overwhelming the pool.\n"
+                        + "SSL benefits from diversity: 50k+ tiles is recommended.\n"
+                        + "Tiny pools (<10k) risk BYOL representation collapse on long runs.");
 
         projectSummaryLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
         projectSummaryLabel.setWrapText(true);
@@ -423,10 +451,10 @@ public class SSLPretrainingDialog {
         dataPathField = new TextField();
         dataPathField.setPromptText("Directory of unlabeled image tiles...");
         dataPathField.setPrefWidth(250);
-        TooltipHelper.install(dataPathField,
-                "Path to a directory of unlabeled image tiles.\n" +
-                "Supported: PNG, TIFF, JPEG, BMP, RAW.\n" +
-                "Subdirectories are scanned recursively.");
+        TooltipHelper.install(
+                dataPathField,
+                "Path to a directory of unlabeled image tiles.\n" + "Supported: PNG, TIFF, JPEG, BMP, RAW.\n"
+                        + "Subdirectories are scanned recursively.");
 
         datasetInfoLabel = new Label();
         datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
@@ -436,19 +464,19 @@ public class SSLPretrainingDialog {
         runNameField = new TextField();
         runNameField.setPromptText("Run name (e.g., SSL-Test-1)...");
         runNameField.setPrefWidth(250);
-        TooltipHelper.install(runNameField,
-                "Name used to label this pretraining run.\n" +
-                "Shown in the progress dialog header and saved in\n" +
-                "metadata.json so you can tell runs apart later.\n" +
-                "Defaults to <backbone>-<method>-<timestamp>.");
+        TooltipHelper.install(
+                runNameField,
+                "Name used to label this pretraining run.\n" + "Shown in the progress dialog header and saved in\n"
+                        + "metadata.json so you can tell runs apart later.\n"
+                        + "Defaults to <backbone>-<method>-<timestamp>.");
 
         outputDirField = new TextField();
         outputDirField.setPromptText("Output directory for encoder weights...");
         outputDirField.setPrefWidth(250);
-        TooltipHelper.install(outputDirField,
-                "Directory where the pretrained encoder weights (model.pt)\n" +
-                "and metadata.json will be saved.\n" +
-                "Defaults to a timestamped folder in the project directory.");
+        TooltipHelper.install(
+                outputDirField,
+                "Directory where the pretrained encoder weights (model.pt)\n" + "and metadata.json will be saved.\n"
+                        + "Defaults to a timestamped folder in the project directory.");
 
         runNameField.setText(buildDefaultRunName());
 
@@ -456,7 +484,8 @@ public class SSLPretrainingDialog {
         if (qupath != null && qupath.getProject() != null) {
             try {
                 Path projectDir = qupath.getProject().getPath().getParent();
-                outputDirField.setText(projectDir.resolve("ssl_pretrained")
+                outputDirField.setText(projectDir
+                        .resolve("ssl_pretrained")
                         .resolve(runNameField.getText())
                         .toString());
             } catch (Exception e) {
@@ -518,12 +547,14 @@ public class SSLPretrainingDialog {
 
         // Enable Start only when valid
         Button startButton = (Button) dialog.getDialogPane().lookupButton(startType);
-        startButton.disableProperty().bind(Bindings.createBooleanBinding(
-                () -> !isStartValid(),
-                sourceModeGroup.selectedToggleProperty(),
-                dataPathField.textProperty(),
-                projectImagesList.getItems(),
-                annotationClassList.getItems()));
+        startButton
+                .disableProperty()
+                .bind(Bindings.createBooleanBinding(
+                        () -> !isStartValid(),
+                        sourceModeGroup.selectedToggleProperty(),
+                        dataPathField.textProperty(),
+                        projectImagesList.getItems(),
+                        annotationClassList.getItems()));
         // OK_DONE buttons default to defaultButton=true, so pressing Enter
         // anywhere in the dialog (including in a Spinner editor while the
         // user is just trying to commit a value to update the live VRAM
@@ -542,7 +573,8 @@ public class SSLPretrainingDialog {
         root.setPadding(new Insets(10));
 
         GridPane grid = new GridPane();
-        grid.setHgap(10); grid.setVgap(8);
+        grid.setHgap(10);
+        grid.setVgap(8);
         // Ensure the control column stretches to fill available width
         javafx.scene.layout.ColumnConstraints labelCol = new javafx.scene.layout.ColumnConstraints();
         javafx.scene.layout.ColumnConstraints controlCol = new javafx.scene.layout.ColumnConstraints();
@@ -551,33 +583,35 @@ public class SSLPretrainingDialog {
 
         Label methodLabel = new Label("SSL Method:");
         TooltipHelper.install(
-                "Self-supervised pretraining method. BOTH methods consume\n" +
-                "the same flat tile dataset -- you do NOT need paired images.\n" +
-                "SimCLR generates its 'pair' internally by running each tile\n" +
-                "through two random augmentations.\n\n" +
-                "Dataset-size guide (number of tiles):\n" +
-                "  small  : < 20,000 tiles\n" +
-                "  medium : 20,000 - 200,000 tiles\n" +
-                "  large  : > 200,000 tiles\n\n" +
-                "SimCLR: Contrastive learning -- pull augmented views of the\n" +
-                "same tile together, push other tiles apart. Best on medium/\n" +
-                "large datasets; needs batch size >= 64 (>= 128 ideal) for\n" +
-                "enough negatives per step.\n" +
-                "BYOL: Self-distillation -- student predicts an EMA teacher's\n" +
-                "output. Best on small datasets (< 20k tiles) and small\n" +
-                "batches (16-32); no negatives needed.",
-                methodLabel, methodCombo);
+                "Self-supervised pretraining method. BOTH methods consume\n"
+                        + "the same flat tile dataset -- you do NOT need paired images.\n"
+                        + "SimCLR generates its 'pair' internally by running each tile\n"
+                        + "through two random augmentations.\n\n"
+                        + "Dataset-size guide (number of tiles):\n"
+                        + "  small  : < 20,000 tiles\n"
+                        + "  medium : 20,000 - 200,000 tiles\n"
+                        + "  large  : > 200,000 tiles\n\n"
+                        + "SimCLR: Contrastive learning -- pull augmented views of the\n"
+                        + "same tile together, push other tiles apart. Best on medium/\n"
+                        + "large datasets; needs batch size >= 64 (>= 128 ideal) for\n"
+                        + "enough negatives per step.\n"
+                        + "BYOL: Self-distillation -- student predicts an EMA teacher's\n"
+                        + "output. Best on small datasets (< 20k tiles) and small\n"
+                        + "batches (16-32); no negatives needed.",
+                methodLabel,
+                methodCombo);
         grid.add(methodLabel, 0, 0);
         grid.add(methodCombo, 1, 0);
 
         Label backboneLabel = new Label("Backbone:");
         TooltipHelper.install(
-                "CNN encoder backbone to pretrain.\n" +
-                "Must match the backbone you plan to use for supervised training.\n" +
-                "ResNet-34 is a good default for medium datasets (20k-200k tiles).\n" +
-                "Use ResNet-18 on small datasets (< 20k tiles) to reduce overfitting,\n" +
-                "or ResNet-50 on large datasets (> 200k tiles) for more capacity.",
-                backboneLabel, backboneCombo);
+                "CNN encoder backbone to pretrain.\n"
+                        + "Must match the backbone you plan to use for supervised training.\n"
+                        + "ResNet-34 is a good default for medium datasets (20k-200k tiles).\n"
+                        + "Use ResNet-18 on small datasets (< 20k tiles) to reduce overfitting,\n"
+                        + "or ResNet-50 on large datasets (> 200k tiles) for more capacity.",
+                backboneLabel,
+                backboneCombo);
         grid.add(backboneLabel, 0, 1);
         grid.add(backboneCombo, 1, 1);
 
@@ -586,9 +620,9 @@ public class SSLPretrainingDialog {
 
         Label projDimLabel = new Label("Projection dim:");
         TooltipHelper.install(
-                "Dimension of the projection head output.\n" +
-                "256 is the standard default for both SimCLR and BYOL.",
-                projDimLabel, projectionDimSpinner);
+                "Dimension of the projection head output.\n" + "256 is the standard default for both SimCLR and BYOL.",
+                projDimLabel,
+                projectionDimSpinner);
         grid.add(projDimLabel, 0, 3);
         grid.add(projectionDimSpinner, 1, 3);
 
@@ -597,21 +631,22 @@ public class SSLPretrainingDialog {
         // --- Domain adaptation: source model (optional) ---
         Label sourceLabel = new Label("Initialize from trained model (optional):");
         sourceLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 11px;");
-        TooltipHelper.install(sourceLabel,
-                "For domain adaptation: load encoder weights from a\n" +
-                "previously trained model, then continue SSL pretraining\n" +
-                "on new unlabeled images from the target domain.\n\n" +
-                "Leave empty to train from scratch (standard SSL).");
+        TooltipHelper.install(
+                sourceLabel,
+                "For domain adaptation: load encoder weights from a\n"
+                        + "previously trained model, then continue SSL pretraining\n"
+                        + "on new unlabeled images from the target domain.\n\n"
+                        + "Leave empty to train from scratch (standard SSL).");
 
         Button sourceModelBrowse = new Button("Browse...");
         sourceModelBrowse.setOnAction(e -> browseSourceModel());
-        TooltipHelper.install(sourceModelBrowse,
-                "Browse for a trained classifier model (.pt file)\n" +
-                "to use as the starting point for domain adaptation.");
+        TooltipHelper.install(
+                sourceModelBrowse,
+                "Browse for a trained classifier model (.pt file)\n"
+                        + "to use as the starting point for domain adaptation.");
 
         Button sourceModelClear = new Button("Clear");
-        TooltipHelper.install(sourceModelClear,
-                "Remove the source model and train from scratch.");
+        TooltipHelper.install(sourceModelClear, "Remove the source model and train from scratch.");
         sourceModelClear.setOnAction(e -> {
             sourceModelField.setText("");
             sourceModelInfoLabel.setText("");
@@ -626,19 +661,18 @@ public class SSLPretrainingDialog {
         root.getChildren().addAll(sourceLabel, sourceRow, sourceModelInfoLabel);
 
         TitledPane pane = new TitledPane("Method & Architecture", root);
-        pane.setExpanded(true); pane.setCollapsible(false);
+        pane.setExpanded(true);
+        pane.setCollapsible(false);
         return pane;
     }
 
     private void browseSourceModel() {
         javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
         chooser.setTitle("Select Trained Model (.pt)");
-        chooser.getExtensionFilters().add(
-                new javafx.stage.FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
+        chooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
 
         // Default to user's classifiers directory
-        java.io.File modelsDir = new java.io.File(
-                System.getProperty("user.home"), ".dlclassifier/models");
+        java.io.File modelsDir = new java.io.File(System.getProperty("user.home"), ".dlclassifier/models");
         if (modelsDir.isDirectory()) {
             chooser.setInitialDirectory(modelsDir);
         }
@@ -651,22 +685,24 @@ public class SSLPretrainingDialog {
         // Try to read companion metadata.json
         java.io.File metaFile = new java.io.File(file.getParentFile(), "metadata.json");
         if (metaFile.exists()) {
-            try (java.io.Reader reader = java.nio.file.Files.newBufferedReader(
-                    metaFile.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+            try (java.io.Reader reader =
+                    java.nio.file.Files.newBufferedReader(metaFile.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
                 com.google.gson.JsonObject root =
                         new com.google.gson.Gson().fromJson(reader, com.google.gson.JsonObject.class);
 
                 StringBuilder info = new StringBuilder("Source: ");
-                com.google.gson.JsonObject arch = root.has("architecture")
-                        ? root.getAsJsonObject("architecture") : null;
+                com.google.gson.JsonObject arch =
+                        root.has("architecture") ? root.getAsJsonObject("architecture") : null;
                 if (arch != null) {
                     if (arch.has("type")) info.append(arch.get("type").getAsString());
                     if (arch.has("backbone"))
-                        info.append(" (").append(arch.get("backbone").getAsString()).append(")");
+                        info.append(" (")
+                                .append(arch.get("backbone").getAsString())
+                                .append(")");
 
                     // Auto-select matching backbone if available
-                    String backbone = arch.has("backbone")
-                            ? arch.get("backbone").getAsString() : null;
+                    String backbone =
+                            arch.has("backbone") ? arch.get("backbone").getAsString() : null;
                     if (backbone != null && backboneCombo.getItems().contains(backbone)) {
                         backboneCombo.setValue(backbone);
                     }
@@ -694,51 +730,53 @@ public class SSLPretrainingDialog {
 
     private TitledPane buildTrainingSection() {
         GridPane grid = new GridPane();
-        grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(10));
+        grid.setHgap(10);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(10));
 
         Label epochsLabel = new Label("Epochs:");
         TooltipHelper.install(
-                "Number of complete passes through the training data.\n" +
-                "Rough guide:\n" +
-                "  small  (< 20k tiles)    : 200-400 epochs\n" +
-                "  medium (20k-200k tiles) : 100-200 epochs\n" +
-                "  large  (> 200k tiles)   : 50-100 epochs\n" +
-                "Diminishing returns past 400 epochs in any case.",
-                epochsLabel, epochsSpinner);
+                "Number of complete passes through the training data.\n" + "Rough guide:\n"
+                        + "  small  (< 20k tiles)    : 200-400 epochs\n"
+                        + "  medium (20k-200k tiles) : 100-200 epochs\n"
+                        + "  large  (> 200k tiles)   : 50-100 epochs\n"
+                        + "Diminishing returns past 400 epochs in any case.",
+                epochsLabel,
+                epochsSpinner);
         grid.add(epochsLabel, 0, 0);
         grid.add(epochsSpinner, 1, 0);
 
         Label batchSizeLabel = new Label("Batch size:");
         TooltipHelper.install(
-                "Number of images per training step.\n" +
-                "SimCLR benefits from larger batches (64+).\n" +
-                "BYOL works well with smaller batches (16-32).\n" +
-                "Gradient accumulation is auto-applied if needed.",
-                batchSizeLabel, batchSizeSpinner);
+                "Number of images per training step.\n" + "SimCLR benefits from larger batches (64+).\n"
+                        + "BYOL works well with smaller batches (16-32).\n"
+                        + "Gradient accumulation is auto-applied if needed.",
+                batchSizeLabel,
+                batchSizeSpinner);
         grid.add(batchSizeLabel, 0, 1);
         grid.add(batchSizeSpinner, 1, 1);
 
         Label learningRateLabel = new Label("Learning rate:");
         TooltipHelper.install(
-                "Step size for the optimizer.\n" +
-                "3e-4 (0.00030) is a good default for SSL pretraining.\n" +
-                "Cosine annealing with warmup is applied automatically.",
-                learningRateLabel, learningRateSpinner);
+                "Step size for the optimizer.\n" + "3e-4 (0.00030) is a good default for SSL pretraining.\n"
+                        + "Cosine annealing with warmup is applied automatically.",
+                learningRateLabel,
+                learningRateSpinner);
         grid.add(learningRateLabel, 0, 2);
         grid.add(learningRateSpinner, 1, 2);
 
         Label warmupLabel = new Label("Warmup epochs:");
         TooltipHelper.install(
-                "Number of epochs to linearly ramp up the learning rate.\n" +
-                "Prevents early instability. 10 is typical for SSL.",
-                warmupLabel, warmupEpochsSpinner);
+                "Number of epochs to linearly ramp up the learning rate.\n"
+                        + "Prevents early instability. 10 is typical for SSL.",
+                warmupLabel,
+                warmupEpochsSpinner);
         grid.add(warmupLabel, 0, 3);
         grid.add(warmupEpochsSpinner, 1, 3);
 
         Label weightDecayLabel = new Label("Weight decay:");
         TooltipHelper.install(
-                "L2 weight decay (excluding BN and bias parameters).",
-                weightDecayLabel, weightDecaySpinner);
+                "L2 weight decay (excluding BN and bias parameters).", weightDecayLabel, weightDecaySpinner);
         grid.add(weightDecayLabel, 0, 4);
         grid.add(weightDecaySpinner, 1, 4);
 
@@ -769,10 +807,22 @@ public class SSLPretrainingDialog {
         grid.add(configWarningLabel, 0, 10, 2, 1);
 
         // Wire VRAM estimation listeners
-        backboneCombo.valueProperty().addListener((obs, old, newVal) -> { updateVramEstimate(); updateConfigWarnings(); });
-        batchSizeSpinner.valueProperty().addListener((obs, old, newVal) -> { updateVramEstimate(); updateConfigWarnings(); });
-        extractionTileSpinner.valueProperty().addListener((obs, old, newVal) -> { updateVramEstimate(); updateConfigWarnings(); });
-        methodCombo.valueProperty().addListener((obs, old, newVal) -> { updateVramEstimate(); updateConfigWarnings(); });
+        backboneCombo.valueProperty().addListener((obs, old, newVal) -> {
+            updateVramEstimate();
+            updateConfigWarnings();
+        });
+        batchSizeSpinner.valueProperty().addListener((obs, old, newVal) -> {
+            updateVramEstimate();
+            updateConfigWarnings();
+        });
+        extractionTileSpinner.valueProperty().addListener((obs, old, newVal) -> {
+            updateVramEstimate();
+            updateConfigWarnings();
+        });
+        methodCombo.valueProperty().addListener((obs, old, newVal) -> {
+            updateVramEstimate();
+            updateConfigWarnings();
+        });
         epochsSpinner.valueProperty().addListener((obs, old, newVal) -> updateConfigWarnings());
         emaDecaySpinner.valueProperty().addListener((obs, old, newVal) -> updateConfigWarnings());
         weightDecaySpinner.valueProperty().addListener((obs, old, newVal) -> updateConfigWarnings());
@@ -781,7 +831,8 @@ public class SSLPretrainingDialog {
         updateConfigWarnings();
 
         TitledPane pane = new TitledPane("Training Parameters", grid);
-        pane.setExpanded(true); pane.setCollapsible(false);
+        pane.setExpanded(true);
+        pane.setCollapsible(false);
         return pane;
     }
 
@@ -798,9 +849,10 @@ public class SSLPretrainingDialog {
         // Image selection
         Label imagesLabel = new Label("Images:");
         imagesLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 11px;");
-        TooltipHelper.install(imagesLabel,
-                "Select which project images to use for pretraining.\n" +
-                "Tiles are extracted from annotated regions of these images.");
+        TooltipHelper.install(
+                imagesLabel,
+                "Select which project images to use for pretraining.\n"
+                        + "Tiles are extracted from annotated regions of these images.");
         Button selectAllBtn = new Button("Select All");
         selectAllBtn.setOnAction(e -> {
             for (SSLImageItem item : projectImagesList.getItems()) item.selected = true;
@@ -821,10 +873,11 @@ public class SSLPretrainingDialog {
         // Annotation class selection
         Label classesLabel = new Label("Annotation classes (tile ROI):");
         classesLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 11px;");
-        TooltipHelper.install(classesLabel,
-                "Only regions covered by annotations of the selected\n" +
-                "classes will be used to extract tiles. Uncheck classes\n" +
-                "you want to exclude (e.g., Background).");
+        TooltipHelper.install(
+                classesLabel,
+                "Only regions covered by annotations of the selected\n"
+                        + "classes will be used to extract tiles. Uncheck classes\n"
+                        + "you want to exclude (e.g., Background).");
         Button selectAllClassesBtn = new Button("All");
         selectAllClassesBtn.setOnAction(e -> {
             for (SSLClassItem item : annotationClassList.getItems()) item.selected = true;
@@ -844,47 +897,50 @@ public class SSLPretrainingDialog {
 
         // Extraction parameters
         GridPane extractionGrid = new GridPane();
-        extractionGrid.setHgap(10); extractionGrid.setVgap(8);
+        extractionGrid.setHgap(10);
+        extractionGrid.setVgap(8);
         extractionGrid.setPadding(new Insets(6, 0, 0, 0));
         Label extTileSizeLabel = new Label("Tile size:");
         TooltipHelper.install(
-                "Size of the image tiles extracted from each slide (in pixels\n" +
-                "at the chosen downsample). 256 is a common default for SSL\n" +
-                "pretraining. Should match or be close to the tile size used\n" +
-                "in supervised training.\n\n" +
-                "Note: the dataset-size thresholds in other SSL tooltips\n" +
-                "(small/medium/large at 20k / 200k tiles) assume tiles in\n" +
-                "the 224-512 pixel range at the downsample you'll train at.\n" +
-                "Halving the tile size roughly quadruples the tile count\n" +
-                "for the same area but does NOT make the dataset 'larger'\n" +
-                "in any useful sense:\n" +
-                "  - Smaller tiles see less context per view, so the encoder\n" +
-                "    learns weaker features (shape, layout, multi-cell context\n" +
-                "    are all visible only at >= 224 pixels for typical histology).\n" +
-                "  - SSL augmentations (random crop, blur) need room to vary;\n" +
-                "    below ~128 pixels they degenerate.\n" +
-                "  - Tile count and tissue area together drive variety. Two\n" +
-                "    images chopped into 100k tiny tiles is still two images\n" +
-                "    of variety -- the model just sees them more often.\n" +
-                "Stick to 224-512 px tiles; if you have few slides, collect\n" +
-                "more rather than shrinking tiles.",
-                extTileSizeLabel, extractionTileSpinner);
+                "Size of the image tiles extracted from each slide (in pixels\n"
+                        + "at the chosen downsample). 256 is a common default for SSL\n"
+                        + "pretraining. Should match or be close to the tile size used\n"
+                        + "in supervised training.\n\n"
+                        + "Note: the dataset-size thresholds in other SSL tooltips\n"
+                        + "(small/medium/large at 20k / 200k tiles) assume tiles in\n"
+                        + "the 224-512 pixel range at the downsample you'll train at.\n"
+                        + "Halving the tile size roughly quadruples the tile count\n"
+                        + "for the same area but does NOT make the dataset 'larger'\n"
+                        + "in any useful sense:\n"
+                        + "  - Smaller tiles see less context per view, so the encoder\n"
+                        + "    learns weaker features (shape, layout, multi-cell context\n"
+                        + "    are all visible only at >= 224 pixels for typical histology).\n"
+                        + "  - SSL augmentations (random crop, blur) need room to vary;\n"
+                        + "    below ~128 pixels they degenerate.\n"
+                        + "  - Tile count and tissue area together drive variety. Two\n"
+                        + "    images chopped into 100k tiny tiles is still two images\n"
+                        + "    of variety -- the model just sees them more often.\n"
+                        + "Stick to 224-512 px tiles; if you have few slides, collect\n"
+                        + "more rather than shrinking tiles.",
+                extTileSizeLabel,
+                extractionTileSpinner);
         extractionGrid.add(extTileSizeLabel, 0, 0);
         extractionGrid.add(extractionTileSpinner, 1, 0);
         Label extDownsampleLabel = new Label("Downsample:");
         TooltipHelper.install(
-                "Downsample factor applied when reading tiles.\n" +
-                "1 = full resolution, 2 = half, 4 = quarter.\n" +
-                "Match the downsample you use for supervised training.",
-                extDownsampleLabel, extractionDownsampleCombo);
+                "Downsample factor applied when reading tiles.\n" + "1 = full resolution, 2 = half, 4 = quarter.\n"
+                        + "Match the downsample you use for supervised training.",
+                extDownsampleLabel,
+                extractionDownsampleCombo);
         extractionGrid.add(extDownsampleLabel, 0, 1);
         extractionGrid.add(extractionDownsampleCombo, 1, 1);
         Label extMaxTilesLabel = new Label("Max tiles (total):");
         TooltipHelper.install(
-                "Maximum tiles to keep across all selected images.\n" +
-                "If more tiles are extracted, the surplus is randomly\n" +
-                "discarded. Prevents one large WSI from dominating.",
-                extMaxTilesLabel, maxTilesSpinner);
+                "Maximum tiles to keep across all selected images.\n"
+                        + "If more tiles are extracted, the surplus is randomly\n"
+                        + "discarded. Prevents one large WSI from dominating.",
+                extMaxTilesLabel,
+                maxTilesSpinner);
         extractionGrid.add(extMaxTilesLabel, 0, 2);
         extractionGrid.add(maxTilesSpinner, 1, 2);
         projectPanel.getChildren().addAll(extractionGrid, projectSummaryLabel);
@@ -895,7 +951,8 @@ public class SSLPretrainingDialog {
         // --- Folder mode subpanel ---
         VBox folderPanel = new VBox(6);
         GridPane folderGrid = new GridPane();
-        folderGrid.setHgap(10); folderGrid.setVgap(8);
+        folderGrid.setHgap(10);
+        folderGrid.setVgap(8);
         Button browseBtn = new Button("Browse...");
         browseBtn.setOnAction(e -> {
             DirectoryChooser dc = new DirectoryChooser();
@@ -909,10 +966,10 @@ public class SSLPretrainingDialog {
         TooltipHelper.install(browseBtn, "Browse for a directory of image tiles.");
         Label imageDirLabel = new Label("Image directory:");
         TooltipHelper.install(
-                "Path to a directory of unlabeled image tiles.\n" +
-                "Supported: PNG, TIFF, JPEG, BMP, RAW.\n" +
-                "Subdirectories are scanned recursively.",
-                imageDirLabel, dataPathField);
+                "Path to a directory of unlabeled image tiles.\n" + "Supported: PNG, TIFF, JPEG, BMP, RAW.\n"
+                        + "Subdirectories are scanned recursively.",
+                imageDirLabel,
+                dataPathField);
         folderGrid.add(imageDirLabel, 0, 0);
         folderGrid.add(dataPathField, 1, 0);
         GridPane.setHgrow(dataPathField, Priority.ALWAYS);
@@ -925,20 +982,23 @@ public class SSLPretrainingDialog {
         root.getChildren().addAll(projectPanel, folderPanel);
 
         TitledPane pane = new TitledPane("Data", root);
-        pane.setExpanded(true); pane.setCollapsible(false);
+        pane.setExpanded(true);
+        pane.setCollapsible(false);
         return pane;
     }
 
     private TitledPane buildOutputSection(Dialog<?> dialog) {
         GridPane grid = new GridPane();
-        grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(10));
+        grid.setHgap(10);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(10));
 
         Label runNameLabel = new Label("Run name:");
         TooltipHelper.install(
-                "Name used to label this pretraining run.\n" +
-                "Shown in the progress dialog header and saved in\n" +
-                "metadata.json so you can tell runs apart later.",
-                runNameLabel, runNameField);
+                "Name used to label this pretraining run.\n" + "Shown in the progress dialog header and saved in\n"
+                        + "metadata.json so you can tell runs apart later.",
+                runNameLabel,
+                runNameField);
         grid.add(runNameLabel, 0, 0);
         grid.add(runNameField, 1, 0, 2, 1);
         GridPane.setHgrow(runNameField, Priority.ALWAYS);
@@ -950,8 +1010,8 @@ public class SSLPretrainingDialog {
             if (!outputDirField.getText().isBlank()) {
                 File current = new File(outputDirField.getText());
                 if (current.isDirectory()) dc.setInitialDirectory(current);
-                else if (current.getParentFile() != null && current.getParentFile().isDirectory())
-                    dc.setInitialDirectory(current.getParentFile());
+                else if (current.getParentFile() != null
+                        && current.getParentFile().isDirectory()) dc.setInitialDirectory(current.getParentFile());
             }
             File dir = dc.showDialog(dialog.getDialogPane().getScene().getWindow());
             if (dir != null) outputDirField.setText(dir.getAbsolutePath());
@@ -959,16 +1019,17 @@ public class SSLPretrainingDialog {
         TooltipHelper.install(browseBtn, "Browse for an output directory.");
         Label outputDirLabel = new Label("Output directory:");
         TooltipHelper.install(
-                "Directory where the pretrained encoder weights (model.pt)\n" +
-                "and metadata.json will be saved.\n" +
-                "Defaults to a timestamped folder in the project directory.",
-                outputDirLabel, outputDirField);
+                "Directory where the pretrained encoder weights (model.pt)\n" + "and metadata.json will be saved.\n"
+                        + "Defaults to a timestamped folder in the project directory.",
+                outputDirLabel,
+                outputDirField);
         grid.add(outputDirLabel, 0, 1);
         grid.add(outputDirField, 1, 1);
         GridPane.setHgrow(outputDirField, Priority.ALWAYS);
         grid.add(browseBtn, 2, 1);
         TitledPane pane = new TitledPane("Output", grid);
-        pane.setExpanded(true); pane.setCollapsible(false);
+        pane.setExpanded(true);
+        pane.setCollapsible(false);
         return pane;
     }
 
@@ -990,7 +1051,8 @@ public class SSLPretrainingDialog {
         config.put("ema_decay_final", emaDecayFinalSpinner.getValue());
         config.put("stain_aug", stainAugCheckBox.isSelected());
         config.put("scale_lr_by_batch", scaleLrByBatchCheckBox.isSelected());
-        String runName = runNameField.getText() == null ? "" : runNameField.getText().trim();
+        String runName =
+                runNameField.getText() == null ? "" : runNameField.getText().trim();
         if (runName.isEmpty()) runName = buildDefaultRunName();
         config.put("run_name", runName);
 
@@ -1017,16 +1079,26 @@ public class SSLPretrainingDialog {
                     .map(i -> i.className)
                     .collect(Collectors.toList());
             return new SSLPretrainingConfig(
-                    config, null, outputDir,
-                    SourceMode.PROJECT_IMAGES, selected, selectedClasses,
+                    config,
+                    null,
+                    outputDir,
+                    SourceMode.PROJECT_IMAGES,
+                    selected,
+                    selectedClasses,
                     extractionTileSpinner.getValue(),
                     extractionDownsampleCombo.getValue(),
                     maxTilesSpinner.getValue());
         } else {
             return new SSLPretrainingConfig(
-                    config, Path.of(dataPathField.getText()), outputDir,
-                    SourceMode.PRE_EXTRACTED_FOLDER, null, null,
-                    0, 1.0, 0);
+                    config,
+                    Path.of(dataPathField.getText()),
+                    outputDir,
+                    SourceMode.PRE_EXTRACTED_FOLDER,
+                    null,
+                    null,
+                    0,
+                    1.0,
+                    0);
         }
     }
 
@@ -1035,9 +1107,11 @@ public class SSLPretrainingDialog {
     private boolean isStartValid() {
         if (projectModeRadio.isSelected()) {
             long nSelected = projectImagesList.getItems().stream()
-                    .filter(i -> i.selected).count();
+                    .filter(i -> i.selected)
+                    .count();
             long nSelectedClasses = annotationClassList.getItems().stream()
-                    .filter(i -> i.selected).count();
+                    .filter(i -> i.selected)
+                    .count();
             return nSelected > 0 && nSelectedClasses > 0;
         } else {
             String path = dataPathField.getText();
@@ -1101,10 +1175,11 @@ public class SSLPretrainingDialog {
     }
 
     private void updateProjectSummary() {
-        long nImages = projectImagesList.getItems().stream().filter(i -> i.selected).count();
-        long nClasses = annotationClassList.getItems().stream().filter(i -> i.selected).count();
-        projectSummaryLabel.setText(
-                nImages + " image(s) selected, " + nClasses + " annotation class(es) selected");
+        long nImages =
+                projectImagesList.getItems().stream().filter(i -> i.selected).count();
+        long nClasses =
+                annotationClassList.getItems().stream().filter(i -> i.selected).count();
+        projectSummaryLabel.setText(nImages + " image(s) selected, " + nClasses + " annotation class(es) selected");
     }
 
     /** Returns "simclr" or "byol" from the display combo value. */
@@ -1131,38 +1206,33 @@ public class SSLPretrainingDialog {
             double encoderMb = estimateModelSizeMb(backbone);
             double modelFactor = "byol".equals(method) ? 2.0 : 1.0;
             double modelMb = encoderMb * modelFactor;
-            double trainableMb = encoderMb;            // online half only
-            double optimizerMb = 2.0 * trainableMb;    // AdamW: 2 fp32 momenta
+            double trainableMb = encoderMb; // online half only
+            double optimizerMb = 2.0 * trainableMb; // AdamW: 2 fp32 momenta
             double gradMb = trainableMb;
-            double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
+            double areaScale = (double) (tileSize * tileSize) / (256.0 * 256.0);
             // Activation coefficient calibrated against observed peak
             // (resnet34 BYOL batch=32 256x256 AMP -> ~1.8 GB peak).
             double actPerTileMb = 0.3 * trainableMb * areaScale * 0.5; // assume AMP
-            double actMb = actPerTileMb * batchSize * 2.0;             // 2 SSL views
+            double actMb = actPerTileMb * batchSize * 2.0; // 2 SSL views
             double workspaceMb = 250.0;
             double estimatedMb = modelMb + optimizerMb + gradMb + actMb + workspaceMb;
 
             double budgetMb = gpuTotalMb * 0.85;
             double pct = (estimatedMb / gpuTotalMb) * 100;
 
-            String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)",
-                    estimatedMb, gpuTotalMb, pct);
+            String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)", estimatedMb, gpuTotalMb, pct);
 
             if (estimatedMb > budgetMb) {
-                vramEstimateLabel.setStyle(
-                        "-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
+                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
                 // Suggest max batch that fits
                 double perBatchMb = estimatedMb / batchSize;
-                int maxBatch = Math.max(1, (int)(budgetMb / perBatchMb));
-                text += String.format("  --  EXCEEDS GPU! Try batch %d or smaller tiles",
-                        maxBatch);
+                int maxBatch = Math.max(1, (int) (budgetMb / perBatchMb));
+                text += String.format("  --  EXCEEDS GPU! Try batch %d or smaller tiles", maxBatch);
             } else if (pct > 75) {
-                vramEstimateLabel.setStyle(
-                        "-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
+                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
                 text += "  --  tight, may OOM";
             } else {
-                vramEstimateLabel.setStyle(
-                        "-fx-font-size: 11px; -fx-text-fill: #228B22;");
+                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #228B22;");
             }
 
             vramEstimateLabel.setText(text);
@@ -1213,21 +1283,22 @@ public class SSLPretrainingDialog {
                 if (datasetSize > 0 && datasetSize < 20_000 && emaStart >= 0.996) {
                     warnings.add(String.format(
                             "Small dataset (%,d tiles) with EMA tau (start) = %.3f "
-                            + "is collapse-prone. Lower EMA tau (start) to ~0.99 "
-                            + "so the target moves faster relative to dataset size.",
+                                    + "is collapse-prone. Lower EMA tau (start) to ~0.99 "
+                                    + "so the target moves faster relative to dataset size.",
                             datasetSize, emaStart));
                 }
                 if (wd > 1e-5) {
                     warnings.add(String.format(
                             "Weight decay = %.0e is high for BYOL. Above ~1e-5 "
-                            + "accelerates collapse on small datasets. The BYOL "
-                            + "paper recipe is 1e-6.", wd));
+                                    + "accelerates collapse on small datasets. The BYOL "
+                                    + "paper recipe is 1e-6.",
+                            wd));
                 }
                 if (datasetSize > 0 && datasetSize < 20_000 && epochs >= 200) {
                     warnings.add(String.format(
                             "Small dataset (%,d tiles) with %d epochs gives BYOL "
-                            + "many chances to find the trivial solution. 100-200 "
-                            + "epochs is usually enough.",
+                                    + "many chances to find the trivial solution. 100-200 "
+                                    + "epochs is usually enough.",
                             datasetSize, epochs));
                 }
                 // Steps-per-epoch sanity (unknown tile count uses maxTiles cap)
@@ -1236,9 +1307,9 @@ public class SSLPretrainingDialog {
                 if (steps < 50) {
                     warnings.add(String.format(
                             "Only ~%d batches per epoch (%,d tiles / batch %d). "
-                            + "BYOL needs many target-update steps per epoch to "
-                            + "stay stable; below ~50 the encoder often beats the "
-                            + "target to a constant. Lower the batch size.",
+                                    + "BYOL needs many target-update steps per epoch to "
+                                    + "stay stable; below ~50 the encoder often beats the "
+                                    + "target to a constant. Lower the batch size.",
                             steps, forStepCount, batch));
                 }
             }
@@ -1253,8 +1324,8 @@ public class SSLPretrainingDialog {
             if (isSimCLR && datasetSize > 0 && datasetSize < 20_000) {
                 warnings.add(String.format(
                         "SimCLR on %,d tiles is below its sweet spot. With < 20k "
-                        + "tiles, BYOL typically learns better features (no "
-                        + "negative pairs needed).",
+                                + "tiles, BYOL typically learns better features (no "
+                                + "negative pairs needed).",
                         datasetSize));
             }
 
@@ -1262,8 +1333,8 @@ public class SSLPretrainingDialog {
             if (datasetSize > 0 && datasetSize < 2_000) {
                 warnings.add(String.format(
                         "Only %,d tiles -- SSL pretraining is unlikely to beat "
-                        + "ImageNet weights below ~2,000 tiles. Collect more "
-                        + "data or skip SSL and go straight to supervised training.",
+                                + "ImageNet weights below ~2,000 tiles. Collect more "
+                                + "data or skip SSL and go straight to supervised training.",
                         datasetSize));
             }
 
@@ -1279,8 +1350,7 @@ public class SSLPretrainingDialog {
                 sb.append("\n  - ").append(w);
             }
             configWarningLabel.setText(sb.toString());
-            configWarningLabel.setStyle(
-                    "-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+            configWarningLabel.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
                     + "-fx-padding: 6 8; -fx-background-radius: 3; "
                     + "-fx-font-size: 11px;");
             configWarningLabel.setVisible(true);
@@ -1303,8 +1373,8 @@ public class SSLPretrainingDialog {
         return switch (backbone.toLowerCase()) {
             case "resnet18" -> 47.0;
             case "resnet34" -> 87.0;
-            case "resnet50", "resnet50_lunit-swav", "resnet50_lunit-bt",
-                 "resnet50_kather100k", "resnet50_tcga-brca" -> 100.0;
+            case "resnet50", "resnet50_lunit-swav", "resnet50_lunit-bt", "resnet50_kather100k", "resnet50_tcga-brca" ->
+                100.0;
             case "efficientnet-b0" -> 21.0;
             case "efficientnet-b1" -> 31.0;
             case "efficientnet-b2" -> 36.0;
@@ -1322,8 +1392,8 @@ public class SSLPretrainingDialog {
     }
 
     private String buildDefaultRunName() {
-        String timestamp = java.time.LocalDateTime.now()
-                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String timestamp =
+                java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         return "SSL-" + backboneCombo.getValue() + "-" + getSelectedMethod() + "-" + timestamp;
     }
 
@@ -1336,46 +1406,52 @@ public class SSLPretrainingDialog {
         if (current.contains("ssl_pretrained" + File.separator)) {
             try {
                 Path parent = Path.of(current).getParent();
-                if (parent != null && parent.getFileName() != null
+                if (parent != null
+                        && parent.getFileName() != null
                         && parent.toString().contains("ssl_pretrained")) {
                     String runName = runNameField.getText();
                     if (runName == null || runName.isBlank()) runName = buildDefaultRunName();
                     outputDirField.setText(parent.resolve(runName).toString());
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
     }
 
     // ==================== Folder Mode ====================
 
     private void scanDatasetAndUpdateInfo(File dir) {
-        Thread scanner = new Thread(() -> {
-            try {
-                long count = Files.walk(dir.toPath())
-                        .filter(p -> IMAGE_EXTENSIONS.contains(
-                                getExtension(p.toString()).toLowerCase()))
-                        .count();
-                Platform.runLater(() -> {
-                    if (count == 0) {
-                        observedTileCount = 0;
-                        updateConfigWarnings();
-                        datasetInfoLabel.setText("No image files found in this directory.");
-                    } else {
-                        datasetInfoLabel.setText(count + " image file(s) found.");
-                        observedTileCount = (int) Math.min(count, Integer.MAX_VALUE);
-                        // Auto-suggest epochs
-                        if (count < 50) epochsSpinner.getValueFactory().setValue(500);
-                        else if (count < 200) epochsSpinner.getValueFactory().setValue(300);
-                        else if (count < 1000) epochsSpinner.getValueFactory().setValue(100);
-                        else epochsSpinner.getValueFactory().setValue(50);
-                        updateConfigWarnings();
+        Thread scanner = new Thread(
+                () -> {
+                    try {
+                        long count = Files.walk(dir.toPath())
+                                .filter(p -> IMAGE_EXTENSIONS.contains(
+                                        getExtension(p.toString()).toLowerCase()))
+                                .count();
+                        Platform.runLater(() -> {
+                            if (count == 0) {
+                                observedTileCount = 0;
+                                updateConfigWarnings();
+                                datasetInfoLabel.setText("No image files found in this directory.");
+                            } else {
+                                datasetInfoLabel.setText(count + " image file(s) found.");
+                                observedTileCount = (int) Math.min(count, Integer.MAX_VALUE);
+                                // Auto-suggest epochs
+                                if (count < 50) epochsSpinner.getValueFactory().setValue(500);
+                                else if (count < 200)
+                                    epochsSpinner.getValueFactory().setValue(300);
+                                else if (count < 1000)
+                                    epochsSpinner.getValueFactory().setValue(100);
+                                else epochsSpinner.getValueFactory().setValue(50);
+                                updateConfigWarnings();
+                            }
+                        });
+                    } catch (Exception e) {
+                        Platform.runLater(
+                                () -> datasetInfoLabel.setText("Error scanning directory: " + e.getMessage()));
                     }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() ->
-                    datasetInfoLabel.setText("Error scanning directory: " + e.getMessage()));
-            }
-        }, "ssl-dataset-scanner");
+                },
+                "ssl-dataset-scanner");
         scanner.setDaemon(true);
         scanner.start();
     }
@@ -1388,50 +1464,51 @@ public class SSLPretrainingDialog {
     // ==================== Tips Dialog ====================
 
     private void showSSLTipsDialog() {
-        Dialogs.showMessageDialog("SSL Pretraining Tips",
-                "Self-supervised pretraining trains the encoder backbone\n" +
-                "to learn useful visual features without labels.\n\n" +
-                "Dataset-size scale used throughout the SSL dialog:\n" +
-                "  small  : < 20,000 tiles  (BYOL strongly recommended)\n" +
-                "  medium : 20,000 - 200,000 tiles  (either method works)\n" +
-                "  large  : > 200,000 tiles  (SimCLR shines if batch >= 128)\n" +
-                "These thresholds count tiles, not source images, and assume\n" +
-                "tiles are in the 224-512 pixel range at the downsample you\n" +
-                "will train at. Shrinking the tile size to bump up the count\n" +
-                "does NOT make the dataset 'larger' in any useful sense:\n" +
-                " - smaller tiles see less context, so the encoder learns\n" +
-                "   weaker features (typical histology context needs >= 224 px),\n" +
-                " - SSL augmentations (random crop, blur) need room to vary,\n" +
-                " - what matters is tissue area and visual variety, not the\n" +
-                "   raw tile count -- 100k tiny tiles from two slides is still\n" +
-                "   two slides of variety.\n" +
-                "If you have few slides, collect more or use a coarser\n" +
-                "downsample, don't shrink tiles below ~224 px.\n\n" +
-                "Both SimCLR and BYOL take a flat dataset of tiles -- you\n" +
-                "do NOT need to provide pre-paired images. SimCLR generates\n" +
-                "its 'pair' internally by passing each tile through two\n" +
-                "different random augmentations on the fly.\n\n" +
-                "SimCLR: Contrastive learning. Each tile's two augmented\n" +
-                "views are a positive pair; every other tile in the batch\n" +
-                "is a negative. Best with large batch sizes (64+, ideally\n" +
-                "128+) so each step has enough negatives. Below ~20k tiles\n" +
-                "or below batch 64 it tends to underperform BYOL.\n\n" +
-                "BYOL: Self-distillation. A student network predicts an\n" +
-                "EMA-averaged teacher's output on a different augmentation\n" +
-                "of the same tile -- no negatives at all. Works on small\n" +
-                "datasets (< 20k tiles) and small batches (16-32) where\n" +
-                "SimCLR would struggle.\n\n" +
-                "After pretraining, load the encoder weights in the\n" +
-                "Training dialog via 'Use SSL pretrained encoder'.\n" +
-                "The pretrained backbone gives better results than\n" +
-                "ImageNet weights for domain-specific data.\n\n" +
-                "Tips:\n" +
-                " - Below ~2,000 tiles, SSL pretraining is unlikely to help\n" +
-                "   over plain ImageNet weights -- collect more first.\n" +
-                " - Aim for at least 5,000 - 10,000 tiles for a noticeable lift.\n" +
-                " - Select annotation classes that cover tissue regions\n" +
-                " - Match the backbone to what you'll use in training\n" +
-                " - Epochs: 200-400 (small), 100-200 (medium), 50-100 (large)");
+        Dialogs.showMessageDialog(
+                "SSL Pretraining Tips",
+                "Self-supervised pretraining trains the encoder backbone\n"
+                        + "to learn useful visual features without labels.\n\n"
+                        + "Dataset-size scale used throughout the SSL dialog:\n"
+                        + "  small  : < 20,000 tiles  (BYOL strongly recommended)\n"
+                        + "  medium : 20,000 - 200,000 tiles  (either method works)\n"
+                        + "  large  : > 200,000 tiles  (SimCLR shines if batch >= 128)\n"
+                        + "These thresholds count tiles, not source images, and assume\n"
+                        + "tiles are in the 224-512 pixel range at the downsample you\n"
+                        + "will train at. Shrinking the tile size to bump up the count\n"
+                        + "does NOT make the dataset 'larger' in any useful sense:\n"
+                        + " - smaller tiles see less context, so the encoder learns\n"
+                        + "   weaker features (typical histology context needs >= 224 px),\n"
+                        + " - SSL augmentations (random crop, blur) need room to vary,\n"
+                        + " - what matters is tissue area and visual variety, not the\n"
+                        + "   raw tile count -- 100k tiny tiles from two slides is still\n"
+                        + "   two slides of variety.\n"
+                        + "If you have few slides, collect more or use a coarser\n"
+                        + "downsample, don't shrink tiles below ~224 px.\n\n"
+                        + "Both SimCLR and BYOL take a flat dataset of tiles -- you\n"
+                        + "do NOT need to provide pre-paired images. SimCLR generates\n"
+                        + "its 'pair' internally by passing each tile through two\n"
+                        + "different random augmentations on the fly.\n\n"
+                        + "SimCLR: Contrastive learning. Each tile's two augmented\n"
+                        + "views are a positive pair; every other tile in the batch\n"
+                        + "is a negative. Best with large batch sizes (64+, ideally\n"
+                        + "128+) so each step has enough negatives. Below ~20k tiles\n"
+                        + "or below batch 64 it tends to underperform BYOL.\n\n"
+                        + "BYOL: Self-distillation. A student network predicts an\n"
+                        + "EMA-averaged teacher's output on a different augmentation\n"
+                        + "of the same tile -- no negatives at all. Works on small\n"
+                        + "datasets (< 20k tiles) and small batches (16-32) where\n"
+                        + "SimCLR would struggle.\n\n"
+                        + "After pretraining, load the encoder weights in the\n"
+                        + "Training dialog via 'Use SSL pretrained encoder'.\n"
+                        + "The pretrained backbone gives better results than\n"
+                        + "ImageNet weights for domain-specific data.\n\n"
+                        + "Tips:\n"
+                        + " - Below ~2,000 tiles, SSL pretraining is unlikely to help\n"
+                        + "   over plain ImageNet weights -- collect more first.\n"
+                        + " - Aim for at least 5,000 - 10,000 tiles for a noticeable lift.\n"
+                        + " - Select annotation classes that cover tissue regions\n"
+                        + " - Match the backbone to what you'll use in training\n"
+                        + " - Epochs: 200-400 (small), 100-200 (medium), 50-100 (large)");
     }
 
     // ==================== Cell Factories ====================
@@ -1459,8 +1536,7 @@ public class SSLPretrainingDialog {
         final int annotationCount;
         boolean selected;
 
-        SSLImageItem(ProjectImageEntry<BufferedImage> entry, String name,
-                     int annotationCount, boolean selected) {
+        SSLImageItem(ProjectImageEntry<BufferedImage> entry, String name, int annotationCount, boolean selected) {
             this.entry = entry;
             this.name = name;
             this.annotationCount = annotationCount;

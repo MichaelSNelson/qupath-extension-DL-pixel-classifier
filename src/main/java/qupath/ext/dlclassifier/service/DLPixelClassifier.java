@@ -1,26 +1,5 @@
 package qupath.ext.dlclassifier.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.utilities.TileEncoder;
-import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
-import qupath.lib.classifiers.pixel.PixelClassifier;
-import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
-import qupath.lib.common.ColorTools;
-import qupath.lib.images.ImageData;
-import qupath.lib.images.servers.ImageChannel;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.images.servers.ImageServerMetadata;
-import qupath.lib.images.servers.PixelCalibration;
-import qupath.lib.images.servers.PixelType;
-import qupath.lib.objects.classes.PathClass;
-import qupath.lib.regions.RegionRequest;
-
-import javafx.application.Platform;
-
 import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
 import java.io.IOException;
@@ -33,6 +12,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import javafx.application.Platform;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
+import qupath.ext.dlclassifier.utilities.TileEncoder;
+import qupath.lib.classifiers.pixel.PixelClassifier;
+import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
+import qupath.lib.common.ColorTools;
+import qupath.lib.images.ImageData;
+import qupath.lib.images.servers.ImageChannel;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.ImageServerMetadata;
+import qupath.lib.images.servers.PixelCalibration;
+import qupath.lib.images.servers.PixelType;
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.regions.RegionRequest;
 
 /**
  * Implements QuPath's {@link PixelClassifier} interface to integrate with
@@ -66,6 +64,7 @@ public class DLPixelClassifier implements PixelClassifier {
 
     /** Circuit breaker: stops retrying server requests after persistent failures. */
     private static final int MAX_CONSECUTIVE_ERRORS = 3;
+
     private final AtomicInteger consecutiveErrors = new AtomicInteger(0);
     private final AtomicInteger tilesCompleted = new AtomicInteger(0);
     private final AtomicBoolean errorNotified = new AtomicBoolean(false);
@@ -93,6 +92,7 @@ public class DLPixelClassifier implements PixelClassifier {
 
     /** Cached channel config with precomputed normalization stats (lazy init). */
     private volatile ChannelConfiguration channelConfigWithStats;
+
     private final Object statsLock = new Object();
 
     /** Tracks the current image to detect image switches and invalidate caches. */
@@ -106,17 +106,18 @@ public class DLPixelClassifier implements PixelClassifier {
      * @param inferenceConfig inference configuration
      * @param imageData       image data (used for pixel calibration)
      */
-    public DLPixelClassifier(ClassifierMetadata metadata,
-                             ChannelConfiguration channelConfig,
-                             InferenceConfig inferenceConfig,
-                             ImageData<BufferedImage> imageData) {
+    public DLPixelClassifier(
+            ClassifierMetadata metadata,
+            ChannelConfiguration channelConfig,
+            InferenceConfig inferenceConfig,
+            ImageData<BufferedImage> imageData) {
         this.metadata = metadata;
         this.channelConfig = channelConfig;
         this.inferenceConfig = inferenceConfig;
         this.downsample = metadata.getDownsample();
         this.contextScale = metadata.getContextScale();
-        this.inputPadding = InferenceConfig.computeEffectivePadding(
-                inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
+        this.inputPadding =
+                InferenceConfig.computeEffectivePadding(inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
 
         // For context-scale models, add extra padding so the model processes
         // a tile larger than tileSize. This pushes context tile edge effects
@@ -124,7 +125,7 @@ public class DLPixelClassifier implements PixelClassifier {
         // fully convolutional and handles larger input (must be divisible by 32).
         // For 4x context with 512px tile: extra 128px/side -> 768px model input.
         if (contextScale > 1) {
-            int extra = inferenceConfig.getTileSize() / 4;  // 128px for 512px tile
+            int extra = inferenceConfig.getTileSize() / 4; // 128px for 512px tile
             // Round to multiple of 32 for encoder compatibility
             extra = (extra / 32) * 32;
             this.contextInferencePad = extra;
@@ -139,8 +140,11 @@ public class DLPixelClassifier implements PixelClassifier {
         InferenceConfig.BlendMode overlayBlendMode = InferenceConfig.BlendMode.CENTER_CROP;
         int overlayMaxBlendDist = -1;
 
-        this.blendCache = new TileBlendCache(100, inputPadding,
-                overlayBlendMode, overlayMaxBlendDist,
+        this.blendCache = new TileBlendCache(
+                100,
+                inputPadding,
+                overlayBlendMode,
+                overlayMaxBlendDist,
                 () -> OverlayService.getInstance().refreshOverlayForBlending());
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
@@ -153,14 +157,16 @@ public class DLPixelClassifier implements PixelClassifier {
         // version), fall back to scanning all classifier directories for a
         // metadata.json that matches this classifier's name.
         ModelManager modelManager = new ModelManager();
-        this.modelDirPath = modelManager.getModelPath(metadata.getId())
+        this.modelDirPath = modelManager
+                .getModelPath(metadata.getId())
                 .map(p -> p.getParent().toString())
                 .orElseGet(() -> {
                     // ID-based lookup failed. Try to find by scanning metadata name.
-                    logger.warn("Model directory not found for ID '{}', searching by name '{}'",
-                            metadata.getId(), metadata.getName());
-                    return modelManager.findModelDirByName(metadata.getName())
-                            .orElse(metadata.getId());
+                    logger.warn(
+                            "Model directory not found for ID '{}', searching by name '{}'",
+                            metadata.getId(),
+                            metadata.getName());
+                    return modelManager.findModelDirByName(metadata.getName()).orElse(metadata.getId());
                 });
 
         try {
@@ -176,28 +182,48 @@ public class DLPixelClassifier implements PixelClassifier {
         int stride = tileSize - 2 * inputPadding;
         int modelInputSize = tileSize + 2 * contextInferencePad;
         if (stride <= 0) {
-            logger.error("Invalid tile stride: tileSize={} padding={} -> stride={} (<=0); "
-                    + "the overlay cannot tile the image. This indicates a bug in "
-                    + "InferenceConfig.computeEffectivePadding for this tile size.",
-                    tileSize, inputPadding, stride);
-            logger.info("DL overlay created: model={}, image={}x{}, downsample={}, "
-                    + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
-                    + "blendMode={}, est. tiles=N/A (stride<=0)",
-                    metadata.getName(), imgW, imgH, downsample,
-                    tileSize, inputPadding, contextInferencePad, modelInputSize,
+            logger.error(
+                    "Invalid tile stride: tileSize={} padding={} -> stride={} (<=0); "
+                            + "the overlay cannot tile the image. This indicates a bug in "
+                            + "InferenceConfig.computeEffectivePadding for this tile size.",
+                    tileSize,
+                    inputPadding,
+                    stride);
+            logger.info(
+                    "DL overlay created: model={}, image={}x{}, downsample={}, "
+                            + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
+                            + "blendMode={}, est. tiles=N/A (stride<=0)",
+                    metadata.getName(),
+                    imgW,
+                    imgH,
+                    downsample,
+                    tileSize,
+                    inputPadding,
+                    contextInferencePad,
+                    modelInputSize,
                     inferenceConfig.getBlendMode());
         } else {
             long estTiles = (long) Math.ceil((imgW / downsample) / (double) stride)
                     * (long) Math.ceil((imgH / downsample) / (double) stride);
-            logger.info("DL overlay created: model={}, image={}x{}, downsample={}, "
-                    + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
-                    + "blendMode={}, est. tiles={}",
-                    metadata.getName(), imgW, imgH, downsample,
-                    tileSize, inputPadding, contextInferencePad, modelInputSize,
-                    inferenceConfig.getBlendMode(), estTiles);
+            logger.info(
+                    "DL overlay created: model={}, image={}x{}, downsample={}, "
+                            + "tileSize={}, padding={}, contextPad={}, modelInput={}px, "
+                            + "blendMode={}, est. tiles={}",
+                    metadata.getName(),
+                    imgW,
+                    imgH,
+                    downsample,
+                    tileSize,
+                    inputPadding,
+                    contextInferencePad,
+                    modelInputSize,
+                    inferenceConfig.getBlendMode(),
+                    estTiles);
             if (estTiles > 500) {
-                logger.warn("Large tile count ({}) -- overlay will take a long time to fill. "
-                        + "Zoom into a smaller region for faster results.", estTiles);
+                logger.warn(
+                        "Large tile count ({}) -- overlay will take a long time to fill. "
+                                + "Zoom into a smaller region for faster results.",
+                        estTiles);
             }
         }
     }
@@ -210,26 +236,37 @@ public class DLPixelClassifier implements PixelClassifier {
     }
 
     @Override
-    public BufferedImage applyClassification(ImageData<BufferedImage> imageData,
-                                              RegionRequest request) throws IOException {
+    public BufferedImage applyClassification(ImageData<BufferedImage> imageData, RegionRequest request)
+            throws IOException {
         // Log first tile request at INFO level for diagnostic visibility
         if (firstTileLogged.compareAndSet(false, true)) {
             ImageServer<BufferedImage> diagServer = imageData.getServer();
             int imgW = diagServer.getWidth();
             int imgH = diagServer.getHeight();
             int tileSize = inferenceConfig.getTileSize();
-            int stride = tileSize - 2 * inputPadding;  // visible stride (padding is per-side)
+            int stride = tileSize - 2 * inputPadding; // visible stride (padding is per-side)
             int estTilesX = (int) Math.ceil((imgW / downsample) / (double) stride);
             int estTilesY = (int) Math.ceil((imgH / downsample) / (double) stride);
-            logger.info("Overlay tile request started: image={}x{}, downsample={}, "
-                    + "tileSize={}, padding={}, stride~={}, est. total tiles~={}",
-                    imgW, imgH, downsample, tileSize, inputPadding, stride,
+            logger.info(
+                    "Overlay tile request started: image={}x{}, downsample={}, "
+                            + "tileSize={}, padding={}, stride~={}, est. total tiles~={}",
+                    imgW,
+                    imgH,
+                    downsample,
+                    tileSize,
+                    inputPadding,
+                    stride,
                     estTilesX * estTilesY);
-            logger.info("First tile request: stride=({},{}) {}x{} @ downsample={}, "
-                    + "expanded to tileSize={} with padding={} (real context for interior tiles)",
-                    request.getX(), request.getY(),
-                    request.getWidth(), request.getHeight(),
-                    request.getDownsample(), tileSize, inputPadding);
+            logger.info(
+                    "First tile request: stride=({},{}) {}x{} @ downsample={}, "
+                            + "expanded to tileSize={} with padding={} (real context for interior tiles)",
+                    request.getX(),
+                    request.getY(),
+                    request.getWidth(),
+                    request.getHeight(),
+                    request.getDownsample(),
+                    tileSize,
+                    inputPadding);
         }
 
         // Guard: reject oversized tile requests. QuPath sometimes sends the entire
@@ -241,10 +278,14 @@ public class DLPixelClassifier implements PixelClassifier {
         int maxTilePixels = inferenceConfig.getTileSize() + 2 * (inputPadding + contextInferencePad);
         if (requestPixelsW > maxTilePixels * 2 || requestPixelsH > maxTilePixels * 2) {
             if (oversizedWarned.compareAndSet(false, true)) {
-                logger.warn("Rejecting oversized tile request: {}x{} pixels "
-                        + "(max expected ~{}x{}). QuPath is requesting the full "
-                        + "viewport as a single tile -- zoom in for the overlay to work.",
-                        requestPixelsW, requestPixelsH, maxTilePixels, maxTilePixels);
+                logger.warn(
+                        "Rejecting oversized tile request: {}x{} pixels "
+                                + "(max expected ~{}x{}). QuPath is requesting the full "
+                                + "viewport as a single tile -- zoom in for the overlay to work.",
+                        requestPixelsW,
+                        requestPixelsH,
+                        maxTilePixels,
+                        maxTilePixels);
             }
             return createEmptyClassificationImage(request);
         }
@@ -258,8 +299,8 @@ public class DLPixelClassifier implements PixelClassifier {
 
         // Circuit breaker: stop retrying after persistent server errors
         if (consecutiveErrors.get() >= MAX_CONSECUTIVE_ERRORS) {
-            throw new IOException("Classification disabled after " + MAX_CONSECUTIVE_ERRORS +
-                    " consecutive server errors: " + lastErrorMessage);
+            throw new IOException("Classification disabled after " + MAX_CONSECUTIVE_ERRORS
+                    + " consecutive server errors: " + lastErrorMessage);
         }
 
         // Detect image switch: when the viewer changes to a different image,
@@ -267,7 +308,8 @@ public class DLPixelClassifier implements PixelClassifier {
         // from the previous image are not reused.
         String serverPath = imageData.getServer().getPath();
         if (currentServerPath != null && !currentServerPath.equals(serverPath)) {
-            logger.info("Image changed ({}), clearing blend cache and normalization stats",
+            logger.info(
+                    "Image changed ({}), clearing blend cache and normalization stats",
                     imageData.getServer().getMetadata().getName());
             blendCache.clear();
             synchronized (statsLock) {
@@ -290,8 +332,13 @@ public class DLPixelClassifier implements PixelClassifier {
             if (cachedProbMap != null) {
                 int cachedH = cachedProbMap.length;
                 int cachedW = cachedProbMap[0].length;
-                logger.debug("Cache hit at ({}, {}), dims={}x{}, cache size={}",
-                        request.getX(), request.getY(), cachedW, cachedH, blendCache.size());
+                logger.debug(
+                        "Cache hit at ({}, {}), dims={}x{}, cache size={}",
+                        request.getX(),
+                        request.getY(),
+                        cachedW,
+                        cachedH,
+                        blendCache.size());
                 consecutiveErrors.set(0);
                 return createClassIndexImage(cachedProbMap, cachedW, cachedH);
             }
@@ -335,8 +382,7 @@ public class DLPixelClassifier implements PixelClassifier {
             detailChannels = 3;
         } else {
             dtype = "float32";
-            detailBytes = TileEncoder.encodeTileRawFloat(tileImage,
-                    channelConfig.getSelectedChannels());
+            detailBytes = TileEncoder.encodeTileRawFloat(tileImage, channelConfig.getSelectedChannels());
             detailChannels = channelConfig.getSelectedChannels().isEmpty()
                     ? tileImage.getRaster().getNumBands()
                     : channelConfig.getSelectedChannels().size();
@@ -357,19 +403,21 @@ public class DLPixelClassifier implements PixelClassifier {
             int centerX = expanded.getX() + expanded.getWidth() / 2;
             int centerY = expanded.getY() + expanded.getHeight() / 2;
             RegionRequest contextSizingRequest = RegionRequest.createInstance(
-                    server.getPath(), ds,
+                    server.getPath(),
+                    ds,
                     centerX - tileSizeFullRes / 2,
                     centerY - tileSizeFullRes / 2,
-                    tileSizeFullRes, tileSizeFullRes,
-                    expanded.getZ(), expanded.getT());
-            BufferedImage contextImage = readContextTile(server, contextSizingRequest,
-                    tileImage.getWidth(), tileImage.getHeight());
+                    tileSizeFullRes,
+                    tileSizeFullRes,
+                    expanded.getZ(),
+                    expanded.getT());
+            BufferedImage contextImage =
+                    readContextTile(server, contextSizingRequest, tileImage.getWidth(), tileImage.getHeight());
             byte[] contextBytes;
             if ("uint8".equals(dtype)) {
                 contextBytes = TileEncoder.encodeTileRaw(contextImage);
             } else {
-                contextBytes = TileEncoder.encodeTileRawFloat(contextImage,
-                        channelConfig.getSelectedChannels());
+                contextBytes = TileEncoder.encodeTileRawFloat(contextImage, channelConfig.getSelectedChannels());
             }
             // Interleave detail + context channels per pixel (not sequential concat)
             int numPixels = tileImage.getWidth() * tileImage.getHeight();
@@ -378,8 +426,11 @@ public class DLPixelClassifier implements PixelClassifier {
                 // Defense-in-depth: if readContextTile resize didn't produce exact
                 // dimensions (QuPath rounding at different downsamples), fall back
                 // to detail-only rather than crashing with ArrayIndexOutOfBoundsException
-                logger.warn("Context tile byte length ({}) != detail tile byte length ({}), " +
-                        "skipping context for this tile", contextBytes.length, detailBytes.length);
+                logger.warn(
+                        "Context tile byte length ({}) != detail tile byte length ({}), "
+                                + "skipping context for this tile",
+                        contextBytes.length,
+                        detailBytes.length);
                 rawBytes = detailBytes;
                 numChannels = detailChannels;
             } else {
@@ -392,8 +443,8 @@ public class DLPixelClassifier implements PixelClassifier {
             numChannels = detailChannels;
         }
 
-        String tileId = String.format("%d_%d_%d_%d",
-                request.getX(), request.getY(), request.getWidth(), request.getHeight());
+        String tileId =
+                String.format("%d_%d_%d_%d", request.getX(), request.getY(), request.getWidth(), request.getHeight());
 
         try {
             // Determine reflection padding.
@@ -409,12 +460,18 @@ public class DLPixelClassifier implements PixelClassifier {
             int expandedW = tileImage.getWidth();
             int expandedH = tileImage.getHeight();
             int tileSize = inferenceConfig.getTileSize();
-            int reflectionPadding = computeEdgeReflectionPadding(
-                    expandedW, expandedH, tileSize);
+            int reflectionPadding = computeEdgeReflectionPadding(expandedW, expandedH, tileSize);
             PixelInferenceResult result = backend.runPixelInferenceBinary(
-                    modelDirPath, rawBytes, List.of(tileId),
-                    tileImage.getHeight(), tileImage.getWidth(), numChannels,
-                    dtype, channelCfg, inferenceConfig, sharedTempDir,
+                    modelDirPath,
+                    rawBytes,
+                    List.of(tileId),
+                    tileImage.getHeight(),
+                    tileImage.getWidth(),
+                    numChannels,
+                    dtype,
+                    channelCfg,
+                    inferenceConfig,
+                    sharedTempDir,
                     reflectionPadding);
 
             // Fall back to JSON/PNG path if binary endpoint unavailable.
@@ -422,23 +479,25 @@ public class DLPixelClassifier implements PixelClassifier {
             // receives only detail channels, producing incorrect results for context models.
             if (result == null) {
                 if (contextScale > 1) {
-                    logger.warn("Binary inference failed for context_scale={} model; " +
-                            "JSON fallback does not support multi-scale context. " +
-                            "Results will be incorrect.", contextScale);
+                    logger.warn(
+                            "Binary inference failed for context_scale={} model; "
+                                    + "JSON fallback does not support multi-scale context. "
+                                    + "Results will be incorrect.",
+                            contextScale);
                 }
                 java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
                 javax.imageio.ImageIO.write(tileImage, "png", baos);
-                String encoded = "data:image/png;base64," +
-                        java.util.Base64.getEncoder().encodeToString(baos.toByteArray());
-                List<ClassifierClient.TileData> tiles = List.of(
-                        new ClassifierClient.TileData(tileId, encoded,
-                                request.getX(), request.getY()));
+                String encoded =
+                        "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(baos.toByteArray());
+                List<ClassifierClient.TileData> tiles =
+                        List.of(new ClassifierClient.TileData(tileId, encoded, request.getX(), request.getY()));
                 result = backend.runPixelInference(
-                        modelDirPath, tiles, channelCfg, inferenceConfig,
-                        sharedTempDir, reflectionPadding);
+                        modelDirPath, tiles, channelCfg, inferenceConfig, sharedTempDir, reflectionPadding);
             }
 
-            if (result == null || result.outputPaths() == null || result.outputPaths().isEmpty()) {
+            if (result == null
+                    || result.outputPaths() == null
+                    || result.outputPaths().isEmpty()) {
                 throw new IOException("No inference result returned for tile");
             }
 
@@ -454,8 +513,7 @@ public class DLPixelClassifier implements PixelClassifier {
             // class indices; render directly without smoothing, multi-pass,
             // or tile blending (all of which require floats).
             if (useArgmax) {
-                byte[][] argmaxMap = ClassifierClient.readArgmaxMap(
-                        Path.of(outputPath), tileHeight, tileWidth);
+                byte[][] argmaxMap = ClassifierClient.readArgmaxMap(Path.of(outputPath), tileHeight, tileWidth);
                 try {
                     Files.deleteIfExists(Path.of(outputPath));
                 } catch (IOException e) {
@@ -467,8 +525,13 @@ public class DLPixelClassifier implements PixelClassifier {
                 consecutiveErrors.set(0);
                 int completedArg = tilesCompleted.incrementAndGet();
                 if (completedArg <= 10 || completedArg % 50 == 0) {
-                    logger.info("Overlay argmax tile {} completed at ({}, {}), dims={}x{}",
-                            completedArg, request.getX(), request.getY(), strideW, strideH);
+                    logger.info(
+                            "Overlay argmax tile {} completed at ({}, {}), dims={}x{}",
+                            completedArg,
+                            request.getX(),
+                            request.getY(),
+                            strideW,
+                            strideH);
                 }
                 return createClassIndexImageFromArgmax(strideArgmax, strideW, strideH);
             }
@@ -497,15 +560,12 @@ public class DLPixelClassifier implements PixelClassifier {
                 int halfStride = Math.max(32, strideW / 2);
                 int numClasses = strideProbMap[0][0].length;
                 // Offsets: shift by half-stride in X, Y, and both (2x2 grid = 4 passes total)
-                int[][] offsets = { {halfStride, 0}, {0, halfStride}, {halfStride, halfStride} };
-                int passCount = 1;  // already have the primary pass
+                int[][] offsets = {{halfStride, 0}, {0, halfStride}, {halfStride, halfStride}};
+                int passCount = 1; // already have the primary pass
                 for (int[] off : offsets) {
                     try {
-                        float[][][] extraPass = runInferenceAtOffset(
-                                request, server, channelCfg, off[0], off[1]);
-                        if (extraPass != null
-                                && extraPass.length == strideH
-                                && extraPass[0].length == strideW) {
+                        float[][][] extraPass = runInferenceAtOffset(request, server, channelCfg, off[0], off[1]);
+                        if (extraPass != null && extraPass.length == strideH && extraPass[0].length == strideW) {
                             // Accumulate into strideProbMap
                             for (int y = 0; y < strideH; y++) {
                                 for (int x = 0; x < strideW; x++) {
@@ -517,8 +577,7 @@ public class DLPixelClassifier implements PixelClassifier {
                             passCount++;
                         }
                     } catch (IOException ex) {
-                        logger.debug("Multi-pass offset ({},{}) failed: {}",
-                                off[0], off[1], ex.getMessage());
+                        logger.debug("Multi-pass offset ({},{}) failed: {}", off[0], off[1], ex.getMessage());
                     }
                 }
                 // Average
@@ -541,10 +600,16 @@ public class DLPixelClassifier implements PixelClassifier {
             consecutiveErrors.set(0);
             int completed = tilesCompleted.incrementAndGet();
             if (completed <= 10 || completed % 50 == 0) {
-                logger.info("Overlay tile {} completed at ({}, {}), dims={}x{}, "
-                        + "expanded={}x{}, reflPad={}, passes={}",
-                        completed, request.getX(), request.getY(),
-                        strideW, strideH, expandedW, expandedH, reflectionPadding,
+                logger.info(
+                        "Overlay tile {} completed at ({}, {}), dims={}x{}, " + "expanded={}x{}, reflPad={}, passes={}",
+                        completed,
+                        request.getX(),
+                        request.getY(),
+                        strideW,
+                        strideH,
+                        expandedW,
+                        expandedH,
+                        reflectionPadding,
                         inferenceConfig.isMultiPassAveraging() ? 4 : 1);
             }
             return createClassIndexImage(strideProbMap, strideW, strideH);
@@ -552,8 +617,7 @@ public class DLPixelClassifier implements PixelClassifier {
         } catch (IOException e) {
             // During shutdown, interrupted threads and missing temp files are expected.
             // Return blank image instead of re-throwing to avoid QuPath logging ERROR.
-            if (shuttingDown || Thread.currentThread().isInterrupted()
-                    || e instanceof java.io.InterruptedIOException) {
+            if (shuttingDown || Thread.currentThread().isInterrupted() || e instanceof java.io.InterruptedIOException) {
                 logger.debug("Classification interrupted during shutdown");
                 return createEmptyClassificationImage(request);
             }
@@ -572,16 +636,14 @@ public class DLPixelClassifier implements PixelClassifier {
             lastErrorMessage = e.getMessage();
 
             if (errorCount >= MAX_CONSECUTIVE_ERRORS && errorNotified.compareAndSet(false, true)) {
-                logger.error("Classification overlay disabled after {} consecutive errors: {}",
-                        errorCount, e.getMessage());
+                logger.error(
+                        "Classification overlay disabled after {} consecutive errors: {}", errorCount, e.getMessage());
                 Platform.runLater(() -> {
-                    var alert = new javafx.scene.control.Alert(
-                            javafx.scene.control.Alert.AlertType.ERROR);
+                    var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR);
                     alert.setTitle("Classification Error");
                     alert.setHeaderText("Classification overlay has been disabled");
-                    alert.setContentText("The server returned repeated errors:\n" +
-                            lastErrorMessage + "\n\n" +
-                            "Remove the overlay and check the server connection.");
+                    alert.setContentText("The server returned repeated errors:\n" + lastErrorMessage + "\n\n"
+                            + "Remove the overlay and check the server connection.");
                     alert.show();
                 });
             }
@@ -610,12 +672,12 @@ public class DLPixelClassifier implements PixelClassifier {
 
         try {
             if (sharedTempDir != null && Files.exists(sharedTempDir)) {
-                Files.walk(sharedTempDir)
-                        .sorted(Comparator.reverseOrder())
-                        .forEach(path -> {
-                            try { Files.deleteIfExists(path); }
-                            catch (IOException ignored) {}
-                        });
+                Files.walk(sharedTempDir).sorted(Comparator.reverseOrder()).forEach(path -> {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException ignored) {
+                    }
+                });
                 logger.debug("Cleaned up shared temp dir: {}", sharedTempDir);
             }
         } catch (IOException e) {
@@ -646,9 +708,9 @@ public class DLPixelClassifier implements PixelClassifier {
      * @param expectedH     expected output height (detail tile pixel height)
      * @return context tile with dimensions matching expectedW x expectedH
      */
-    private BufferedImage readContextTile(ImageServer<BufferedImage> server,
-                                          RegionRequest detailRequest,
-                                          int expectedW, int expectedH) throws IOException {
+    private BufferedImage readContextTile(
+            ImageServer<BufferedImage> server, RegionRequest detailRequest, int expectedW, int expectedH)
+            throws IOException {
         int detailX = detailRequest.getX();
         int detailY = detailRequest.getY();
         int detailW = detailRequest.getWidth();
@@ -680,18 +742,20 @@ public class DLPixelClassifier implements PixelClassifier {
             readW = imgW;
             readH = imgH;
             if (contextResizeWarned.compareAndSet(false, true)) {
-                logger.warn("Image ({}x{}) smaller than context region ({}x{}) -- " +
-                        "reading entire image and resizing to match detail tile dimensions",
-                        imgW, imgH, contextW, contextH);
+                logger.warn(
+                        "Image ({}x{}) smaller than context region ({}x{}) -- "
+                                + "reading entire image and resizing to match detail tile dimensions",
+                        imgW,
+                        imgH,
+                        contextW,
+                        contextH);
             }
         }
 
         // Read at higher downsample so output has same pixel dimensions as detail tile
         double contextDownsample = detailRequest.getDownsample() * contextScale;
         RegionRequest contextRequest = RegionRequest.createInstance(
-                server.getPath(), contextDownsample,
-                cx, cy, readW, readH,
-                detailRequest.getZ(), detailRequest.getT());
+                server.getPath(), contextDownsample, cx, cy, readW, readH, detailRequest.getZ(), detailRequest.getT());
 
         BufferedImage contextImage = server.readRegion(contextRequest);
         if (contextImage == null) {
@@ -702,8 +766,8 @@ public class DLPixelClassifier implements PixelClassifier {
         if (contextImage.getWidth() != expectedW || contextImage.getHeight() != expectedH) {
             BufferedImage resized = new BufferedImage(expectedW, expectedH, contextImage.getType());
             java.awt.Graphics2D g = resized.createGraphics();
-            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
-                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.setRenderingHint(
+                    java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.drawImage(contextImage, 0, 0, expectedW, expectedH, null);
             g.dispose();
             contextImage = resized;
@@ -759,8 +823,7 @@ public class DLPixelClassifier implements PixelClassifier {
      * @param sigma   Gaussian sigma in pixels
      * @return smoothed probability map (new array)
      */
-    private static float[][][] gaussianSmoothProbabilities(float[][][] probMap,
-                                                            int width, int height, double sigma) {
+    private static float[][][] gaussianSmoothProbabilities(float[][][] probMap, int width, int height, double sigma) {
         int radius = (int) Math.ceil(sigma * 2.5);
         if (radius < 1) return probMap;
 
@@ -846,8 +909,7 @@ public class DLPixelClassifier implements PixelClassifier {
         try {
             double trainPx = metadata.getTrainingPixelSizeMicrons();
             double sourcePx = cal.getAveragedPixelSizeMicrons();
-            if (!Double.isNaN(trainPx) && trainPx > 0
-                    && !Double.isNaN(sourcePx) && sourcePx > 0) {
+            if (!Double.isNaN(trainPx) && trainPx > 0 && !Double.isNaN(sourcePx) && sourcePx > 0) {
                 double ratio = sourcePx / trainPx;
                 if (ratio > 2.0 || ratio < 0.5) {
                     logger.warn(
@@ -858,21 +920,18 @@ public class DLPixelClassifier implements PixelClassifier {
                                     + "inference at a closer resolution "
                                     + "or retraining with stronger scale "
                                     + "jitter.",
-                            sourcePx, trainPx);
+                            sourcePx,
+                            trainPx);
                 } else if (Math.abs(ratio - 1.0) > 0.05) {
                     logger.info(
-                            "Inference image pixel size {} um/px differs "
-                                    + "from training ({} um/px) by {}%.",
-                            sourcePx, trainPx,
-                            Math.round((ratio - 1.0) * 100));
+                            "Inference image pixel size {} um/px differs " + "from training ({} um/px) by {}%.",
+                            sourcePx, trainPx, Math.round((ratio - 1.0) * 100));
                 }
-            } else if (Double.isNaN(trainPx)
-                    || trainPx <= 0) {
-                logger.debug(
-                        "Model lacks training_pixel_size_um in metadata; "
-                                + "skipping pixel-size mismatch check. "
-                                + "(Older model or trained on uncalibrated "
-                                + "images.)");
+            } else if (Double.isNaN(trainPx) || trainPx <= 0) {
+                logger.debug("Model lacks training_pixel_size_um in metadata; "
+                        + "skipping pixel-size mismatch check. "
+                        + "(Older model or trained on uncalibrated "
+                        + "images.)");
             }
         } catch (Exception e) {
             // Never let the warning path block inference -- log and move on.
@@ -901,8 +960,7 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         int tileSize = inferenceConfig.getTileSize();
-        int padding = InferenceConfig.computeEffectivePadding(
-                tileSize, inferenceConfig.getOverlap());
+        int padding = InferenceConfig.computeEffectivePadding(tileSize, inferenceConfig.getOverlap());
 
         return new PixelClassifierMetadata.Builder()
                 .inputResolution(cal)
@@ -927,21 +985,27 @@ public class DLPixelClassifier implements PixelClassifier {
      * @param offsetY         pixel offset in Y (at model resolution)
      * @return stride-sized probability map for the original request's region, or null on failure
      */
-    private float[][][] runInferenceAtOffset(RegionRequest originalRequest,
-                                              ImageServer<BufferedImage> server,
-                                              ChannelConfiguration channelCfg,
-                                              int offsetX, int offsetY) throws IOException {
+    private float[][][] runInferenceAtOffset(
+            RegionRequest originalRequest,
+            ImageServer<BufferedImage> server,
+            ChannelConfiguration channelCfg,
+            int offsetX,
+            int offsetY)
+            throws IOException {
         double ds = originalRequest.getDownsample();
         int offXFullRes = (int) (offsetX * ds);
         int offYFullRes = (int) (offsetY * ds);
 
         // Create a shifted request
         RegionRequest shifted = RegionRequest.createInstance(
-                server.getPath(), ds,
+                server.getPath(),
+                ds,
                 originalRequest.getX() - offXFullRes,
                 originalRequest.getY() - offYFullRes,
-                originalRequest.getWidth(), originalRequest.getHeight(),
-                originalRequest.getZ(), originalRequest.getT());
+                originalRequest.getWidth(),
+                originalRequest.getHeight(),
+                originalRequest.getZ(),
+                originalRequest.getT());
 
         // Expand and read
         RegionRequest expanded = expandRequest(shifted, server);
@@ -958,8 +1022,7 @@ public class DLPixelClassifier implements PixelClassifier {
             detailChannels = 3;
         } else {
             dtype = "float32";
-            detailBytes = TileEncoder.encodeTileRawFloat(tileImage,
-                    channelConfig.getSelectedChannels());
+            detailBytes = TileEncoder.encodeTileRawFloat(tileImage, channelConfig.getSelectedChannels());
             detailChannels = channelConfig.getSelectedChannels().isEmpty()
                     ? tileImage.getRaster().getNumBands()
                     : channelConfig.getSelectedChannels().size();
@@ -972,19 +1035,20 @@ public class DLPixelClassifier implements PixelClassifier {
             int centerX = expanded.getX() + expanded.getWidth() / 2;
             int centerY = expanded.getY() + expanded.getHeight() / 2;
             RegionRequest ctxReq = RegionRequest.createInstance(
-                    server.getPath(), ds,
+                    server.getPath(),
+                    ds,
                     centerX - tileSizeFullRes / 2,
                     centerY - tileSizeFullRes / 2,
-                    tileSizeFullRes, tileSizeFullRes,
-                    expanded.getZ(), expanded.getT());
-            BufferedImage contextImage = readContextTile(server, ctxReq,
-                    tileImage.getWidth(), tileImage.getHeight());
+                    tileSizeFullRes,
+                    tileSizeFullRes,
+                    expanded.getZ(),
+                    expanded.getT());
+            BufferedImage contextImage = readContextTile(server, ctxReq, tileImage.getWidth(), tileImage.getHeight());
             byte[] contextBytes;
             if ("uint8".equals(dtype)) {
                 contextBytes = TileEncoder.encodeTileRaw(contextImage);
             } else {
-                contextBytes = TileEncoder.encodeTileRawFloat(contextImage,
-                        channelConfig.getSelectedChannels());
+                contextBytes = TileEncoder.encodeTileRawFloat(contextImage, channelConfig.getSelectedChannels());
             }
             int numPixels = tileImage.getWidth() * tileImage.getHeight();
             int bytesPerChannel = "uint8".equals(dtype) ? 1 : Float.BYTES;
@@ -1001,19 +1065,24 @@ public class DLPixelClassifier implements PixelClassifier {
             numChannels = detailChannels;
         }
 
-        String tileId = String.format("mp_%d_%d_%d_%d",
-                shifted.getX(), shifted.getY(), offsetX, offsetY);
+        String tileId = String.format("mp_%d_%d_%d_%d", shifted.getX(), shifted.getY(), offsetX, offsetY);
 
         int expandedW = tileImage.getWidth();
         int expandedH = tileImage.getHeight();
         int tileSize = inferenceConfig.getTileSize();
-        int reflectionPadding = computeEdgeReflectionPadding(
-                expandedW, expandedH, tileSize);
+        int reflectionPadding = computeEdgeReflectionPadding(expandedW, expandedH, tileSize);
 
         PixelInferenceResult result = backend.runPixelInferenceBinary(
-                modelDirPath, rawBytes, List.of(tileId),
-                tileImage.getHeight(), tileImage.getWidth(), numChannels,
-                dtype, channelCfg, inferenceConfig, sharedTempDir,
+                modelDirPath,
+                rawBytes,
+                List.of(tileId),
+                tileImage.getHeight(),
+                tileImage.getWidth(),
+                numChannels,
+                dtype,
+                channelCfg,
+                inferenceConfig,
+                sharedTempDir,
                 reflectionPadding);
         if (result == null || result.outputPaths() == null) return null;
 
@@ -1022,7 +1091,10 @@ public class DLPixelClassifier implements PixelClassifier {
 
         float[][][] probMap = ClassifierClient.readProbabilityMap(
                 Path.of(outputPath), result.numClasses(), tileImage.getHeight(), tileImage.getWidth());
-        try { Files.deleteIfExists(Path.of(outputPath)); } catch (IOException ignored) {}
+        try {
+            Files.deleteIfExists(Path.of(outputPath));
+        } catch (IOException ignored) {
+        }
 
         // The shifted inference covers a different region than the original.
         // Extract the pixels that correspond to the original request's stride area.
@@ -1039,18 +1111,18 @@ public class DLPixelClassifier implements PixelClassifier {
         int strideH = (int) (originalRequest.getHeight() / ds);
 
         // Bounds check
-        if (origInShiftedX < 0 || origInShiftedY < 0
+        if (origInShiftedX < 0
+                || origInShiftedY < 0
                 || origInShiftedX + strideW > probMap[0].length
                 || origInShiftedY + strideH > probMap.length) {
-            return null;  // Original region not fully covered
+            return null; // Original region not fully covered
         }
 
         int nClasses = probMap[0][0].length;
         float[][][] cropped = new float[strideH][strideW][nClasses];
         for (int y = 0; y < strideH; y++) {
             for (int x = 0; x < strideW; x++) {
-                System.arraycopy(probMap[y + origInShiftedY][x + origInShiftedX], 0,
-                        cropped[y][x], 0, nClasses);
+                System.arraycopy(probMap[y + origInShiftedY][x + origInShiftedX], 0, cropped[y][x], 0, nClasses);
             }
         }
         return cropped;
@@ -1076,8 +1148,7 @@ public class DLPixelClassifier implements PixelClassifier {
      * overshooting a 512x512 model and causing ONNXRuntime to reject the
      * input.
      */
-    static int computeEdgeReflectionPadding(int expandedW, int expandedH,
-                                             int tileSize) {
+    static int computeEdgeReflectionPadding(int expandedW, int expandedH, int tileSize) {
         if (expandedW >= tileSize && expandedH >= tileSize) {
             return 0;
         }
@@ -1098,14 +1169,10 @@ public class DLPixelClassifier implements PixelClassifier {
         int padFullRes = (int) (totalPad * ds);
         int expX = Math.max(0, request.getX() - padFullRes);
         int expY = Math.max(0, request.getY() - padFullRes);
-        int expRight = Math.min(server.getWidth(),
-                request.getX() + request.getWidth() + padFullRes);
-        int expBottom = Math.min(server.getHeight(),
-                request.getY() + request.getHeight() + padFullRes);
+        int expRight = Math.min(server.getWidth(), request.getX() + request.getWidth() + padFullRes);
+        int expBottom = Math.min(server.getHeight(), request.getY() + request.getHeight() + padFullRes);
         return RegionRequest.createInstance(
-                server.getPath(), ds,
-                expX, expY, expRight - expX, expBottom - expY,
-                request.getZ(), request.getT());
+                server.getPath(), ds, expX, expY, expRight - expX, expBottom - expY, request.getZ(), request.getT());
     }
 
     /**
@@ -1152,8 +1219,7 @@ public class DLPixelClassifier implements PixelClassifier {
      * did them.
      */
     private BufferedImage createClassIndexImageFromArgmax(byte[][] argmaxMap, int width, int height) {
-        BufferedImage indexed = new BufferedImage(width, height,
-                BufferedImage.TYPE_BYTE_INDEXED, colorModel);
+        BufferedImage indexed = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_INDEXED, colorModel);
         var raster = indexed.getRaster();
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -1193,8 +1259,7 @@ public class DLPixelClassifier implements PixelClassifier {
         float[][][] cropped = new float[cropH][cropW][numClasses];
         for (int y = 0; y < cropH; y++) {
             for (int x = 0; x < cropW; x++) {
-                System.arraycopy(probMap[y + offsetY][x + offsetX], 0,
-                        cropped[y][x], 0, numClasses);
+                System.arraycopy(probMap[y + offsetY][x + offsetX], 0, cropped[y][x], 0, numClasses);
             }
         }
         return cropped;
@@ -1226,8 +1291,8 @@ public class DLPixelClassifier implements PixelClassifier {
 
     /** Distinct color palette for fallback when class metadata lacks colors. */
     private static final int[][] FALLBACK_PALETTE = {
-            {255, 0, 0}, {0, 170, 0}, {0, 0, 255}, {255, 255, 0},
-            {255, 0, 255}, {0, 255, 255}, {255, 136, 0}, {136, 0, 255}
+        {255, 0, 0}, {0, 170, 0}, {0, 0, 255}, {255, 255, 0},
+        {255, 0, 255}, {0, 255, 255}, {255, 136, 0}, {136, 0, 255}
     };
 
     /**
@@ -1243,10 +1308,7 @@ public class DLPixelClassifier implements PixelClassifier {
         try {
             String hex = colorStr.startsWith("#") ? colorStr.substring(1) : colorStr;
             int rgb = Integer.parseInt(hex, 16);
-            return ColorTools.packRGB(
-                    (rgb >> 16) & 0xFF,
-                    (rgb >> 8) & 0xFF,
-                    rgb & 0xFF);
+            return ColorTools.packRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
         } catch (NumberFormatException e) {
             int[] c = FALLBACK_PALETTE[classIndex % FALLBACK_PALETTE.length];
             return ColorTools.packRGB(c[0], c[1], c[2]);

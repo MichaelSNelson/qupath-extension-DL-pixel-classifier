@@ -1,5 +1,8 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.control.ButtonType;
@@ -13,10 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.ModelManager;
-
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
 
 /**
  * Minimal dialog for configuring AdaBN ('Calibrate model to current image').
@@ -47,33 +46,26 @@ public class AdaBNDialog {
         List<ClassifierMetadata> models = modelManager.listClassifiers();
         if (models.isEmpty()) {
             qupath.fx.dialogs.Dialogs.showWarningNotification(
-                    "Calibrate model",
-                    "No trained classifiers found. Train a model first.");
+                    "Calibrate model", "No trained classifiers found. Train a model first.");
             return Optional.empty();
         }
-        models.sort(Comparator
-                .comparing((ClassifierMetadata m) -> m.getCreatedAt(),
-                        Comparator.nullsLast(Comparator.reverseOrder()))
-                .thenComparing(ClassifierMetadata::getName,
-                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)));
+        models.sort(Comparator.comparing(
+                        (ClassifierMetadata m) -> m.getCreatedAt(), Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(ClassifierMetadata::getName, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)));
 
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle("Calibrate model to current image");
-        dialog.setHeaderText(
-                "Recompute BatchNorm running statistics on a sample of tiles\n"
-                        + "drawn from the current image.\n"
-                        + "Saves a new model with '_adabn' suffix; original is preserved.");
+        dialog.setHeaderText("Recompute BatchNorm running statistics on a sample of tiles\n"
+                + "drawn from the current image.\n"
+                + "Saves a new model with '_adabn' suffix; original is preserved.");
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
-        ChoiceBox<ClassifierMetadata> modelChoice =
-                new ChoiceBox<>(FXCollections.observableArrayList(models));
+        ChoiceBox<ClassifierMetadata> modelChoice = new ChoiceBox<>(FXCollections.observableArrayList(models));
         modelChoice.setConverter(new javafx.util.StringConverter<>() {
             @Override
             public String toString(ClassifierMetadata m) {
                 if (m == null) return "";
-                String tile = m.getTrainingTileSizePx() > 0
-                        ? " [" + m.getTrainingTileSizePx() + " px]"
-                        : "";
+                String tile = m.getTrainingTileSizePx() > 0 ? " [" + m.getTrainingTileSizePx() + " px]" : "";
                 return m.getName() + tile;
             }
 
@@ -85,8 +77,7 @@ public class AdaBNDialog {
         modelChoice.getSelectionModel().selectFirst();
 
         Spinner<Integer> nTiles = new Spinner<>();
-        nTiles.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
-                32, 2000, 200, 50));
+        nTiles.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(32, 2000, 200, 50));
         nTiles.setEditable(true);
 
         GridPane grid = new GridPane();
@@ -97,11 +88,14 @@ public class AdaBNDialog {
         grid.add(modelChoice, 1, 0);
         grid.add(new Label("Number of tiles:"), 0, 1);
         grid.add(nTiles, 1, 1);
-        grid.add(new Label(
-                "Tiles are sampled at the model's training tile size from\n"
+        grid.add(
+                new Label("Tiles are sampled at the model's training tile size from\n"
                         + "the currently-open image. 200 is a reasonable default;\n"
                         + "lower for speed, higher for stability."),
-                0, 2, 2, 1);
+                0,
+                2,
+                2,
+                1);
 
         dialog.getDialogPane().setContent(grid);
 

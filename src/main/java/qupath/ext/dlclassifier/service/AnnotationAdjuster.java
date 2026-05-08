@@ -1,5 +1,10 @@
 package qupath.ext.dlclassifier.service;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.analysis.images.ContourTracing;
@@ -16,12 +21,6 @@ import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.ROIs;
 import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
-
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
 
 /**
  * Adjusts annotations within a single training tile based on model predictions.
@@ -77,11 +76,12 @@ public class AnnotationAdjuster {
      * @return preview image and statistics about the proposed changes
      * @throws IOException if any map file cannot be read
      */
-    public PreviewResult computePreview(String predictionMapPath,
-                                         String confidenceMapPath,
-                                         String groundTruthMaskPath,
-                                         double confidenceThreshold,
-                                         Map<String, Integer> classColors)
+    public PreviewResult computePreview(
+            String predictionMapPath,
+            String confidenceMapPath,
+            String groundTruthMaskPath,
+            double confidenceThreshold,
+            Map<String, Integer> classColors)
             throws IOException {
         int[][] predMap = loadGrayscaleMap(predictionMapPath, "prediction");
         int[][] confMap = loadGrayscaleMap(confidenceMapPath, "confidence");
@@ -100,8 +100,13 @@ public class AnnotationAdjuster {
         gtMask = cropToCenter(gtMask, patchSize);
         if (predMap.length != rawH || predMap[0].length != rawW) {
             int padding = (rawW - patchSize) / 2;
-            logger.info("Cropped padded maps from {}x{} to {}x{} (contextPadding={})",
-                    rawW, rawH, patchSize, patchSize, padding);
+            logger.info(
+                    "Cropped padded maps from {}x{} to {}x{} (contextPadding={})",
+                    rawW,
+                    rawH,
+                    patchSize,
+                    patchSize,
+                    padding);
         }
 
         int h = predMap.length;
@@ -167,9 +172,7 @@ public class AnnotationAdjuster {
      * @param adjustedMask the adjusted class mask (from {@link #computePreview})
      * @return result with counts of added/removed annotations
      */
-    public AdjustmentResult applyAdjustment(QuPathViewer viewer,
-                                             int tileX, int tileY,
-                                             int[][] adjustedMask) {
+    public AdjustmentResult applyAdjustment(QuPathViewer viewer, int tileX, int tileY, int[][] adjustedMask) {
         ImageData<?> imageData = viewer.getImageData();
         if (imageData == null) {
             return new AdjustmentResult(0, 0, 0, "No image data in viewer");
@@ -179,13 +182,11 @@ public class AnnotationAdjuster {
         int regionSize = (int) (patchSize * downsample);
 
         // Tile boundary ROI for clipping operations
-        ROI tileROI = ROIs.createRectangleROI(tileX, tileY, regionSize, regionSize,
-                ImagePlane.getDefaultPlane());
+        ROI tileROI = ROIs.createRectangleROI(tileX, tileY, regionSize, regionSize, ImagePlane.getDefaultPlane());
 
         // RegionRequest for ContourTracing (maps pixel coords to image coords)
         RegionRequest region = RegionRequest.createInstance(
-                imageData.getServer().getPath(), downsample,
-                tileX, tileY, regionSize, regionSize);
+                imageData.getServer().getPath(), downsample, tileX, tileY, regionSize, regionSize);
 
         int h = adjustedMask.length;
         int w = adjustedMask[0].length;
@@ -214,8 +215,7 @@ public class AnnotationAdjuster {
                 }
             }
             SimpleImage classImage = SimpleImages.createFloatImage(data, w, h);
-            ROI tracedROI = ContourTracing.createTracedROI(
-                    classImage, 0.5, 1.5, region);
+            ROI tracedROI = ContourTracing.createTracedROI(classImage, 0.5, 1.5, region);
             if (tracedROI == null || tracedROI.isEmpty()) continue;
 
             ROI clippedROI = RoiTools.intersection(tracedROI, tileROI);
@@ -241,8 +241,7 @@ public class AnnotationAdjuster {
             double ay = annROI.getBoundsY();
             double ax2 = ax + annROI.getBoundsWidth();
             double ay2 = ay + annROI.getBoundsHeight();
-            if (ax2 <= tileX || ax >= tileX + regionSize
-                    || ay2 <= tileY || ay >= tileY + regionSize) {
+            if (ax2 <= tileX || ax >= tileX + regionSize || ay2 <= tileY || ay >= tileY + regionSize) {
                 continue;
             }
 
@@ -284,8 +283,8 @@ public class AnnotationAdjuster {
                                 .add(outerROI);
                     }
                 } catch (Exception e) {
-                    logger.warn("ROI difference failed for same-class merge {}: {}",
-                            ann.getPathClass(), e.getMessage());
+                    logger.warn(
+                            "ROI difference failed for same-class merge {}: {}", ann.getPathClass(), e.getMessage());
                 }
                 mergedAbsorbed.add(ann);
                 continue;
@@ -297,13 +296,11 @@ public class AnnotationAdjuster {
                 if (outerROI == null || outerROI.isEmpty()) {
                     removed.add(ann);
                 } else {
-                    PathObject replacement = PathObjects.createAnnotationObject(
-                            outerROI, ann.getPathClass());
+                    PathObject replacement = PathObjects.createAnnotationObject(outerROI, ann.getPathClass());
                     replaced.put(ann, replacement);
                 }
             } catch (Exception e) {
-                logger.warn("ROI difference failed for annotation {}: {}",
-                        ann.getPathClass(), e.getMessage());
+                logger.warn("ROI difference failed for annotation {}: {}", ann.getPathClass(), e.getMessage());
             }
         }
 
@@ -318,8 +315,7 @@ public class AnnotationAdjuster {
                     try {
                         mergedROI = RoiTools.union(List.of(mergedROI, outer));
                     } catch (Exception ex) {
-                        logger.warn("ROI union failed for class {}: {}",
-                                classNames.get(classIdx), ex.getMessage());
+                        logger.warn("ROI union failed for class {}: {}", classNames.get(classIdx), ex.getMessage());
                     }
                 }
             }
@@ -339,23 +335,30 @@ public class AnnotationAdjuster {
 
         hierarchy.fireHierarchyChangedEvent(this);
 
-        lastUndo = new UndoSnapshot(hierarchy, toRemove, outerReplacements,
-                newAnnotations, replaced);
+        lastUndo = new UndoSnapshot(hierarchy, toRemove, outerReplacements, newAnnotations, replaced);
 
         int totalRemoved = removed.size();
         int totalClipped = replaced.size();
         int totalMerged = mergedAbsorbed.size();
         int totalAdded = newAnnotations.size();
 
-        logger.info("Annotation adjustment applied: {} removed, {} clipped, "
-                + "{} merged into new same-class annotations, {} added "
-                + "within tile ({},{})",
-                totalRemoved, totalClipped, totalMerged, totalAdded, tileX, tileY);
+        logger.info(
+                "Annotation adjustment applied: {} removed, {} clipped, "
+                        + "{} merged into new same-class annotations, {} added "
+                        + "within tile ({},{})",
+                totalRemoved,
+                totalClipped,
+                totalMerged,
+                totalAdded,
+                tileX,
+                tileY);
 
-        return new AdjustmentResult(totalRemoved + totalClipped + totalMerged,
+        return new AdjustmentResult(
+                totalRemoved + totalClipped + totalMerged,
                 totalAdded,
                 countChangedPixels(adjustedMask),
-                String.format("Removed %d, clipped %d, merged %d, added %d annotations",
+                String.format(
+                        "Removed %d, clipped %d, merged %d, added %d annotations",
                         totalRemoved, totalClipped, totalMerged, totalAdded));
     }
 
@@ -383,8 +386,7 @@ public class AnnotationAdjuster {
 
         hierarchy.fireHierarchyChangedEvent(this);
 
-        logger.info("Annotation adjustment undone: restored {} annotations",
-                undo.removedAnnotations.size());
+        logger.info("Annotation adjustment undone: restored {} annotations", undo.removedAnnotations.size());
         return true;
     }
 
@@ -402,18 +404,12 @@ public class AnnotationAdjuster {
             BufferedImage previewImage,
             int[][] adjustedMask,
             int totalChangedPixels,
-            Map<String, Integer> changesPerClass
-    ) {}
+            Map<String, Integer> changesPerClass) {}
 
     /**
      * Result after applying an annotation adjustment.
      */
-    public record AdjustmentResult(
-            int annotationsModified,
-            int annotationsAdded,
-            int pixelsChanged,
-            String summary
-    ) {}
+    public record AdjustmentResult(int annotationsModified, int annotationsAdded, int pixelsChanged, String summary) {}
 
     // ==================== Internal ====================
 
@@ -422,8 +418,7 @@ public class AnnotationAdjuster {
             List<PathObject> removedAnnotations,
             List<PathObject> outerReplacements,
             List<PathObject> addedAnnotations,
-            Map<PathObject, PathObject> replacementMap
-    ) {}
+            Map<PathObject, PathObject> replacementMap) {}
 
     /**
      * Loads a grayscale (8-bit) PNG as an int[][height][width] array.

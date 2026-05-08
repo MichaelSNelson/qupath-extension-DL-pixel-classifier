@@ -1,13 +1,12 @@
 package qupath.ext.dlclassifier.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Data types shared between the {@link ClassifierBackend} interface
@@ -37,8 +36,8 @@ public class ClassifierClient {
      * @return probability map with shape [height][width][numClasses] (HWC order for TileProcessor)
      * @throws IOException if reading fails
      */
-    public static float[][][] readProbabilityMap(Path filePath, int numClasses,
-                                                  int height, int width) throws IOException {
+    public static float[][][] readProbabilityMap(Path filePath, int numClasses, int height, int width)
+            throws IOException {
         byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
 
         // Validate file size matches expected dimensions
@@ -134,8 +133,7 @@ public class ClassifierClient {
             String deviceInfo,
             String status,
             String setupPhase,
-            Map<String, String> configSummary
-    ) {
+            Map<String, String> configSummary) {
         public double getProgress() {
             return (double) epoch / totalEpochs;
         }
@@ -171,8 +169,7 @@ public class ClassifierClient {
             double focusClassIoU,
             boolean focusClassTargetMet,
             String quality,
-            List<String> warnings
-    ) {
+            List<String> warnings) {
         /**
          * Canonical constructor - normalizes quality/warnings to safe defaults.
          */
@@ -184,18 +181,53 @@ public class ClassifierClient {
         }
 
         /** Compact constructor for non-paused results. */
-        public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy,
-                              int bestEpoch, double bestMeanIoU) {
-            this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU,
-                    false, 0, 0, null, false, null, null, 0.0, true,
-                    "ok", Collections.emptyList());
+        public TrainingResult(
+                String jobId,
+                String modelPath,
+                double finalLoss,
+                double finalAccuracy,
+                int bestEpoch,
+                double bestMeanIoU) {
+            this(
+                    jobId,
+                    modelPath,
+                    finalLoss,
+                    finalAccuracy,
+                    bestEpoch,
+                    bestMeanIoU,
+                    false,
+                    0,
+                    0,
+                    null,
+                    false,
+                    null,
+                    null,
+                    0.0,
+                    true,
+                    "ok",
+                    Collections.emptyList());
         }
 
         /** Compact constructor for cancelled results (no save). */
         public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy) {
-            this(jobId, modelPath, finalLoss, finalAccuracy, 0, 0.0,
-                    false, 0, 0, null, true, null, null, 0.0, true,
-                    "ok", Collections.emptyList());
+            this(
+                    jobId,
+                    modelPath,
+                    finalLoss,
+                    finalAccuracy,
+                    0,
+                    0.0,
+                    false,
+                    0,
+                    0,
+                    null,
+                    true,
+                    null,
+                    null,
+                    0.0,
+                    true,
+                    "ok",
+                    Collections.emptyList());
         }
 
         /**
@@ -205,15 +237,40 @@ public class ClassifierClient {
          * without churn. New callers (SSL pretraining) should use the full
          * 17-arg form.
          */
-        public TrainingResult(String jobId, String modelPath, double finalLoss, double finalAccuracy,
-                              int bestEpoch, double bestMeanIoU, boolean paused, int lastEpoch,
-                              int totalEpochs, String checkpointPath, boolean cancelled,
-                              String lastModelPath, String focusClassName, double focusClassIoU,
-                              boolean focusClassTargetMet) {
-            this(jobId, modelPath, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU,
-                    paused, lastEpoch, totalEpochs, checkpointPath, cancelled, lastModelPath,
-                    focusClassName, focusClassIoU, focusClassTargetMet,
-                    "ok", Collections.emptyList());
+        public TrainingResult(
+                String jobId,
+                String modelPath,
+                double finalLoss,
+                double finalAccuracy,
+                int bestEpoch,
+                double bestMeanIoU,
+                boolean paused,
+                int lastEpoch,
+                int totalEpochs,
+                String checkpointPath,
+                boolean cancelled,
+                String lastModelPath,
+                String focusClassName,
+                double focusClassIoU,
+                boolean focusClassTargetMet) {
+            this(
+                    jobId,
+                    modelPath,
+                    finalLoss,
+                    finalAccuracy,
+                    bestEpoch,
+                    bestMeanIoU,
+                    paused,
+                    lastEpoch,
+                    totalEpochs,
+                    checkpointPath,
+                    cancelled,
+                    lastModelPath,
+                    focusClassName,
+                    focusClassIoU,
+                    focusClassTargetMet,
+                    "ok",
+                    Collections.emptyList());
         }
 
         /** Returns true if training was cancelled. */
@@ -260,22 +317,12 @@ public class ClassifierClient {
     /**
      * Pretrained encoder information.
      */
-    public record EncoderInfo(
-            String name,
-            String displayName,
-            String family,
-            double paramsMillion,
-            String license
-    ) {}
+    public record EncoderInfo(String name, String displayName, String family, double paramsMillion, String license) {}
 
     /**
      * Segmentation architecture information.
      */
-    public record ArchitectureInfo(
-            String name,
-            String displayName,
-            String description
-    ) {}
+    public record ArchitectureInfo(String name, String displayName, String description) {}
 
     /**
      * Model layer information for freeze/unfreeze configuration.
@@ -287,8 +334,7 @@ public class ClassifierClient {
             boolean isEncoder,
             int depth,
             boolean recommendedFreeze,
-            String description
-    ) {}
+            String description) {}
 
     /**
      * Per-tile evaluation result from post-training analysis.
@@ -311,30 +357,47 @@ public class ClassifierClient {
             String tileImagePath,
             String predictionMapPath,
             String confidenceMapPath,
-            String groundTruthMaskPath
-    ) {
+            String groundTruthMaskPath) {
         /**
          * Backward-compatible constructor for results without prediction/confidence/gt maps
          * (e.g. sessions saved before annotation adjustment was added).
          */
-        public TileEvaluationResult(String filename, String split, double loss,
-                                     double disagreementPct, Map<String, Double> perClassIoU,
-                                     double meanIoU, int x, int y,
-                                     String sourceImage, String sourceImageId,
-                                     String disagreementImagePath, String lossHeatmapPath,
-                                     String tileImagePath) {
-            this(filename, split, loss, disagreementPct, perClassIoU, meanIoU,
-                    x, y, sourceImage, sourceImageId, disagreementImagePath,
-                    lossHeatmapPath, tileImagePath, null, null, null);
+        public TileEvaluationResult(
+                String filename,
+                String split,
+                double loss,
+                double disagreementPct,
+                Map<String, Double> perClassIoU,
+                double meanIoU,
+                int x,
+                int y,
+                String sourceImage,
+                String sourceImageId,
+                String disagreementImagePath,
+                String lossHeatmapPath,
+                String tileImagePath) {
+            this(
+                    filename,
+                    split,
+                    loss,
+                    disagreementPct,
+                    perClassIoU,
+                    meanIoU,
+                    x,
+                    y,
+                    sourceImage,
+                    sourceImageId,
+                    disagreementImagePath,
+                    lossHeatmapPath,
+                    tileImagePath,
+                    null,
+                    null,
+                    null);
         }
     }
 
     /**
      * Progress update during tile evaluation.
      */
-    public record EvaluationProgress(
-            int currentTile,
-            int totalTiles,
-            String message
-    ) {}
+    public record EvaluationProgress(int currentTile, int totalTiles, String message) {}
 }

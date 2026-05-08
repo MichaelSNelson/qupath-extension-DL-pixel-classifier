@@ -1,11 +1,5 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
-import qupath.ext.dlclassifier.classifier.ClassifierHandler;
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.ClassifierMetadata;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.model.TrainingConfig;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -13,6 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import qupath.ext.dlclassifier.classifier.ClassifierHandler;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.TrainingConfig;
 
 /**
  * Handler for UNet architecture pixel classifiers.
@@ -55,8 +54,7 @@ public class UNetHandler implements ClassifierHandler {
             "hibou-l",
             "hibou-b",
             "midnight",
-            "dinov2-large"
-    );
+            "dinov2-large");
 
     /** Human-readable display names for backbone encoders. */
     private static final Map<String, String> BACKBONE_DISPLAY_NAMES = Map.ofEntries(
@@ -77,8 +75,7 @@ public class UNetHandler implements ClassifierHandler {
             Map.entry("hibou-l", "Hibou-L (Apache 2.0, 300M params, gated)"),
             Map.entry("hibou-b", "Hibou-B (Apache 2.0, 86M params, gated)"),
             Map.entry("midnight", "Midnight (MIT, 1.1B params)"),
-            Map.entry("dinov2-large", "DINOv2-Large (Apache 2.0, general-purpose)")
-    );
+            Map.entry("dinov2-large", "DINOv2-Large (Apache 2.0, general-purpose)"));
 
     /**
      * Returns a human-readable display name for a backbone encoder.
@@ -96,16 +93,15 @@ public class UNetHandler implements ClassifierHandler {
     }
 
     /** Supported tile sizes (must be divisible by 32 for UNet) */
-    public static final List<Integer> TILE_SIZES = List.of(
-            128, 256, 384, 512, 768, 1024
-    );
+    public static final List<Integer> TILE_SIZES = List.of(128, 256, 384, 512, 768, 1024);
 
     @Override
     public Set<WeightInitStrategy> getSupportedWeightInitStrategies() {
-        return Set.of(WeightInitStrategy.SCRATCH,
-                      WeightInitStrategy.BACKBONE_PRETRAINED,
-                      WeightInitStrategy.SSL_ENCODER,
-                      WeightInitStrategy.CONTINUE_TRAINING);
+        return Set.of(
+                WeightInitStrategy.SCRATCH,
+                WeightInitStrategy.BACKBONE_PRETRAINED,
+                WeightInitStrategy.SSL_ENCODER,
+                WeightInitStrategy.CONTINUE_TRAINING);
     }
 
     @Override
@@ -120,9 +116,9 @@ public class UNetHandler implements ClassifierHandler {
 
     @Override
     public String getDescription() {
-        return "Encoder-decoder architecture with skip connections. " +
-                "Excellent for semantic segmentation with strong boundary preservation. " +
-                "Supports various pretrained backbones (ResNet, EfficientNet).";
+        return "Encoder-decoder architecture with skip connections. "
+                + "Excellent for semantic segmentation with strong boundary preservation. "
+                + "Supports various pretrained backbones (ResNet, EfficientNet).";
     }
 
     @Override
@@ -187,13 +183,11 @@ public class UNetHandler implements ClassifierHandler {
         int numChannels = channelConfig.getNumChannels();
         if (numChannels < getMinChannels()) {
             return Optional.of(String.format(
-                    "UNet requires at least %d channel(s), but %d selected",
-                    getMinChannels(), numChannels));
+                    "UNet requires at least %d channel(s), but %d selected", getMinChannels(), numChannels));
         }
         if (numChannels > getMaxChannels()) {
-            return Optional.of(String.format(
-                    "UNet supports at most %d channels, but %d selected",
-                    getMaxChannels(), numChannels));
+            return Optional.of(
+                    String.format("UNet supports at most %d channels, but %d selected", getMaxChannels(), numChannels));
         }
 
         return Optional.empty();
@@ -224,21 +218,18 @@ public class UNetHandler implements ClassifierHandler {
     // generic backbone combo and LayerFreezePanel respectively.
 
     @Override
-    public ClassifierMetadata buildMetadata(TrainingConfig config,
-                                            ChannelConfiguration channelConfig,
-                                            List<String> classNames) {
+    public ClassifierMetadata buildMetadata(
+            TrainingConfig config, ChannelConfiguration channelConfig, List<String> classNames) {
         // Generate a unique ID
-        String timestamp = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         String id = String.format("unet_%s_%s", config.getBackbone(), timestamp);
 
         ClassifierMetadata.Builder builder = ClassifierMetadata.builder()
                 .id(id)
                 .name(String.format("UNet %s Classifier", config.getBackbone()))
-                .description(String.format("UNet with %s backbone, %d channels, %d classes",
-                        config.getBackbone(),
-                        channelConfig.getNumChannels(),
-                        classNames.size()))
+                .description(String.format(
+                        "UNet with %s backbone, %d channels, %d classes",
+                        config.getBackbone(), channelConfig.getNumChannels(), classNames.size()))
                 .modelType("unet")
                 .backbone(config.getBackbone())
                 .inputSize(config.getTileSize(), config.getTileSize())
@@ -263,16 +254,15 @@ public class UNetHandler implements ClassifierHandler {
      */
     private String getDefaultColor(int index) {
         String[] colors = {
-                "#808080", // Gray (background)
-                "#FF0000", // Red
-                "#00FF00", // Green
-                "#0000FF", // Blue
-                "#FFFF00", // Yellow
-                "#FF00FF", // Magenta
-                "#00FFFF", // Cyan
-                "#FFA500"  // Orange
+            "#808080", // Gray (background)
+            "#FF0000", // Red
+            "#00FF00", // Green
+            "#0000FF", // Blue
+            "#FFFF00", // Yellow
+            "#FF00FF", // Magenta
+            "#00FFFF", // Cyan
+            "#FFA500" // Orange
         };
         return colors[index % colors.length];
     }
-
 }

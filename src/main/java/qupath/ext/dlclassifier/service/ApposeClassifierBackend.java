@@ -3,18 +3,6 @@ package qupath.ext.dlclassifier.service;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.apposed.appose.NDArray;
-import org.apposed.appose.Service.ResponseType;
-import org.apposed.appose.Service.Task;
-import org.apposed.appose.TaskEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
-import qupath.ext.dlclassifier.model.ChannelConfiguration;
-import qupath.ext.dlclassifier.model.InferenceConfig;
-import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -30,6 +18,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.apposed.appose.NDArray;
+import org.apposed.appose.Service.ResponseType;
+import org.apposed.appose.Service.Task;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
+import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.model.InferenceConfig;
+import qupath.ext.dlclassifier.model.TrainingConfig;
+import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 
 /**
  * Backend implementation using Appose for embedded Python execution
@@ -103,19 +101,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         Object ver = task.outputs.get("server_version");
                         Object req = task.outputs.get("required_version");
                         if (ver != null) {
-                            logger.info("dlclassifier-server v{} (required >= {})",
-                                    ver, req != null ? req : "?");
+                            logger.info("dlclassifier-server v{} (required >= {})", ver, req != null ? req : "?");
                         }
                     }
 
                     return Boolean.TRUE.equals(healthy);
                 } catch (Exception e) {
                     String msg = e.getMessage() != null ? e.getMessage() : "";
-                    if (msg.toLowerCase().contains("thread death")
-                            && attempt < MAX_TASK_RETRIES - 1) {
-                        logger.debug("Health check got transient 'thread death' " +
-                                "(attempt {}/{}), retrying after {}ms...",
-                                attempt + 1, MAX_TASK_RETRIES,
+                    if (msg.toLowerCase().contains("thread death") && attempt < MAX_TASK_RETRIES - 1) {
+                        logger.debug(
+                                "Health check got transient 'thread death' "
+                                        + "(attempt {}/{}), retrying after {}ms...",
+                                attempt + 1,
+                                MAX_TASK_RETRIES,
                                 TASK_RETRY_DELAY_MS);
                         Thread.sleep(TASK_RETRY_DELAY_MS);
                         continue;
@@ -187,11 +185,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
      * @throws IOException on Appose failure or Python exception
      */
     public String calibrateBatchnorm(
-            String modelPath,
-            List<String> tilePaths,
-            String outputDir,
-            Map<String, Object> inputConfig,
-            int batchSize) throws IOException {
+            String modelPath, List<String> tilePaths, String outputDir, Map<String, Object> inputConfig, int batchSize)
+            throws IOException {
         Map<String, Object> inputs = new LinkedHashMap<>();
         inputs.put("model_path", modelPath);
         inputs.put("tile_paths", tilePaths);
@@ -199,12 +194,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("input_config", inputConfig);
         inputs.put("batch_size", batchSize);
         try {
-            Task task = ApposeService.getInstance()
-                    .runTask("calibrate_batchnorm", inputs);
+            Task task = ApposeService.getInstance().runTask("calibrate_batchnorm", inputs);
             boolean success = Boolean.TRUE.equals(task.outputs.get("success"));
             String message = String.valueOf(task.outputs.get("message"));
-            String savedPath = String.valueOf(
-                    task.outputs.getOrDefault("output_path", ""));
+            String savedPath = String.valueOf(task.outputs.getOrDefault("output_path", ""));
             if (!success) {
                 throw new IOException("AdaBN failed: " + message);
             }
@@ -213,8 +206,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {
-            throw new IOException(
-                    "Appose AdaBN call failed: " + e.getMessage(), e);
+            throw new IOException("Appose AdaBN call failed: " + e.getMessage(), e);
         }
     }
 
@@ -228,7 +220,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path trainingDataPath,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException {
+            Consumer<String> jobIdCallback)
+            throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
 
@@ -310,8 +303,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         double userPRotate = toDouble(params.get("p_rotate"), 0.5);
         double userPElastic = toDouble(params.get("p_elastic"), 0.3);
 
-        boolean flipOn = toggles.getOrDefault("flip_horizontal", false)
-                || toggles.getOrDefault("flip_vertical", false);
+        boolean flipOn = toggles.getOrDefault("flip_horizontal", false) || toggles.getOrDefault("flip_vertical", false);
         boolean rotateOn = toggles.getOrDefault("rotation_90", false);
         boolean elasticOn = toggles.getOrDefault("elastic_deformation", false);
 
@@ -325,26 +317,21 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             augConfig.put("brightness_limit", toDouble(params.get("brightness_limit"), 0.2));
         if (params.containsKey("contrast_limit"))
             augConfig.put("contrast_limit", toDouble(params.get("contrast_limit"), 0.2));
-        if (params.containsKey("gamma_min"))
-            augConfig.put("gamma_min", toInt(params.get("gamma_min"), 80));
-        if (params.containsKey("gamma_max"))
-            augConfig.put("gamma_max", toInt(params.get("gamma_max"), 120));
+        if (params.containsKey("gamma_min")) augConfig.put("gamma_min", toInt(params.get("gamma_min"), 80));
+        if (params.containsKey("gamma_max")) augConfig.put("gamma_max", toInt(params.get("gamma_max"), 120));
         if (params.containsKey("elastic_alpha"))
             augConfig.put("elastic_alpha", toDouble(params.get("elastic_alpha"), 120.0));
         if (params.containsKey("elastic_sigma_ratio"))
             augConfig.put("elastic_sigma_ratio", toDouble(params.get("elastic_sigma_ratio"), 0.05));
-        if (params.containsKey("p_noise"))
-            augConfig.put("p_noise", toDouble(params.get("p_noise"), 0.2));
+        if (params.containsKey("p_noise")) augConfig.put("p_noise", toDouble(params.get("p_noise"), 0.2));
         if (params.containsKey("noise_std_min"))
             augConfig.put("noise_std_min", toDouble(params.get("noise_std_min"), 0.04));
         if (params.containsKey("noise_std_max"))
             augConfig.put("noise_std_max", toDouble(params.get("noise_std_max"), 0.2));
         if (params.containsKey("scale_jitter_limit"))
-            augConfig.put("scale_jitter_limit",
-                    toDouble(params.get("scale_jitter_limit"), 0.0));
+            augConfig.put("scale_jitter_limit", toDouble(params.get("scale_jitter_limit"), 0.0));
         if (params.containsKey("p_scale_jitter"))
-            augConfig.put("p_scale_jitter",
-                    toDouble(params.get("p_scale_jitter"), 0.5));
+            augConfig.put("p_scale_jitter", toDouble(params.get("p_scale_jitter"), 0.5));
 
         augConfig.put("intensity_mode", trainingConfig.getIntensityAugMode());
         trainingParams.put("augmentation_config", augConfig);
@@ -368,17 +355,16 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         trainingParams.put("in_memory_dataset", trainingConfig.getInMemoryDataset());
         // Bounded cache: fraction of available RAM the subset cache may use.
         // Honored by train.py only when in_memory_dataset == "bounded".
-        trainingParams.put("cache_bounded_fraction",
-                qupath.ext.dlclassifier.preferences.DLClassifierPreferences
-                        .getCacheBoundedFraction());
+        trainingParams.put(
+                "cache_bounded_fraction",
+                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getCacheBoundedFraction());
         // "disabled" as the metric means the user wants to train for the full
         // epoch count -- turn off the EarlyStopping instance on the Python side.
-        boolean earlyStoppingEnabled =
-                !"disabled".equalsIgnoreCase(trainingConfig.getEarlyStoppingMetric());
+        boolean earlyStoppingEnabled = !"disabled".equalsIgnoreCase(trainingConfig.getEarlyStoppingMetric());
         trainingParams.put("early_stopping", earlyStoppingEnabled);
         trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
-        trainingParams.put("early_stopping_metric",
-                earlyStoppingEnabled ? trainingConfig.getEarlyStoppingMetric() : "mean_iou");
+        trainingParams.put(
+                "early_stopping_metric", earlyStoppingEnabled ? trainingConfig.getEarlyStoppingMetric() : "mean_iou");
         trainingParams.put("mixed_precision", trainingConfig.isMixedPrecision());
         trainingParams.put("fused_optimizer", trainingConfig.isFusedOptimizer());
         trainingParams.put("use_lr_finder", trainingConfig.isUseLrFinder());
@@ -403,7 +389,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("classes", classNames);
         inputs.put("data_path", trainingDataPath.toString());
         // Pass classifier name so it survives in checkpoints for recovery
-        if (trainingConfig.getClassifierName() != null && !trainingConfig.getClassifierName().isEmpty()) {
+        if (trainingConfig.getClassifierName() != null
+                && !trainingConfig.getClassifierName().isEmpty()) {
             inputs.put("classifier_name", trainingConfig.getClassifierName());
         }
 
@@ -443,8 +430,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // (The pretraining paths keep their retry: their cleanup is now
         // deferred via terminalCleanup, so a duplicate is harmless there.)
         try {
-            return executeTrainingTask(appose, inputs, jobId, extensionCL,
-                    progressCallback, cancelledCheck);
+            return executeTrainingTask(appose, inputs, jobId, extensionCL, progressCallback, cancelledCheck);
         } finally {
             Thread.currentThread().setContextClassLoader(originalCL);
         }
@@ -456,6 +442,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
      */
     private static final class TrainingStartedException extends IOException {
         final boolean pythonStarted;
+
         TrainingStartedException(String msg, Throwable cause, boolean pythonStarted) {
             super(msg, cause);
             this.pythonStarted = pythonStarted;
@@ -483,9 +470,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path outputDir,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException {
-        return startPretraining(config, dataPath, outputDir,
-                progressCallback, cancelledCheck, jobIdCallback, null);
+            Consumer<String> jobIdCallback)
+            throws IOException {
+        return startPretraining(config, dataPath, outputDir, progressCallback, cancelledCheck, jobIdCallback, null);
     }
 
     public ClassifierClient.TrainingResult startPretraining(
@@ -495,7 +482,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
             Consumer<String> jobIdCallback,
-            Supplier<String> cancelSaveModeSupplier) throws IOException {
+            Supplier<String> cancelSaveModeSupplier)
+            throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
 
@@ -512,8 +500,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("data_path", dataPath.toString());
         inputs.put("output_dir", outputDir.toString());
 
-        logger.info("Starting MAE pretraining: jobId={}, config={}, data={}, output={}",
-                jobId, config.get("model_config"), dataPath, outputDir);
+        logger.info(
+                "Starting MAE pretraining: jobId={}, config={}, data={}, output={}",
+                jobId,
+                config.get("model_config"),
+                dataPath,
+                outputDir);
         if (jobIdCallback != null) {
             jobIdCallback.accept(jobId);
         }
@@ -521,9 +513,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // See SSL pretraining for the rationale; MAE shares the same race
         // (worker dies on dispatch -> Java throws -> finally block deletes the
         // temp tile dir while Appose's silent auto-retry is still running).
-        return runPretrainingWithThreadDeathRetry(appose, "pretrain_mae", inputs,
-                jobId, "mae", outputDir, progressCallback, cancelledCheck,
-                cancelSaveModeSupplier, getCancelSignalPath(jobId));
+        return runPretrainingWithThreadDeathRetry(
+                appose,
+                "pretrain_mae",
+                inputs,
+                jobId,
+                "mae",
+                outputDir,
+                progressCallback,
+                cancelledCheck,
+                cancelSaveModeSupplier,
+                getCancelSignalPath(jobId));
     }
 
     /**
@@ -533,22 +533,21 @@ public class ApposeClassifierBackend implements ClassifierBackend {
      * can find the saved state.
      */
     private ClassifierClient.TrainingResult buildPretrainingResult(
-            Task task, String jobId, String label,
-            Map<String, Object> inputs, Path outputDir) {
-        String status = task.outputs.containsKey("status")
-                ? String.valueOf(task.outputs.get("status")) : "completed";
+            Task task, String jobId, String label, Map<String, Object> inputs, Path outputDir) {
+        String status = task.outputs.containsKey("status") ? String.valueOf(task.outputs.get("status")) : "completed";
         String encoderPath = task.outputs.containsKey("encoder_path")
-                ? task.outputs.get("encoder_path").toString() : "";
+                ? task.outputs.get("encoder_path").toString()
+                : "";
         int epochsCompleted = task.outputs.containsKey("epochs_completed")
-                ? ((Number) task.outputs.get("epochs_completed")).intValue() : 0;
-        double finalLoss = task.outputs.containsKey("final_loss")
-                ? ((Number) task.outputs.get("final_loss")).doubleValue() : 0.0;
+                ? ((Number) task.outputs.get("epochs_completed")).intValue()
+                : 0;
+        double finalLoss =
+                task.outputs.containsKey("final_loss") ? ((Number) task.outputs.get("final_loss")).doubleValue() : 0.0;
         // Python may report a quality assessment ("ok", "warn", "likely_collapse",
         // "aborted_collapse") plus a list of human-readable warnings. Plumb both
         // through so the completion dialog can flag problems instead of silently
         // saving a degenerate encoder.
-        String quality = task.outputs.containsKey("quality")
-                ? String.valueOf(task.outputs.get("quality")) : "ok";
+        String quality = task.outputs.containsKey("quality") ? String.valueOf(task.outputs.get("quality")) : "ok";
         java.util.List<String> warnings = extractStringList(task.outputs.get("warnings"));
         if ("aborted_collapse".equals(status) && "ok".equals(quality)) {
             // Defensive: if the abort happened but the quality field wasn't set,
@@ -563,29 +562,65 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     ? ((Number) task.outputs.get("total_epochs")).intValue()
                     : epochsCompleted;
             storeCheckpointInfo(jobId, checkpointPath.toString(), epochsCompleted, inputs);
-            logger.info("{} pretraining paused: jobId={}, epoch={}/{}, checkpoint={}",
-                    label.toUpperCase(), jobId, epochsCompleted, totalEpochs, checkpointPath);
+            logger.info(
+                    "{} pretraining paused: jobId={}, epoch={}/{}, checkpoint={}",
+                    label.toUpperCase(),
+                    jobId,
+                    epochsCompleted,
+                    totalEpochs,
+                    checkpointPath);
             return new ClassifierClient.TrainingResult(
-                    jobId, null, finalLoss, 0.0, 0, 0.0,
-                    true, epochsCompleted, totalEpochs, checkpointPath.toString(),
-                    false, null, null, 0.0, true,
-                    quality, warnings);
+                    jobId,
+                    null,
+                    finalLoss,
+                    0.0,
+                    0,
+                    0.0,
+                    true,
+                    epochsCompleted,
+                    totalEpochs,
+                    checkpointPath.toString(),
+                    false,
+                    null,
+                    null,
+                    0.0,
+                    true,
+                    quality,
+                    warnings);
         }
 
-        logger.info("{} pretraining {}: {} epochs, loss={}, path={}, quality={}, warnings={}",
-                label.toUpperCase(), status, epochsCompleted, finalLoss, encoderPath,
-                quality, warnings.size());
+        logger.info(
+                "{} pretraining {}: {} epochs, loss={}, path={}, quality={}, warnings={}",
+                label.toUpperCase(),
+                status,
+                epochsCompleted,
+                finalLoss,
+                encoderPath,
+                quality,
+                warnings.size());
 
         // Mark cancelled-with-save runs as cancelled in the TrainingResult so
         // SetupDLClassifier shows a "cancelled, partial encoder saved" dialog
         // instead of the celebratory completion dialog.
-        boolean cancelled = "cancelled_saved".equals(status)
-                || "cancelled".equals(status);
+        boolean cancelled = "cancelled_saved".equals(status) || "cancelled".equals(status);
         return new ClassifierClient.TrainingResult(
-                jobId, encoderPath, finalLoss, 0.0, 0, 0.0,
-                false, epochsCompleted, epochsCompleted, null,
-                cancelled, null, null, 0.0, true,
-                quality, warnings);
+                jobId,
+                encoderPath,
+                finalLoss,
+                0.0,
+                0,
+                0.0,
+                false,
+                epochsCompleted,
+                epochsCompleted,
+                null,
+                cancelled,
+                null,
+                null,
+                0.0,
+                true,
+                quality,
+                warnings);
     }
 
     /**
@@ -626,9 +661,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path outputDir,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException {
-        return startSSLPretraining(config, dataPath, outputDir,
-                progressCallback, cancelledCheck, jobIdCallback, null);
+            Consumer<String> jobIdCallback)
+            throws IOException {
+        return startSSLPretraining(config, dataPath, outputDir, progressCallback, cancelledCheck, jobIdCallback, null);
     }
 
     public ClassifierClient.TrainingResult startSSLPretraining(
@@ -638,7 +673,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
             Consumer<String> jobIdCallback,
-            Supplier<String> cancelSaveModeSupplier) throws IOException {
+            Supplier<String> cancelSaveModeSupplier)
+            throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
 
@@ -652,8 +688,13 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("data_path", dataPath.toString());
         inputs.put("output_dir", outputDir.toString());
 
-        logger.info("Starting SSL pretraining: jobId={}, method={}, encoder={}, data={}, output={}",
-                jobId, config.get("method"), config.get("encoder_name"), dataPath, outputDir);
+        logger.info(
+                "Starting SSL pretraining: jobId={}, method={}, encoder={}, data={}, output={}",
+                jobId,
+                config.get("method"),
+                config.get("encoder_name"),
+                dataPath,
+                outputDir);
         if (jobIdCallback != null) {
             jobIdCallback.accept(jobId);
         }
@@ -664,9 +705,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // auto-retry then runs Python on an empty tile dir (1 image left ->
         // BatchNorm-on-batch-of-1 crash). Mirrors the supervised retry at
         // executeTrainingTask().
-        return runPretrainingWithThreadDeathRetry(appose, "pretrain_ssl", inputs,
-                jobId, "ssl", outputDir, progressCallback, cancelledCheck,
-                cancelSaveModeSupplier, getCancelSignalPath(jobId));
+        return runPretrainingWithThreadDeathRetry(
+                appose,
+                "pretrain_ssl",
+                inputs,
+                jobId,
+                "ssl",
+                outputDir,
+                progressCallback,
+                cancelledCheck,
+                cancelSaveModeSupplier,
+                getCancelSignalPath(jobId));
     }
 
     /**
@@ -685,10 +734,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             String label,
             Path outputDir,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
-            Supplier<Boolean> cancelledCheck) throws IOException {
-        return runPretrainingWithThreadDeathRetry(appose, taskName, inputs,
-                jobId, label, outputDir, progressCallback, cancelledCheck,
-                null, null);
+            Supplier<Boolean> cancelledCheck)
+            throws IOException {
+        return runPretrainingWithThreadDeathRetry(
+                appose, taskName, inputs, jobId, label, outputDir, progressCallback, cancelledCheck, null, null);
     }
 
     private ClassifierClient.TrainingResult runPretrainingWithThreadDeathRetry(
@@ -701,7 +750,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
             Supplier<String> cancelSaveModeSupplier,
-            Path cancelSignalPath) throws IOException {
+            Path cancelSignalPath)
+            throws IOException {
 
         for (int attempt = 0; attempt < 2; attempt++) {
             Task task = appose.createTask(taskName, inputs);
@@ -717,38 +767,44 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         if (json.has("elapsed_sec"))
                             extraData.put("elapsed_sec", json.get("elapsed_sec").getAsString());
                         if (json.has("remaining_sec"))
-                            extraData.put("remaining_sec", json.get("remaining_sec").getAsString());
+                            extraData.put(
+                                    "remaining_sec", json.get("remaining_sec").getAsString());
                         if (json.has("epoch_sec"))
                             extraData.put("epoch_sec", json.get("epoch_sec").getAsString());
                         if (json.has("images_per_sec"))
-                            extraData.put("images_per_sec", json.get("images_per_sec").getAsString());
+                            extraData.put(
+                                    "images_per_sec", json.get("images_per_sec").getAsString());
                         if (json.has("config") && json.get("config").isJsonObject()) {
                             JsonObject cfg = json.getAsJsonObject("config");
                             if (cfg.has("message"))
                                 extraData.put("message", cfg.get("message").getAsString());
                         }
 
-                        ClassifierClient.TrainingProgress progress =
-                                new ClassifierClient.TrainingProgress(
-                                        json.has("epoch") ? json.get("epoch").getAsInt() : 0,
-                                        json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
-                                        json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
-                                        json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
-                                        json.has("accuracy") ? json.get("accuracy").getAsDouble() : 0.0,
-                                        json.has("mean_iou") ? json.get("mean_iou").getAsDouble() : 0.0,
-                                        Map.of(), Map.of(),
-                                        json.has("device") ? json.get("device").getAsString() : "",
-                                        json.has("device_info") ? json.get("device_info").getAsString() : "",
-                                        json.has("status") ? json.get("status").getAsString() : "",
-                                        json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
-                                        extraData
-                                );
+                        ClassifierClient.TrainingProgress progress = new ClassifierClient.TrainingProgress(
+                                json.has("epoch") ? json.get("epoch").getAsInt() : 0,
+                                json.has("total_epochs")
+                                        ? json.get("total_epochs").getAsInt()
+                                        : 0,
+                                json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
+                                json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
+                                json.has("accuracy") ? json.get("accuracy").getAsDouble() : 0.0,
+                                json.has("mean_iou") ? json.get("mean_iou").getAsDouble() : 0.0,
+                                Map.of(),
+                                Map.of(),
+                                json.has("device") ? json.get("device").getAsString() : "",
+                                json.has("device_info")
+                                        ? json.get("device_info").getAsString()
+                                        : "",
+                                json.has("status") ? json.get("status").getAsString() : "",
+                                json.has("setup_phase")
+                                        ? json.get("setup_phase").getAsString()
+                                        : "",
+                                extraData);
                         if (progressCallback != null) {
                             progressCallback.accept(progress);
                         }
                     } catch (Exception e) {
-                        logger.warn("Failed to parse {} pretraining progress: {}",
-                                label, e.getMessage());
+                        logger.warn("Failed to parse {} pretraining progress: {}", label, e.getMessage());
                     }
                 }
             });
@@ -775,20 +831,20 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                                     mode = supplied;
                                 }
                             } catch (Exception ex) {
-                                logger.debug("cancelSaveModeSupplier threw {}; "
-                                        + "defaulting mode=best", ex.toString());
+                                logger.debug(
+                                        "cancelSaveModeSupplier threw {}; " + "defaulting mode=best", ex.toString());
                             }
                         }
                         try {
                             Files.writeString(cancelSignalPath, mode);
                             logger.info(
-                                    "{} pretraining cancel signal written: "
-                                    + "mode={} path={}",
-                                    label.toUpperCase(), mode, cancelSignalPath);
+                                    "{} pretraining cancel signal written: " + "mode={} path={}",
+                                    label.toUpperCase(),
+                                    mode,
+                                    cancelSignalPath);
                             cancelSignalWritten[0] = true;
                         } catch (IOException io) {
-                            logger.warn("Failed to write cancel signal {}: {}",
-                                    cancelSignalPath, io.toString());
+                            logger.warn("Failed to write cancel signal {}: {}", cancelSignalPath, io.toString());
                         }
                     }
                     task.cancel();
@@ -804,8 +860,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     task.cancel();
-                    throw new IOException(
-                            label.toUpperCase() + " pretraining interrupted", e);
+                    throw new IOException(label.toUpperCase() + " pretraining interrupted", e);
                 }
             }
 
@@ -813,26 +868,26 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 String err = task.error == null ? "" : task.error;
                 boolean isThreadDeath = err.toLowerCase().contains("thread death");
                 if (isThreadDeath && !pythonStarted[0] && attempt == 0) {
-                    logger.warn("{} pretraining hit 'thread death' before Python started "
+                    logger.warn(
+                            "{} pretraining hit 'thread death' before Python started "
                                     + "(stale Appose worker); retrying on a fresh task. "
-                                    + "Error: {}", label.toUpperCase(), err);
+                                    + "Error: {}",
+                            label.toUpperCase(),
+                            err);
                     try {
                         Thread.sleep(500);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
-                        throw new IOException(
-                                "Interrupted during " + label + " pretraining retry", ie);
+                        throw new IOException("Interrupted during " + label + " pretraining retry", ie);
                     }
                     continue;
                 }
-                throw new IOException(
-                        label.toUpperCase() + " pretraining failed: " + err);
+                throw new IOException(label.toUpperCase() + " pretraining failed: " + err);
             }
 
             return buildPretrainingResult(task, jobId, label, inputs, outputDir);
         }
-        throw new IOException(
-                label.toUpperCase() + " pretraining retry loop exited unexpectedly");
+        throw new IOException(label.toUpperCase() + " pretraining retry loop exited unexpectedly");
     }
 
     /**
@@ -853,7 +908,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Path outputDir,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException {
+            Consumer<String> jobIdCallback)
+            throws IOException {
 
         CheckpointInfo checkpoint = checkpointStore.get(jobId);
         if (checkpoint == null) {
@@ -867,8 +923,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         Map<String, Object> inputs = new HashMap<>(checkpoint.originalInputs());
         @SuppressWarnings("unchecked")
         Map<String, Object> previousConfig = (Map<String, Object>) inputs.get("config");
-        Map<String, Object> resumeConfig = new HashMap<>(
-                previousConfig != null ? previousConfig : new HashMap<>());
+        Map<String, Object> resumeConfig = new HashMap<>(previousConfig != null ? previousConfig : new HashMap<>());
 
         String newJobId = "appose-resume-" + System.currentTimeMillis();
         resumeConfig.put("pause_signal_path", getPauseSignalPath(newJobId).toString());
@@ -877,8 +932,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("config", resumeConfig);
 
         jobIdRedirects.put(jobId, newJobId);
-        logger.info("Resuming pretraining: task={}, newJobId={}, checkpoint={}, fromEpoch={}",
-                taskName, newJobId, checkpoint.path(), checkpoint.lastEpoch());
+        logger.info(
+                "Resuming pretraining: task={}, newJobId={}, checkpoint={}, fromEpoch={}",
+                taskName,
+                newJobId,
+                checkpoint.path(),
+                checkpoint.lastEpoch());
         if (jobIdCallback != null) {
             jobIdCallback.accept(newJobId);
         }
@@ -894,18 +953,20 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         if (cfg.has("message"))
                             extraData.put("message", cfg.get("message").getAsString());
                     }
-                    ClassifierClient.TrainingProgress progress =
-                            new ClassifierClient.TrainingProgress(
-                                    json.has("epoch") ? json.get("epoch").getAsInt() : 0,
-                                    json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
-                                    json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
-                                    json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
-                                    0.0, 0.0, Map.of(), Map.of(),
-                                    json.has("device") ? json.get("device").getAsString() : "",
-                                    json.has("device_info") ? json.get("device_info").getAsString() : "",
-                                    json.has("status") ? json.get("status").getAsString() : "",
-                                    json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
-                                    extraData);
+                    ClassifierClient.TrainingProgress progress = new ClassifierClient.TrainingProgress(
+                            json.has("epoch") ? json.get("epoch").getAsInt() : 0,
+                            json.has("total_epochs") ? json.get("total_epochs").getAsInt() : 0,
+                            json.has("train_loss") ? json.get("train_loss").getAsDouble() : 0.0,
+                            json.has("val_loss") ? json.get("val_loss").getAsDouble() : 0.0,
+                            0.0,
+                            0.0,
+                            Map.of(),
+                            Map.of(),
+                            json.has("device") ? json.get("device").getAsString() : "",
+                            json.has("device_info") ? json.get("device_info").getAsString() : "",
+                            json.has("status") ? json.get("status").getAsString() : "",
+                            json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
+                            extraData);
                     if (progressCallback != null) {
                         progressCallback.accept(progress);
                     }
@@ -932,9 +993,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         if (task.status == org.apposed.appose.Service.TaskStatus.FAILED) {
             throw new IOException("Resumed pretraining failed: " + task.error);
         }
-        return buildPretrainingResult(task, newJobId,
-                "pretrain_ssl".equals(taskName) ? "ssl" : "mae",
-                inputs, outputDir);
+        return buildPretrainingResult(
+                task, newJobId, "pretrain_ssl".equals(taskName) ? "ssl" : "mae", inputs, outputDir);
     }
 
     /**
@@ -945,8 +1005,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
      * @param outputDir      directory to write model.pt and metadata.json
      * @return a TrainingResult whose modelPath points at the saved encoder
      */
-    public ClassifierClient.TrainingResult finalizePretraining(
-            String checkpointPath, Path outputDir) throws IOException {
+    public ClassifierClient.TrainingResult finalizePretraining(String checkpointPath, Path outputDir)
+            throws IOException {
         ApposeService appose = ApposeService.getInstance();
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("checkpoint_path", checkpointPath);
@@ -957,12 +1017,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         Thread.currentThread().setContextClassLoader(extensionCL);
         try {
             Task task = appose.runTask("finalize_pretrain", inputs);
-            String encoderPath = task.outputs.containsKey("encoder_path")
-                    ? String.valueOf(task.outputs.get("encoder_path")) : "";
+            String encoderPath =
+                    task.outputs.containsKey("encoder_path") ? String.valueOf(task.outputs.get("encoder_path")) : "";
             double bestLoss = task.outputs.containsKey("best_loss")
-                    ? ((Number) task.outputs.get("best_loss")).doubleValue() : 0.0;
-            return new ClassifierClient.TrainingResult(
-                    "pretrain-finalized", encoderPath, bestLoss, 0.0, 0, 0.0);
+                    ? ((Number) task.outputs.get("best_loss")).doubleValue()
+                    : 0.0;
+            return new ClassifierClient.TrainingResult("pretrain-finalized", encoderPath, bestLoss, 0.0, 0, 0.0);
         } catch (Exception e) {
             throw new IOException("Failed to finalize pretraining: " + e.getMessage(), e);
         } finally {
@@ -1015,7 +1075,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             Integer batchSize,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
             Supplier<Boolean> cancelledCheck,
-            Consumer<String> jobIdCallback) throws IOException {
+            Consumer<String> jobIdCallback)
+            throws IOException {
 
         CheckpointInfo checkpoint = checkpointStore.get(jobId);
         if (checkpoint == null) {
@@ -1034,8 +1095,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         // Override training params with resume values
         @SuppressWarnings("unchecked")
-        Map<String, Object> trainingParams = new HashMap<>(
-                (Map<String, Object>) inputs.get("training_params"));
+        Map<String, Object> trainingParams = new HashMap<>((Map<String, Object>) inputs.get("training_params"));
         if (epochs != null) trainingParams.put("epochs", epochs);
         if (learningRate != null) trainingParams.put("learning_rate", learningRate);
         if (batchSize != null) trainingParams.put("batch_size", batchSize);
@@ -1056,13 +1116,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(extensionCL);
         try {
-            ClassifierClient.TrainingResult result = executeTrainingTask(
-                    appose, inputs, newJobId, extensionCL,
-                    progressCallback, cancelledCheck);
+            ClassifierClient.TrainingResult result =
+                    executeTrainingTask(appose, inputs, newJobId, extensionCL, progressCallback, cancelledCheck);
             // If paused again, store checkpoint for next resume
             if (result.isPaused() && result.checkpointPath() != null) {
-                storeCheckpointInfo(newJobId, result.checkpointPath(),
-                        result.lastEpoch(), inputs);
+                storeCheckpointInfo(newJobId, result.checkpointPath(), result.lastEpoch(), inputs);
             }
             return result;
         } finally {
@@ -1076,8 +1134,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     }
 
     @Override
-    public ClassifierClient.TrainingResult finalizeTraining(String checkpointPath,
-            String modelOutputDir) throws IOException {
+    public ClassifierClient.TrainingResult finalizeTraining(String checkpointPath, String modelOutputDir)
+            throws IOException {
         ApposeService appose = ApposeService.getInstance();
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("checkpoint_path", checkpointPath);
@@ -1098,8 +1156,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             double bestMIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
             int epochsTrained = ((Number) task.outputs.getOrDefault("epochs_trained", 0)).intValue();
 
-            return new ClassifierClient.TrainingResult(
-                    "finalized", modelPath, loss, acc, bestEpoch, bestMIoU);
+            return new ClassifierClient.TrainingResult("finalized", modelPath, loss, acc, bestEpoch, bestMIoU);
         } catch (Exception e) {
             throw new IOException("Failed to finalize training: " + e.getMessage(), e);
         } finally {
@@ -1110,11 +1167,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     /**
      * Stores checkpoint info for a paused training job.
      */
-    void storeCheckpointInfo(String jobId, String path, int lastEpoch,
-                             Map<String, Object> originalInputs) {
+    void storeCheckpointInfo(String jobId, String path, int lastEpoch, Map<String, Object> originalInputs) {
         checkpointStore.put(jobId, new CheckpointInfo(path, lastEpoch, originalInputs));
-        logger.debug("Stored checkpoint info for job {}: epoch={}, path={}",
-                jobId, lastEpoch, path);
+        logger.debug("Stored checkpoint info for job {}: epoch={}, path={}", jobId, lastEpoch, path);
     }
 
     /**
@@ -1137,7 +1192,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             String jobId,
             ClassLoader extensionCL,
             Consumer<ClassifierClient.TrainingProgress> progressCallback,
-            Supplier<Boolean> cancelledCheck) throws IOException {
+            Supplier<Boolean> cancelledCheck)
+            throws IOException {
 
         Task task = appose.createTask("train", inputs);
 
@@ -1167,22 +1223,24 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // Poll for cancellation in a background thread.
         // The cancel thread also needs TCCL because task.cancel()
         // sends a JSON message via Groovy serialization.
-        Thread cancelThread = new Thread(() -> {
-            Thread.currentThread().setContextClassLoader(extensionCL);
-            while (!task.status.isFinished()) {
-                if (cancelledCheck != null && cancelledCheck.get()) {
-                    logger.info("Training cancel requested, sending to Appose task");
-                    task.cancel();
-                    break;
-                }
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }, "DLClassifier-ApposeTrainCancel");
+        Thread cancelThread = new Thread(
+                () -> {
+                    Thread.currentThread().setContextClassLoader(extensionCL);
+                    while (!task.status.isFinished()) {
+                        if (cancelledCheck != null && cancelledCheck.get()) {
+                            logger.info("Training cancel requested, sending to Appose task");
+                            task.cancel();
+                            break;
+                        }
+                        try {
+                            Thread.sleep(500);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                },
+                "DLClassifier-ApposeTrainCancel");
         cancelThread.setDaemon(true);
         cancelThread.start();
 
@@ -1209,23 +1267,33 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     String lp = String.valueOf(task.outputs.getOrDefault("last_model_path", ""));
                     if (!lp.isEmpty() && !"null".equals(lp)) cancelLastPath = lp;
                     cancelBestEpoch = task.outputs.containsKey("best_epoch")
-                            ? ((Number) task.outputs.get("best_epoch")).intValue() : 0;
+                            ? ((Number) task.outputs.get("best_epoch")).intValue()
+                            : 0;
                     cancelBestMIoU = task.outputs.containsKey("best_mean_iou")
-                            ? ((Number) task.outputs.get("best_mean_iou")).doubleValue() : 0.0;
+                            ? ((Number) task.outputs.get("best_mean_iou")).doubleValue()
+                            : 0.0;
                     cancelLoss = task.outputs.containsKey("final_loss")
-                            ? ((Number) task.outputs.get("final_loss")).doubleValue() : 0.0;
+                            ? ((Number) task.outputs.get("final_loss")).doubleValue()
+                            : 0.0;
                     cancelAcc = task.outputs.containsKey("final_accuracy")
-                            ? ((Number) task.outputs.get("final_accuracy")).doubleValue() : 0.0;
+                            ? ((Number) task.outputs.get("final_accuracy")).doubleValue()
+                            : 0.0;
                     cancelLastEpoch = task.outputs.containsKey("last_epoch")
-                            ? ((Number) task.outputs.get("last_epoch")).intValue() : 0;
+                            ? ((Number) task.outputs.get("last_epoch")).intValue()
+                            : 0;
                     cancelTotalEpochs = task.outputs.containsKey("total_epochs")
-                            ? ((Number) task.outputs.get("total_epochs")).intValue() : 0;
+                            ? ((Number) task.outputs.get("total_epochs")).intValue()
+                            : 0;
                     String cp = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
                     if (!cp.isEmpty() && !"null".equals(cp)) cancelCheckpoint = cp;
                 }
                 if (cancelBestPath != null) {
-                    logger.info("Cancel with save: best model={}, last model={}, epoch {}/{}",
-                            cancelBestPath, cancelLastPath, cancelLastEpoch, cancelTotalEpochs);
+                    logger.info(
+                            "Cancel with save: best model={}, last model={}, epoch {}/{}",
+                            cancelBestPath,
+                            cancelLastPath,
+                            cancelLastEpoch,
+                            cancelTotalEpochs);
                 }
                 // Extract focus class info from cancel result
                 String cancelFocusName = null;
@@ -1234,22 +1302,33 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 if (task.outputs != null && task.outputs.containsKey("focus_class_name")) {
                     cancelFocusName = String.valueOf(task.outputs.get("focus_class_name"));
                     cancelFocusIoU = task.outputs.containsKey("focus_class_iou")
-                            ? ((Number) task.outputs.get("focus_class_iou")).doubleValue() : 0.0;
+                            ? ((Number) task.outputs.get("focus_class_iou")).doubleValue()
+                            : 0.0;
                     cancelFocusMet = task.outputs.containsKey("focus_class_target_met")
-                            ? (Boolean) task.outputs.get("focus_class_target_met") : true;
+                            ? (Boolean) task.outputs.get("focus_class_target_met")
+                            : true;
                 }
                 return new ClassifierClient.TrainingResult(
-                        jobId, cancelBestPath, cancelLoss, cancelAcc,
-                        cancelBestEpoch, cancelBestMIoU, false,
-                        cancelLastEpoch, cancelTotalEpochs, cancelCheckpoint,
-                        true, cancelLastPath,
-                        cancelFocusName, cancelFocusIoU, cancelFocusMet);
+                        jobId,
+                        cancelBestPath,
+                        cancelLoss,
+                        cancelAcc,
+                        cancelBestEpoch,
+                        cancelBestMIoU,
+                        false,
+                        cancelLastEpoch,
+                        cancelTotalEpochs,
+                        cancelCheckpoint,
+                        true,
+                        cancelLastPath,
+                        cancelFocusName,
+                        cancelFocusIoU,
+                        cancelFocusMet);
             }
             // Wrap so the caller can distinguish "worker died before Python ran"
             // (safe to retry) from "Python was running training" (NOT safe --
             // risks a duplicate GPU training process).
-            throw new TrainingStartedException("Training failed: " + task.error,
-                    e, pythonStarted[0]);
+            throw new TrainingStartedException("Training failed: " + task.error, e, pythonStarted[0]);
         }
 
         // Check if training was paused (not cancelled, not failed)
@@ -1262,16 +1341,33 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             double bestMeanIoU = ((Number) task.outputs.getOrDefault("best_mean_iou", 0.0)).doubleValue();
             double finalLoss = ((Number) task.outputs.getOrDefault("final_loss", 0.0)).doubleValue();
             double finalAccuracy = ((Number) task.outputs.getOrDefault("final_accuracy", 0.0)).doubleValue();
-            logger.info("Training paused at epoch {}/{}, best epoch {} (mIoU={}), checkpoint: {}",
-                    lastEpoch, totalEpochs, bestEpoch, bestMeanIoU, checkpointPath);
+            logger.info(
+                    "Training paused at epoch {}/{}, best epoch {} (mIoU={}), checkpoint: {}",
+                    lastEpoch,
+                    totalEpochs,
+                    bestEpoch,
+                    bestMeanIoU,
+                    checkpointPath);
 
             // Store checkpoint info for resume/finalize
             storeCheckpointInfo(jobId, checkpointPath, lastEpoch, inputs);
 
             return new ClassifierClient.TrainingResult(
-                    jobId, null, finalLoss, finalAccuracy, bestEpoch, bestMeanIoU,
-                    true, lastEpoch, totalEpochs, checkpointPath,
-                    false, null, null, 0.0, true);
+                    jobId,
+                    null,
+                    finalLoss,
+                    finalAccuracy,
+                    bestEpoch,
+                    bestMeanIoU,
+                    true,
+                    lastEpoch,
+                    totalEpochs,
+                    checkpointPath,
+                    false,
+                    null,
+                    null,
+                    0.0,
+                    true);
         }
 
         // Normal completion
@@ -1287,21 +1383,39 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         int totalEpochs = ((Number) task.outputs.getOrDefault("total_epochs", 0)).intValue();
         if (!completionCheckpoint.isEmpty() && !"null".equals(completionCheckpoint)) {
             storeCheckpointInfo(jobId, completionCheckpoint, lastEpoch, inputs);
-            logger.info("Stored completion checkpoint for continue-training: epoch {}, path {}",
-                    lastEpoch, completionCheckpoint);
+            logger.info(
+                    "Stored completion checkpoint for continue-training: epoch {}, path {}",
+                    lastEpoch,
+                    completionCheckpoint);
         }
 
         // Extract focus class IoU if present (null when no focus class was set)
         String focusClassName = task.outputs.containsKey("focus_class_name")
-                ? String.valueOf(task.outputs.get("focus_class_name")) : null;
+                ? String.valueOf(task.outputs.get("focus_class_name"))
+                : null;
         double focusClassIoU = task.outputs.containsKey("focus_class_iou")
-                ? ((Number) task.outputs.get("focus_class_iou")).doubleValue() : 0.0;
+                ? ((Number) task.outputs.get("focus_class_iou")).doubleValue()
+                : 0.0;
         boolean focusClassTargetMet = task.outputs.containsKey("focus_class_target_met")
-                ? (Boolean) task.outputs.get("focus_class_target_met") : true;
+                ? (Boolean) task.outputs.get("focus_class_target_met")
+                : true;
 
-        return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
-                bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint,
-                false, null, focusClassName, focusClassIoU, focusClassTargetMet);
+        return new ClassifierClient.TrainingResult(
+                jobId,
+                modelPath,
+                finalLoss,
+                finalAccuracy,
+                bestEpoch,
+                bestMeanIoU,
+                false,
+                lastEpoch,
+                totalEpochs,
+                completionCheckpoint,
+                false,
+                null,
+                focusClassName,
+                focusClassIoU,
+                focusClassTargetMet);
     }
 
     // ==================== Evaluation ====================
@@ -1316,7 +1430,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             List<String> classNames,
             Map<String, Integer> classColors,
             Consumer<ClassifierClient.EvaluationProgress> progressCallback,
-            Supplier<Boolean> cancelledCheck) throws IOException {
+            Supplier<Boolean> cancelledCheck)
+            throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
 
@@ -1352,11 +1467,15 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 if (event.responseType == ResponseType.UPDATE && event.message != null) {
                     try {
                         JsonObject msg = JsonParser.parseString(event.message).getAsJsonObject();
-                        int currentTile = msg.has("current_tile") ? msg.get("current_tile").getAsInt() : 0;
-                        int totalTiles = msg.has("total_tiles") ? msg.get("total_tiles").getAsInt() : 0;
+                        int currentTile = msg.has("current_tile")
+                                ? msg.get("current_tile").getAsInt()
+                                : 0;
+                        int totalTiles =
+                                msg.has("total_tiles") ? msg.get("total_tiles").getAsInt() : 0;
                         if (progressCallback != null) {
                             progressCallback.accept(new ClassifierClient.EvaluationProgress(
-                                    currentTile, totalTiles,
+                                    currentTile,
+                                    totalTiles,
                                     String.format("Evaluating tile %d/%d", currentTile, totalTiles)));
                         }
                     } catch (Exception e) {
@@ -1368,22 +1487,24 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             task.start();
 
             // Poll for cancellation
-            Thread cancelThread = new Thread(() -> {
-                Thread.currentThread().setContextClassLoader(extensionCL);
-                while (!task.status.isFinished()) {
-                    if (cancelledCheck != null && cancelledCheck.get()) {
-                        logger.info("Evaluation cancel requested");
-                        task.cancel();
-                        break;
-                    }
-                    try {
-                        Thread.sleep(500);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-            }, "DLClassifier-ApposeEvalCancel");
+            Thread cancelThread = new Thread(
+                    () -> {
+                        Thread.currentThread().setContextClassLoader(extensionCL);
+                        while (!task.status.isFinished()) {
+                            if (cancelledCheck != null && cancelledCheck.get()) {
+                                logger.info("Evaluation cancel requested");
+                                task.cancel();
+                                break;
+                            }
+                            try {
+                                Thread.sleep(500);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                        }
+                    },
+                    "DLClassifier-ApposeEvalCancel");
             cancelThread.setDaemon(true);
             cancelThread.start();
 
@@ -1431,18 +1552,30 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 }
             }
 
-            String disagreementImagePath = obj.has("disagreement_image") && !obj.get("disagreement_image").isJsonNull()
-                    ? obj.get("disagreement_image").getAsString() : null;
-            String lossHeatmapPath = obj.has("loss_heatmap") && !obj.get("loss_heatmap").isJsonNull()
-                    ? obj.get("loss_heatmap").getAsString() : null;
-            String tileImagePath = obj.has("tile_image") && !obj.get("tile_image").isJsonNull()
-                    ? obj.get("tile_image").getAsString() : null;
-            String predictionMapPath = obj.has("prediction_map") && !obj.get("prediction_map").isJsonNull()
-                    ? obj.get("prediction_map").getAsString() : null;
-            String confidenceMapPath = obj.has("confidence_map") && !obj.get("confidence_map").isJsonNull()
-                    ? obj.get("confidence_map").getAsString() : null;
-            String groundTruthMaskPath = obj.has("ground_truth_mask") && !obj.get("ground_truth_mask").isJsonNull()
-                    ? obj.get("ground_truth_mask").getAsString() : null;
+            String disagreementImagePath = obj.has("disagreement_image")
+                            && !obj.get("disagreement_image").isJsonNull()
+                    ? obj.get("disagreement_image").getAsString()
+                    : null;
+            String lossHeatmapPath =
+                    obj.has("loss_heatmap") && !obj.get("loss_heatmap").isJsonNull()
+                            ? obj.get("loss_heatmap").getAsString()
+                            : null;
+            String tileImagePath =
+                    obj.has("tile_image") && !obj.get("tile_image").isJsonNull()
+                            ? obj.get("tile_image").getAsString()
+                            : null;
+            String predictionMapPath =
+                    obj.has("prediction_map") && !obj.get("prediction_map").isJsonNull()
+                            ? obj.get("prediction_map").getAsString()
+                            : null;
+            String confidenceMapPath =
+                    obj.has("confidence_map") && !obj.get("confidence_map").isJsonNull()
+                            ? obj.get("confidence_map").getAsString()
+                            : null;
+            String groundTruthMaskPath = obj.has("ground_truth_mask")
+                            && !obj.get("ground_truth_mask").isJsonNull()
+                    ? obj.get("ground_truth_mask").getAsString()
+                    : null;
             if (disagreementImagePath == null) missingDisagree++;
             if (lossHeatmapPath == null) missingLoss++;
             if (tileImagePath == null) missingTile++;
@@ -1463,19 +1596,21 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     tileImagePath,
                     predictionMapPath,
                     confidenceMapPath,
-                    groundTruthMaskPath
-            ));
+                    groundTruthMaskPath));
         }
 
         int total = results.size();
         if (total > 0 && (missingDisagree > 0 || missingLoss > 0 || missingTile > 0)) {
-            logger.warn("Evaluation produced {} tiles; missing PNGs: "
-                    + "disagreement={}, loss={}, tile={}. These tiles will "
-                    + "show no overlay in the Training Area Issues dialog.",
-                    total, missingDisagree, missingLoss, missingTile);
+            logger.warn(
+                    "Evaluation produced {} tiles; missing PNGs: "
+                            + "disagreement={}, loss={}, tile={}. These tiles will "
+                            + "show no overlay in the Training Area Issues dialog.",
+                    total,
+                    missingDisagree,
+                    missingLoss,
+                    missingTile);
         } else if (total > 0) {
-            logger.info("Evaluation produced {} tiles, all with loss/disagreement/tile PNGs",
-                    total);
+            logger.info("Evaluation produced {} tiles, all with loss/disagreement/tile PNGs", total);
         }
 
         return results;
@@ -1495,7 +1630,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
             Path outputDir,
-            int reflectionPadding) throws IOException {
+            int reflectionPadding)
+            throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
         int numTiles = tileIds.size();
@@ -1503,16 +1639,34 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // For single-tile overlay inference, use shared-memory path
         if (numTiles == 1) {
             return runSingleTilePixelInference(
-                    appose, modelPath, rawTileBytes, tileIds.get(0),
-                    tileHeight, tileWidth, numChannels, dtype,
-                    channelConfig, inferenceConfig, outputDir, reflectionPadding);
+                    appose,
+                    modelPath,
+                    rawTileBytes,
+                    tileIds.get(0),
+                    tileHeight,
+                    tileWidth,
+                    numChannels,
+                    dtype,
+                    channelConfig,
+                    inferenceConfig,
+                    outputDir,
+                    reflectionPadding);
         }
 
         // Multi-tile: use file-based output (same as HTTP backend)
         return runMultiTilePixelInference(
-                appose, modelPath, rawTileBytes, tileIds,
-                tileHeight, tileWidth, numChannels, dtype,
-                channelConfig, inferenceConfig, outputDir, reflectionPadding);
+                appose,
+                modelPath,
+                rawTileBytes,
+                tileIds,
+                tileHeight,
+                tileWidth,
+                numChannels,
+                dtype,
+                channelConfig,
+                inferenceConfig,
+                outputDir,
+                reflectionPadding);
     }
 
     /** Maximum retry attempts for transient "thread death" errors from Appose. */
@@ -1547,7 +1701,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
             Path outputDir,
-            int reflectionPadding) throws IOException {
+            int reflectionPadding)
+            throws IOException {
 
         // Throttle concurrent Appose task submissions. Without this, 16+
         // overlay threads each spawn a Python thread that blocks on
@@ -1565,15 +1720,16 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
                 for (int attempt = 0; attempt < MAX_THREAD_DEATH_RETRIES; attempt++) {
                     // Create shared memory NDArray for input tile (fresh per attempt)
-                    NDArray.Shape shape = new NDArray.Shape(
-                            NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
+                    NDArray.Shape shape =
+                            new NDArray.Shape(NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
                     NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
                     try {
                         // Copy raw bytes into shared memory, converting dtype if needed.
                         // uint8 values are kept in [0, 255] range (not divided by 255)
                         // because normalization expects raw pixel values matching training stats.
-                        FloatBuffer fbuf = inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
+                        FloatBuffer fbuf =
+                                inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
                         if ("uint8".equals(dtype)) {
                             for (byte b : rawTileBytes) {
                                 fbuf.put((float) (b & 0xFF));
@@ -1581,7 +1737,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         } else {
                             // float32: copy raw bytes directly
                             FloatBuffer srcBuf = ByteBuffer.wrap(rawTileBytes)
-                                    .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                                    .order(ByteOrder.LITTLE_ENDIAN)
+                                    .asFloatBuffer();
                             fbuf.put(srcBuf);
                         }
 
@@ -1635,11 +1792,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         }
                     } catch (IOException e) {
                         String msg = e.getMessage() != null ? e.getMessage() : "";
-                        if (msg.toLowerCase().contains("thread death")
-                                && attempt < MAX_THREAD_DEATH_RETRIES - 1) {
+                        if (msg.toLowerCase().contains("thread death") && attempt < MAX_THREAD_DEATH_RETRIES - 1) {
                             lastError = e;
-                            logger.debug("Thread death on attempt {}, retrying after {}ms delay",
-                                    attempt + 1, THREAD_DEATH_RETRY_DELAY_MS);
+                            logger.debug(
+                                    "Thread death on attempt {}, retrying after {}ms delay",
+                                    attempt + 1,
+                                    THREAD_DEATH_RETRY_DELAY_MS);
                             try {
                                 Thread.sleep(THREAD_DEATH_RETRY_DELAY_MS);
                             } catch (InterruptedException ie) {
@@ -1654,8 +1812,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     }
                 }
                 // Should not reach here, but satisfy compiler
-                throw lastError != null ? lastError
-                        : new IOException("Single-tile inference failed after retries");
+                throw lastError != null ? lastError : new IOException("Single-tile inference failed after retries");
             });
         } catch (IOException e) {
             throw e;
@@ -1682,7 +1839,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
             Path outputDir,
-            int reflectionPadding) throws IOException {
+            int reflectionPadding)
+            throws IOException {
 
         try {
             return ApposeService.withExtensionClassLoader(() -> {
@@ -1696,7 +1854,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 if ("uint8".equals(dtype)) {
                     float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
                     FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
-                            .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                            .order(ByteOrder.LITTLE_ENDIAN)
+                            .asFloatBuffer();
                     for (byte b : rawTileBytes) {
                         fbuf.put((float) (b & 0xFF));
                     }
@@ -1705,9 +1864,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 }
 
                 // Create shared memory NDArray for all tiles
-                NDArray.Shape shape = new NDArray.Shape(
-                        NDArray.Shape.Order.C_ORDER,
-                        numTiles, tileHeight, tileWidth, numChannels);
+                NDArray.Shape shape =
+                        new NDArray.Shape(NDArray.Shape.Order.C_ORDER, numTiles, tileHeight, tileWidth, numChannels);
                 NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
                 try {
@@ -1744,8 +1902,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
                     @SuppressWarnings("unchecked")
                     Map<String, String> outputPaths = (Map<String, String>) task.outputs.get("output_paths");
-                    return new ClassifierClient.PixelInferenceResult(
-                            new HashMap<>(outputPaths), numClasses);
+                    return new ClassifierClient.PixelInferenceResult(new HashMap<>(outputPaths), numClasses);
                 } finally {
                     inputNd.close();
                 }
@@ -1764,13 +1921,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
             Path outputDir,
-            int reflectionPadding) throws IOException {
+            int reflectionPadding)
+            throws IOException {
         // For the Appose backend, convert TileData to binary and delegate
         // to the binary path. This avoids needing a separate base64 script.
         // Note: This is a fallback path; the primary path uses runPixelInferenceBinary.
         logger.warn("Appose backend using base64 tile fallback -- this should not normally happen");
-        throw new IOException("Appose backend does not support base64 tile transfer. " +
-                "Use runPixelInferenceBinary instead.");
+        throw new IOException(
+                "Appose backend does not support base64 tile transfer. " + "Use runPixelInferenceBinary instead.");
     }
 
     @Override
@@ -1783,7 +1941,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             int numChannels,
             String dtype,
             ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig) throws IOException {
+            InferenceConfig inferenceConfig)
+            throws IOException {
 
         ApposeService appose = ApposeService.getInstance();
 
@@ -1799,7 +1958,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 if ("uint8".equals(dtype)) {
                     float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
                     FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
-                            .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+                            .order(ByteOrder.LITTLE_ENDIAN)
+                            .asFloatBuffer();
                     for (byte b : rawTileBytes) {
                         fbuf.put((float) (b & 0xFF));
                     }
@@ -1807,9 +1967,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     float32Bytes = rawTileBytes;
                 }
 
-                NDArray.Shape shape = new NDArray.Shape(
-                        NDArray.Shape.Order.C_ORDER,
-                        numTiles, tileHeight, tileWidth, numChannels);
+                NDArray.Shape shape =
+                        new NDArray.Shape(NDArray.Shape.Order.C_ORDER, numTiles, tileHeight, tileWidth, numChannels);
                 NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
 
                 try {
@@ -1830,16 +1989,13 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     // measurements path does not silently inherit
                     // stale provider state from the most recent
                     // pixel inference. Matches the pixel-path wiring.
-                    inputs.put("use_tensorrt",
-                            DLClassifierPreferences.isExperimentalTensorRT());
-                    inputs.put("use_int8",
-                            DLClassifierPreferences.isExperimentalInt8());
+                    inputs.put("use_tensorrt", DLClassifierPreferences.isExperimentalTensorRT());
+                    inputs.put("use_int8", DLClassifierPreferences.isExperimentalInt8());
 
                     Task task = appose.runTask("inference_batch", inputs);
 
                     @SuppressWarnings("unchecked")
-                    Map<String, Object> rawPredictions =
-                            (Map<String, Object>) task.outputs.get("predictions");
+                    Map<String, Object> rawPredictions = (Map<String, Object>) task.outputs.get("predictions");
 
                     Map<String, float[]> predictions = new HashMap<>();
                     for (Map.Entry<String, Object> entry : rawPredictions.entrySet()) {
@@ -1869,20 +2025,20 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             String modelPath,
             List<ClassifierClient.TileData> tiles,
             ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig) throws IOException {
+            InferenceConfig inferenceConfig)
+            throws IOException {
         // For the Appose backend, the base64 path is not supported.
         // Callers should use runInferenceBinary.
         logger.warn("Appose backend does not support base64 tile transfer for batch inference");
-        throw new IOException("Appose backend does not support base64 tile transfer. " +
-                "Use runInferenceBinary instead.");
+        throw new IOException(
+                "Appose backend does not support base64 tile transfer. " + "Use runInferenceBinary instead.");
     }
 
     // ==================== Pretrained Model Info ====================
 
     @Override
     public List<ClassifierClient.LayerInfo> getModelLayers(
-            String architecture, String encoder,
-            int numChannels, int numClasses) throws IOException {
+            String architecture, String encoder, int numChannels, int numClasses) throws IOException {
 
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("architecture", architecture);
@@ -1905,16 +2061,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         Boolean.TRUE.equals(layer.get("is_encoder")),
                         ((Number) layer.getOrDefault("depth", 0)).intValue(),
                         Boolean.TRUE.equals(layer.get("recommended_freeze")),
-                        String.valueOf(layer.getOrDefault("description", ""))
-                ));
+                        String.valueOf(layer.getOrDefault("description", ""))));
             }
         }
         return result;
     }
 
     @Override
-    public Map<Integer, Boolean> getFreezeRecommendations(
-            String datasetSize, String encoder) throws IOException {
+    public Map<Integer, Boolean> getFreezeRecommendations(String datasetSize, String encoder) throws IOException {
 
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("dataset_size", datasetSize);
@@ -1931,8 +2085,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         if (recs != null) {
             for (Map.Entry<String, Object> entry : recs.entrySet()) {
                 try {
-                    result.put(Integer.parseInt(entry.getKey()),
-                            Boolean.TRUE.equals(entry.getValue()));
+                    result.put(Integer.parseInt(entry.getKey()), Boolean.TRUE.equals(entry.getValue()));
                 } catch (NumberFormatException e) {
                     logger.debug("Skipping non-integer freeze key: {}", entry.getKey());
                 }
@@ -1961,7 +2114,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputConfig.put("selected_channels", channelConfig.getSelectedChannels());
 
         Map<String, Object> normalization = new HashMap<>();
-        normalization.put("strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
+        normalization.put(
+                "strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
         normalization.put("per_channel", channelConfig.isPerChannelNormalization());
         normalization.put("clip_percentile", channelConfig.getClipPercentile());
         // Include fixed range values (previously missing for FIXED_RANGE strategy)
@@ -2020,9 +2174,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
 
         return new ClassifierClient.TrainingProgress(
-                epoch, totalEpochs, trainLoss, valLoss, accuracy,
-                meanIoU, perClassIoU, perClassLoss, device, deviceInfo,
-                status, setupPhase, configSummary);
+                epoch,
+                totalEpochs,
+                trainLoss,
+                valLoss,
+                accuracy,
+                meanIoU,
+                perClassIoU,
+                perClassLoss,
+                device,
+                deviceInfo,
+                status,
+                setupPhase,
+                configSummary);
     }
 
     private static Map<String, Double> parseStringDoubleMap(JsonObject parent, String fieldName) {
@@ -2040,7 +2204,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     private static double toDouble(Object value, double fallback) {
         if (value instanceof Number n) return n.doubleValue();
         if (value instanceof String s) {
-            try { return Double.parseDouble(s); } catch (NumberFormatException ignored) {}
+            try {
+                return Double.parseDouble(s);
+            } catch (NumberFormatException ignored) {
+            }
         }
         return fallback;
     }
@@ -2049,7 +2216,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     private static int toInt(Object value, int fallback) {
         if (value instanceof Number n) return n.intValue();
         if (value instanceof String s) {
-            try { return Integer.parseInt(s); } catch (NumberFormatException ignored) {}
+            try {
+                return Integer.parseInt(s);
+            } catch (NumberFormatException ignored) {
+            }
         }
         return fallback;
     }

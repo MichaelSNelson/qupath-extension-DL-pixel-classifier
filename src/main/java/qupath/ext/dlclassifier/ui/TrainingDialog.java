@@ -1,17 +1,23 @@
 package qupath.ext.dlclassifier.ui;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import java.awt.image.BufferedImage;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
-import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.chart.PieChart;
 import javafx.scene.control.*;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
-import javafx.scene.chart.PieChart;
 import javafx.scene.layout.*;
-import javafx.scene.Scene;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -19,6 +25,7 @@ import javafx.stage.Window;
 import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.SetupDLClassifier;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
@@ -31,30 +38,18 @@ import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
-import qupath.ext.dlclassifier.SetupDLClassifier;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
+import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.commands.MiniViewers;
-import qupath.lib.gui.viewer.QuPathViewer;
-import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.prefs.PathPrefs;
+import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
-import qupath.lib.scripting.QP;
-
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-
-import java.awt.image.BufferedImage;
-import java.io.FileReader;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 /**
  * Dialog for configuring deep learning classifier training.
@@ -98,8 +93,7 @@ public class TrainingDialog {
             Map<String, Integer> classColors,
             Map<String, Object> handlerParameters,
             Set<String> trainOnlyImages,
-            Set<String> valOnlyImages
-    ) {
+            Set<String> valOnlyImages) {
         /** Returns true if training should use multiple project images. */
         public boolean isMultiImage() {
             return selectedImages != null && !selectedImages.isEmpty();
@@ -107,8 +101,7 @@ public class TrainingDialog {
 
         /** Returns true if MAE pretraining should run before fine-tuning. */
         public boolean isMaePretrainEnabled() {
-            return handlerParameters != null
-                    && Boolean.TRUE.equals(handlerParameters.get("mae_pretrain_enabled"));
+            return handlerParameters != null && Boolean.TRUE.equals(handlerParameters.get("mae_pretrain_enabled"));
         }
     }
 
@@ -141,8 +134,7 @@ public class TrainingDialog {
                     logger.info("Training dialog already open -- focusing existing window");
                     activeDialog.toFront();
                     activeDialog.requestFocus();
-                    Dialogs.showInfoNotification("Training Dialog",
-                            "A training configuration window is already open.");
+                    Dialogs.showInfoNotification("Training Dialog", "A training configuration window is already open.");
                     future.cancel(true);
                     return;
                 }
@@ -176,8 +168,7 @@ public class TrainingDialog {
 
         /** Controls basic/advanced mode visibility. Persisted across sessions. */
         private final javafx.beans.property.BooleanProperty advancedMode =
-                new javafx.beans.property.SimpleBooleanProperty(
-                        DLClassifierPreferences.isAdvancedMode());
+                new javafx.beans.property.SimpleBooleanProperty(DLClassifierPreferences.isAdvancedMode());
 
         // Basic info fields
         private TextField classifierNameField;
@@ -274,8 +265,8 @@ public class TrainingDialog {
         private VBox continueTrainingContent;
         private TextField maeEncoderPathField;
         private Label maeEncoderInfoLabel;
-        private int maeEncoderInputChannels = -1;  // -1 = no MAE loaded
-        private int maeEncoderTileSize = -1;        // -1 = unknown
+        private int maeEncoderInputChannels = -1; // -1 = no MAE loaded
+        private int maeEncoderTileSize = -1; // -1 = unknown
         private TextField sslEncoderPathField;
         private Label sslEncoderInfoLabel;
         private LayerFreezePanel layerFreezePanel;
@@ -335,7 +326,7 @@ public class TrainingDialog {
         private Label advancedSettingsWarning;
         private Label backboneCompatWarning;
         private boolean lastImageIsBrightfield = true;
-        private int gpuTotalMb = 0;  // cached GPU memory (0 = unknown/CPU)
+        private int gpuTotalMb = 0; // cached GPU memory (0 = unknown/CPU)
 
         // Pre-training tile/time estimate
         private Label tileEstimateLabel;
@@ -360,10 +351,11 @@ public class TrainingDialog {
 
             // Create buttons
             Button copyScriptButton = new Button("Copy as QuPath Script");
-            TooltipHelper.install(copyScriptButton,
-                    "Copy current settings as a Groovy script for QuPath's script editor.\n" +
-                    "The script captures all training parameters so you can\n" +
-                    "reproduce or share the configuration.");
+            TooltipHelper.install(
+                    copyScriptButton,
+                    "Copy current settings as a Groovy script for QuPath's script editor.\n"
+                            + "The script captures all training parameters so you can\n"
+                            + "reproduce or share the configuration.");
             copyScriptButton.setOnAction(e -> copyTrainingScript(copyScriptButton));
 
             okButton = new Button("Start Training");
@@ -462,42 +454,49 @@ public class TrainingDialog {
             TitledPane augmentationSection = createAugmentationSection();
 
             gatedSections.addAll(List.of(
-                    basicInfoSection, modelSection, weightInitSection,
-                    durationSection, batchMemorySection, tilesResolutionSection,
-                    learningRateSection, lossSection, performanceSection,
-                    channelSection, classSection, augmentationSection
-            ));
-
-            // Build layout: header, image source, gated sections, error panel, button bar.
-            // Display order groups training-time concerns (tiles/resolution -> duration ->
-            // batch/memory) before deeper hyperparameters (LR, loss, performance), then
-            // channels/classes/augmentation, and finally the basic-info naming row.
-            content.getChildren().addAll(
-                    checkpointRecoveryBanner,
-                    createHeaderBox(),
-                    imageSourceSection,
+                    basicInfoSection,
                     modelSection,
                     weightInitSection,
-                    tilesResolutionSection,
                     durationSection,
                     batchMemorySection,
+                    tilesResolutionSection,
                     learningRateSection,
                     lossSection,
                     performanceSection,
                     channelSection,
                     classSection,
-                    augmentationSection,
-                    basicInfoSection,
-                    createErrorSummaryPanel(),
-                    buttonBar
-            );
+                    augmentationSection));
+
+            // Build layout: header, image source, gated sections, error panel, button bar.
+            // Display order groups training-time concerns (tiles/resolution -> duration ->
+            // batch/memory) before deeper hyperparameters (LR, loss, performance), then
+            // channels/classes/augmentation, and finally the basic-info naming row.
+            content.getChildren()
+                    .addAll(
+                            checkpointRecoveryBanner,
+                            createHeaderBox(),
+                            imageSourceSection,
+                            modelSection,
+                            weightInitSection,
+                            tilesResolutionSection,
+                            durationSection,
+                            batchMemorySection,
+                            learningRateSection,
+                            lossSection,
+                            performanceSection,
+                            channelSection,
+                            classSection,
+                            augmentationSection,
+                            basicInfoSection,
+                            createErrorSummaryPanel(),
+                            buttonBar);
 
             // Advanced-only sections: fully hidden in basic mode
             // (Model, weight init, tiles/resolution, duration, batch/memory and
             //  channel sections are visible in basic mode with per-control
             //  visibility bindings instead.)
-            for (TitledPane advSection : List.of(
-                    learningRateSection, lossSection, performanceSection, augmentationSection)) {
+            for (TitledPane advSection :
+                    List.of(learningRateSection, lossSection, performanceSection, augmentationSection)) {
                 advSection.visibleProperty().bind(advancedMode);
                 advSection.managedProperty().bind(advancedMode);
             }
@@ -517,7 +516,8 @@ public class TrainingDialog {
             // Resize dialog when toggling modes
             advancedMode.addListener((obs, wasAdvanced, isAdvanced) -> {
                 if (isAdvanced) {
-                    double maxH = javafx.stage.Screen.getPrimary().getVisualBounds().getHeight() - 100;
+                    double maxH =
+                            javafx.stage.Screen.getPrimary().getVisualBounds().getHeight() - 100;
                     dialog.setHeight(Math.min(900, maxH));
                 } else {
                     dialog.setHeight(700);
@@ -562,11 +562,13 @@ public class TrainingDialog {
          * Delete/Recover on a row, to remove handled entries.
          */
         private void refreshCheckpointRecoveryBanner() {
-            Thread scanThread = new Thread(() -> {
-                List<OrphanedCheckpoint> orphans =
-                        CheckpointScanner.scanCentralRegistry(Collections.emptySet());
-                Platform.runLater(() -> populateCheckpointBanner(orphans));
-            }, "DLClassifier-DialogCheckpointScan");
+            Thread scanThread = new Thread(
+                    () -> {
+                        List<OrphanedCheckpoint> orphans =
+                                CheckpointScanner.scanCentralRegistry(Collections.emptySet());
+                        Platform.runLater(() -> populateCheckpointBanner(orphans));
+                    },
+                    "DLClassifier-DialogCheckpointScan");
             scanThread.setDaemon(true);
             scanThread.start();
         }
@@ -582,8 +584,7 @@ public class TrainingDialog {
             Label header = new Label("Unfinished training detected");
             header.setStyle("-fx-font-weight: bold; -fx-text-fill: #8a5a00;");
 
-            Label subtitle = new Label(
-                    "These runs were interrupted before they could finish. "
+            Label subtitle = new Label("These runs were interrupted before they could finish. "
                     + "Click Recover to finalize the best model so far.");
             subtitle.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
             subtitle.setWrapText(true);
@@ -595,8 +596,7 @@ public class TrainingDialog {
 
             VBox bannerContent = new VBox(4, header, subtitle, rows);
             bannerContent.setPadding(new Insets(8, 10, 8, 10));
-            bannerContent.setStyle(
-                    "-fx-background-color: #fff7d6; "
+            bannerContent.setStyle("-fx-background-color: #fff7d6; "
                     + "-fx-border-color: #e0b84a; "
                     + "-fx-border-width: 1; "
                     + "-fx-background-radius: 4; "
@@ -609,24 +609,23 @@ public class TrainingDialog {
 
         private HBox createCheckpointRow(OrphanedCheckpoint orphan) {
             double sizeMb = orphan.sizeBytes() / (1024.0 * 1024.0);
-            long ageSeconds = java.time.Duration.between(
-                    orphan.modified(), java.time.Instant.now()).getSeconds();
+            long ageSeconds = java.time.Duration.between(orphan.modified(), java.time.Instant.now())
+                    .getSeconds();
             String ageLabel = formatAge(ageSeconds);
 
-            Label info = new Label(String.format(
-                    "%s  -  %.0f MB, last saved %s ago",
-                    orphan.classifierName(), sizeMb, ageLabel));
+            Label info = new Label(
+                    String.format("%s  -  %.0f MB, last saved %s ago", orphan.classifierName(), sizeMb, ageLabel));
             info.setStyle("-fx-font-size: 11px;");
             HBox.setHgrow(info, Priority.ALWAYS);
             info.setMaxWidth(Double.MAX_VALUE);
 
             Button recoverButton = new Button("Recover");
-            TooltipHelper.install(recoverButton,
+            TooltipHelper.install(
+                    recoverButton,
                     "Run finalize_training.py on this checkpoint and save the\n"
-                    + "best model as a usable classifier in this project.");
+                            + "best model as a usable classifier in this project.");
             recoverButton.setOnAction(e -> {
-                SetupDLClassifier.recoverFromCheckpoint(
-                        QuPathGUI.getInstance(), orphan.file());
+                SetupDLClassifier.recoverFromCheckpoint(QuPathGUI.getInstance(), orphan.file());
                 // Recovery runs on a background thread; optimistically remove
                 // the row so the user sees feedback. The file itself is deleted
                 // by the recovery code once it succeeds.
@@ -634,13 +633,13 @@ public class TrainingDialog {
             });
 
             Button deleteButton = new Button("Delete");
-            TooltipHelper.install(deleteButton,
-                    "Permanently delete this checkpoint file without recovering.");
+            TooltipHelper.install(deleteButton, "Permanently delete this checkpoint file without recovering.");
             deleteButton.setOnAction(e -> {
-                Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                        "Delete checkpoint for '" + orphan.classifierName() + "'?\n\n"
-                        + "This cannot be undone.",
-                        ButtonType.OK, ButtonType.CANCEL);
+                Alert confirm = new Alert(
+                        Alert.AlertType.CONFIRMATION,
+                        "Delete checkpoint for '" + orphan.classifierName() + "'?\n\n" + "This cannot be undone.",
+                        ButtonType.OK,
+                        ButtonType.CANCEL);
                 confirm.setHeaderText("Delete Checkpoint");
                 // The Train dialog is alwaysOnTop, so child dialogs must own up
                 // to it AND flip their own alwaysOnTop flag, otherwise the
@@ -654,17 +653,18 @@ public class TrainingDialog {
                     try {
                         java.nio.file.Files.deleteIfExists(orphan.file());
                     } catch (java.io.IOException ex) {
-                        Dialogs.showErrorNotification("DL Pixel Classifier",
-                                "Could not delete checkpoint: " + ex.getMessage());
+                        Dialogs.showErrorNotification(
+                                "DL Pixel Classifier", "Could not delete checkpoint: " + ex.getMessage());
                     }
                     refreshCheckpointRecoveryBanner();
                 }
             });
 
             Button dismissButton = new Button("Dismiss");
-            TooltipHelper.install(dismissButton,
+            TooltipHelper.install(
+                    dismissButton,
                     "Hide this row for the current session. The checkpoint\n"
-                    + "file is preserved and will reappear next time.");
+                            + "file is preserved and will reappear next time.");
             dismissButton.setOnAction(e -> {
                 HBox row = (HBox) ((Button) e.getSource()).getParent();
                 VBox parent = (VBox) row.getParent();
@@ -700,61 +700,64 @@ public class TrainingDialog {
             // Toggle button for basic/advanced mode
             javafx.scene.control.ToggleButton advancedToggle = new javafx.scene.control.ToggleButton();
             advancedToggle.selectedProperty().bindBidirectional(advancedMode);
-            advancedToggle.textProperty().bind(
-                    javafx.beans.binding.Bindings.when(advancedMode)
+            advancedToggle
+                    .textProperty()
+                    .bind(javafx.beans.binding.Bindings.when(advancedMode)
                             .then("Show Basic View")
                             .otherwise("Show All Settings"));
             advancedToggle.setStyle("-fx-font-size: 11px;");
-            TooltipHelper.install(advancedToggle,
-                    "Toggle between a simplified view for quick training\n" +
-                    "and the full settings for fine-tuning all parameters.\n\n" +
-                    "Basic: Select images, classes, name, then train.\n" +
-                    "Advanced: All architecture, training, and augmentation options.");
+            TooltipHelper.install(
+                    advancedToggle,
+                    "Toggle between a simplified view for quick training\n"
+                            + "and the full settings for fine-tuning all parameters.\n\n"
+                            + "Basic: Select images, classes, name, then train.\n"
+                            + "Advanced: All architecture, training, and augmentation options.");
 
             Region headerSpacer = new Region();
             javafx.scene.layout.HBox.setHgrow(headerSpacer, Priority.ALWAYS);
-            javafx.scene.layout.HBox titleRow = new javafx.scene.layout.HBox(10,
-                    titleLabel, headerSpacer, advancedToggle);
+            javafx.scene.layout.HBox titleRow =
+                    new javafx.scene.layout.HBox(10, titleLabel, headerSpacer, advancedToggle);
             titleRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
             Label subtitleLabel = new Label("Train a deep learning model to classify pixels in your images");
             subtitleLabel.setStyle("-fx-text-fill: #666;");
 
             // Basic mode hint (hidden in advanced)
-            Label basicHint = new Label(
-                    "Select images, load classes, choose an encoder, pick classes, " +
-                    "name your classifier, and click Start Training. " +
-                    "Start with ResNet18 or ResNet34 -- larger models need more data and time.");
+            Label basicHint = new Label("Select images, load classes, choose an encoder, pick classes, "
+                    + "name your classifier, and click Start Training. "
+                    + "Start with ResNet18 or ResNet34 -- larger models need more data and time.");
             basicHint.setWrapText(true);
             basicHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
             basicHint.visibleProperty().bind(advancedMode.not());
             basicHint.managedProperty().bind(advancedMode.not());
 
             // Warning label when advanced settings differ from defaults (shown in basic mode)
-            advancedSettingsWarning = new Label("Note: Some advanced settings are still active. Switch to All Settings to review.");
+            advancedSettingsWarning =
+                    new Label("Note: Some advanced settings are still active. Switch to All Settings to review.");
             advancedSettingsWarning.setWrapText(true);
-            advancedSettingsWarning.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; " +
-                    "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            advancedSettingsWarning.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+                    + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
             advancedSettingsWarning.setVisible(false);
             advancedSettingsWarning.setManaged(false);
 
             // Persist mode preference and refresh conditional visibility
             advancedMode.addListener((obs, old, newVal) -> {
-                    DLClassifierPreferences.setAdvancedMode(newVal);
-                    updateLineStrokeVisibility();
-                    if (!newVal) {
-                        // Switching to basic -- check if advanced settings differ from defaults
-                        boolean hasNonDefaults = checkAdvancedSettingsDiffer();
-                        advancedSettingsWarning.setVisible(hasNonDefaults);
-                        advancedSettingsWarning.setManaged(hasNonDefaults);
-                    } else {
-                        advancedSettingsWarning.setVisible(false);
-                        advancedSettingsWarning.setManaged(false);
-                    }
+                DLClassifierPreferences.setAdvancedMode(newVal);
+                updateLineStrokeVisibility();
+                if (!newVal) {
+                    // Switching to basic -- check if advanced settings differ from defaults
+                    boolean hasNonDefaults = checkAdvancedSettingsDiffer();
+                    advancedSettingsWarning.setVisible(hasNonDefaults);
+                    advancedSettingsWarning.setManaged(hasNonDefaults);
+                } else {
+                    advancedSettingsWarning.setVisible(false);
+                    advancedSettingsWarning.setManaged(false);
+                }
             });
 
-            headerBox.getChildren().addAll(titleRow, subtitleLabel, basicHint,
-                    advancedSettingsWarning, new Separator());
+            headerBox
+                    .getChildren()
+                    .addAll(titleRow, subtitleLabel, basicHint, advancedSettingsWarning, new Separator());
             return headerBox;
         }
 
@@ -765,13 +768,12 @@ public class TrainingDialog {
             weightInitGroup = new ToggleGroup();
 
             // --- Train from scratch ---
-            scratchRadio = new RadioButton(
-                    ClassifierHandler.WeightInitStrategy.SCRATCH.getDisplayName());
+            scratchRadio = new RadioButton(ClassifierHandler.WeightInitStrategy.SCRATCH.getDisplayName());
             scratchRadio.setToggleGroup(weightInitGroup);
             scratchRadio.setUserData(ClassifierHandler.WeightInitStrategy.SCRATCH);
-            TooltipHelper.install(scratchRadio,
-                    "Initialize all model weights randomly.\n" +
-                    "Requires more data and epochs to converge.");
+            TooltipHelper.install(
+                    scratchRadio,
+                    "Initialize all model weights randomly.\n" + "Requires more data and epochs to converge.");
 
             Label scratchInfo = new Label("All model weights are randomly initialized.");
             scratchInfo.setWrapText(true);
@@ -779,19 +781,19 @@ public class TrainingDialog {
             scratchInfo.setPadding(new Insets(0, 0, 0, 20));
 
             // --- Pretrained backbone (CNN) ---
-            backbonePretrainedRadio = new RadioButton(
-                    ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED.getDisplayName());
+            backbonePretrainedRadio =
+                    new RadioButton(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED.getDisplayName());
             backbonePretrainedRadio.setToggleGroup(weightInitGroup);
             backbonePretrainedRadio.setUserData(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
-            TooltipHelper.installWithLink(backbonePretrainedRadio,
-                    "Initialize encoder with pretrained weights.\n" +
-                    "Dramatically improves convergence and final accuracy,\n" +
-                    "especially with limited training data.",
+            TooltipHelper.installWithLink(
+                    backbonePretrainedRadio,
+                    "Initialize encoder with pretrained weights.\n"
+                            + "Dramatically improves convergence and final accuracy,\n"
+                            + "especially with limited training data.",
                     "https://cs231n.github.io/transfer-learning/");
 
-            Label backboneInfo = new Label(
-                    "Transfer learning uses pretrained weights from ImageNet. " +
-                    "Freeze early layers to preserve general features, train later layers to adapt to your data.");
+            Label backboneInfo = new Label("Transfer learning uses pretrained weights from ImageNet. "
+                    + "Freeze early layers to preserve general features, train later layers to adapt to your data.");
             backboneInfo.setWrapText(true);
             backboneInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
 
@@ -820,8 +822,8 @@ public class TrainingDialog {
             // Backbone-image type compatibility warning (non-blocking)
             backboneCompatWarning = new Label();
             backboneCompatWarning.setWrapText(true);
-            backboneCompatWarning.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; " +
-                    "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            backboneCompatWarning.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+                    + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
             backboneCompatWarning.setVisible(false);
             backboneCompatWarning.setManaged(false);
 
@@ -829,13 +831,13 @@ public class TrainingDialog {
             backbonePretrainedContent.setPadding(new Insets(0, 0, 0, 20));
 
             // --- MAE pretrained encoder (MuViT) ---
-            maeEncoderRadio = new RadioButton(
-                    ClassifierHandler.WeightInitStrategy.MAE_ENCODER.getDisplayName());
+            maeEncoderRadio = new RadioButton(ClassifierHandler.WeightInitStrategy.MAE_ENCODER.getDisplayName());
             maeEncoderRadio.setToggleGroup(weightInitGroup);
             maeEncoderRadio.setUserData(ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
-            TooltipHelper.install(maeEncoderRadio,
-                    "Load encoder weights from a self-supervised MAE pretrained model.\n" +
-                    "Matching layers are loaded; non-matching layers (decoder) are skipped.");
+            TooltipHelper.install(
+                    maeEncoderRadio,
+                    "Load encoder weights from a self-supervised MAE pretrained model.\n"
+                            + "Matching layers are loaded; non-matching layers (decoder) are skipped.");
 
             maeEncoderPathField = new TextField();
             maeEncoderPathField.setEditable(false);
@@ -847,8 +849,7 @@ public class TrainingDialog {
             maeBrowseButton.setOnAction(e -> {
                 FileChooser chooser = new FileChooser();
                 chooser.setTitle("Select MAE Pretrained Encoder (.pt)");
-                chooser.getExtensionFilters().add(
-                        new FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
+                chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
                 // Default to previously selected path, then project's mae_pretrained dir
                 String currentPath = maeEncoderPathField.getText();
                 if (currentPath != null && !currentPath.isEmpty()) {
@@ -860,8 +861,8 @@ public class TrainingDialog {
                     Project<?> project = QuPathGUI.getInstance().getProject();
                     if (project != null) {
                         try {
-                            java.nio.file.Path maeDir = project.getPath().getParent()
-                                    .resolve("mae_pretrained");
+                            java.nio.file.Path maeDir =
+                                    project.getPath().getParent().resolve("mae_pretrained");
                             if (java.nio.file.Files.isDirectory(maeDir)) {
                                 chooser.setInitialDirectory(maeDir.toFile());
                             } else {
@@ -869,8 +870,7 @@ public class TrainingDialog {
                                         project.getPath().getParent().toFile());
                             }
                         } catch (Exception ex) {
-                            logger.debug("Could not resolve project MAE directory: {}",
-                                    ex.getMessage());
+                            logger.debug("Could not resolve project MAE directory: {}", ex.getMessage());
                         }
                     }
                 }
@@ -911,14 +911,14 @@ public class TrainingDialog {
             maeEncoderContent.setPadding(new Insets(0, 0, 0, 20));
 
             // --- SSL pretrained encoder (SimCLR/BYOL) ---
-            sslEncoderRadio = new RadioButton(
-                    ClassifierHandler.WeightInitStrategy.SSL_ENCODER.getDisplayName());
+            sslEncoderRadio = new RadioButton(ClassifierHandler.WeightInitStrategy.SSL_ENCODER.getDisplayName());
             sslEncoderRadio.setToggleGroup(weightInitGroup);
             sslEncoderRadio.setUserData(ClassifierHandler.WeightInitStrategy.SSL_ENCODER);
-            TooltipHelper.install(sslEncoderRadio,
-                    "Load encoder weights from a self-supervised SimCLR/BYOL pretrained model.\n" +
-                    "Matching encoder layers are loaded; decoder/head are randomly initialized.\n" +
-                    "Use the 'SSL Pretrain Encoder' utility to create these weights.");
+            TooltipHelper.install(
+                    sslEncoderRadio,
+                    "Load encoder weights from a self-supervised SimCLR/BYOL pretrained model.\n"
+                            + "Matching encoder layers are loaded; decoder/head are randomly initialized.\n"
+                            + "Use the 'SSL Pretrain Encoder' utility to create these weights.");
 
             sslEncoderPathField = new TextField();
             sslEncoderPathField.setEditable(false);
@@ -930,8 +930,7 @@ public class TrainingDialog {
             sslBrowseButton.setOnAction(e -> {
                 FileChooser chooser = new FileChooser();
                 chooser.setTitle("Select SSL Pretrained Encoder (.pt)");
-                chooser.getExtensionFilters().add(
-                        new FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
+                chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PyTorch model", "*.pt"));
                 String currentPath = sslEncoderPathField.getText();
                 if (currentPath != null && !currentPath.isEmpty()) {
                     java.io.File parent = new java.io.File(currentPath).getParentFile();
@@ -942,8 +941,8 @@ public class TrainingDialog {
                     Project<?> project = QuPathGUI.getInstance().getProject();
                     if (project != null) {
                         try {
-                            java.nio.file.Path sslDir = project.getPath().getParent()
-                                    .resolve("ssl_pretrained");
+                            java.nio.file.Path sslDir =
+                                    project.getPath().getParent().resolve("ssl_pretrained");
                             if (java.nio.file.Files.isDirectory(sslDir)) {
                                 chooser.setInitialDirectory(sslDir.toFile());
                             } else {
@@ -951,8 +950,7 @@ public class TrainingDialog {
                                         project.getPath().getParent().toFile());
                             }
                         } catch (Exception ex) {
-                            logger.debug("Could not resolve project SSL directory: {}",
-                                    ex.getMessage());
+                            logger.debug("Could not resolve project SSL directory: {}", ex.getMessage());
                         }
                     }
                 }
@@ -987,16 +985,17 @@ public class TrainingDialog {
             sslEncoderContent.setPadding(new Insets(0, 0, 0, 20));
 
             // --- Continue training from saved model ---
-            continueTrainingRadio = new RadioButton(
-                    ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING.getDisplayName());
+            continueTrainingRadio =
+                    new RadioButton(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING.getDisplayName());
             continueTrainingRadio.setToggleGroup(weightInitGroup);
             continueTrainingRadio.setUserData(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
-            TooltipHelper.install(continueTrainingRadio,
-                    "Load all weights from a previously trained model as the starting point.\n" +
-                    "The optimizer and learning rate schedule start fresh.\n" +
-                    "Architecture, backbone, tile size, downsample, and context scale\n" +
-                    "are locked to match the saved model.\n" +
-                    "Useful for fine-tuning on additional data or adjusted classes.");
+            TooltipHelper.install(
+                    continueTrainingRadio,
+                    "Load all weights from a previously trained model as the starting point.\n"
+                            + "The optimizer and learning rate schedule start fresh.\n"
+                            + "Architecture, backbone, tile size, downsample, and context scale\n"
+                            + "are locked to match the saved model.\n"
+                            + "Useful for fine-tuning on additional data or adjusted classes.");
             // Radio is always selectable so the user can see the "Select model..." button.
             // The Train button validates that a model has actually been loaded.
 
@@ -1005,43 +1004,42 @@ public class TrainingDialog {
                 ModelManager modelManager = new ModelManager();
                 List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
                 if (classifiers.isEmpty()) {
-                    Dialogs.showWarningNotification("Load Settings",
-                            "No trained classifiers found in the project or user directory.");
+                    Dialogs.showWarningNotification(
+                            "Load Settings", "No trained classifiers found in the project or user directory.");
                     return;
                 }
-                String currentArch = (architectureCombo != null)
-                        ? architectureCombo.getValue() : null;
-                Optional<ClassifierMetadata> selected =
-                        ModelPickerDialog.show(dialog, classifiers, currentArch);
+                String currentArch = (architectureCombo != null) ? architectureCombo.getValue() : null;
+                Optional<ClassifierMetadata> selected = ModelPickerDialog.show(dialog, classifiers, currentArch);
                 selected.ifPresent(this::loadSettingsFromModel);
             });
-            TooltipHelper.install(selectModelButton,
-                    "Load settings from a previously trained model to retrain or refine it.\n" +
-                    "Populates all dialog fields from the selected model's configuration.");
+            TooltipHelper.install(
+                    selectModelButton,
+                    "Load settings from a previously trained model to retrain or refine it.\n"
+                            + "Populates all dialog fields from the selected model's configuration.");
 
             Button loadCheckpointButton = new Button("Load checkpoint...");
             loadCheckpointButton.setOnAction(e -> loadCheckpointFile());
-            TooltipHelper.install(loadCheckpointButton,
-                    "Recover from an interrupted training checkpoint (.pt file).\n" +
-                    "Finalizes the checkpoint into a usable model, then loads its\n" +
-                    "settings so you can continue training from where it left off.\n\n" +
-                    "Look for checkpoint files in:\n" +
-                    "  - Your project's classifiers/dl/ directory (opened by default)\n" +
-                    "  - ~/.dlclassifier/checkpoints/ (pause/resume + best_in_progress files)\n" +
-                    "  - Files named checkpoint_*.pt or best_in_progress_*.pt");
+            TooltipHelper.install(
+                    loadCheckpointButton,
+                    "Recover from an interrupted training checkpoint (.pt file).\n"
+                            + "Finalizes the checkpoint into a usable model, then loads its\n"
+                            + "settings so you can continue training from where it left off.\n\n"
+                            + "Look for checkpoint files in:\n"
+                            + "  - Your project's classifiers/dl/ directory (opened by default)\n"
+                            + "  - ~/.dlclassifier/checkpoints/ (pause/resume + best_in_progress files)\n"
+                            + "  - Files named checkpoint_*.pt or best_in_progress_*.pt");
 
             loadedModelLabel = new Label();
             loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
 
-            continueTrainingContent = new VBox(5,
-                    new HBox(10, selectModelButton, loadCheckpointButton),
-                    loadedModelLabel);
+            continueTrainingContent =
+                    new VBox(5, new HBox(10, selectModelButton, loadCheckpointButton), loadedModelLabel);
             continueTrainingContent.setPadding(new Insets(0, 0, 0, 20));
 
             // Toggle group listener: show/hide sub-content + re-validate
             weightInitGroup.selectedToggleProperty().addListener((obs, old, newVal) -> {
-                    updateWeightInitSubContent();
-                    updateValidation();
+                updateWeightInitSubContent();
+                updateValidation();
             });
 
             // Basic mode: hide scratch and MAE options, hide layer freeze panel
@@ -1066,14 +1064,19 @@ public class TrainingDialog {
             // Assemble all options. The freeze container sits at the bottom and is
             // shared by BACKBONE_PRETRAINED and CONTINUE_TRAINING -- it stays hidden
             // for SCRATCH/MAE/SSL via updateWeightInitSubContent().
-            content.getChildren().addAll(
-                    scratchRadio, scratchInfo,
-                    backbonePretrainedRadio, backbonePretrainedContent,
-                    maeEncoderRadio, maeEncoderContent,
-                    sslEncoderRadio, sslEncoderContent,
-                    continueTrainingRadio, continueTrainingContent,
-                    layerFreezeContainer
-            );
+            content.getChildren()
+                    .addAll(
+                            scratchRadio,
+                            scratchInfo,
+                            backbonePretrainedRadio,
+                            backbonePretrainedContent,
+                            maeEncoderRadio,
+                            maeEncoderContent,
+                            sslEncoderRadio,
+                            sslEncoderContent,
+                            continueTrainingRadio,
+                            continueTrainingContent,
+                            layerFreezeContainer);
 
             // Set initial selection based on handler + preferences
             ClassifierHandler handler = ClassifierRegistry.getHandler(architectureCombo.getValue())
@@ -1083,10 +1086,11 @@ public class TrainingDialog {
             TitledPane pane = new TitledPane("WEIGHT INITIALIZATION", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            TooltipHelper.install(pane,
-                    "Choose how to initialize model weights.\n" +
-                    "Pretrained weights (default) transfer learned features and train faster.\n" +
-                    "Continue training picks up from a previously saved model.");
+            TooltipHelper.install(
+                    pane,
+                    "Choose how to initialize model weights.\n"
+                            + "Pretrained weights (default) transfer learned features and train faster.\n"
+                            + "Continue training picks up from a previously saved model.");
             return pane;
         }
 
@@ -1104,23 +1108,20 @@ public class TrainingDialog {
         private void updateWeightInitSubContent() {
             ClassifierHandler.WeightInitStrategy selected = getSelectedWeightInitStrategy();
 
-            setVisibleIfUnbound(backbonePretrainedContent,
-                    selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+            setVisibleIfUnbound(
+                    backbonePretrainedContent, selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
 
-            setVisibleIfUnbound(maeEncoderContent,
-                    selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
+            setVisibleIfUnbound(maeEncoderContent, selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER);
 
-            setVisibleIfUnbound(sslEncoderContent,
-                    selected == ClassifierHandler.WeightInitStrategy.SSL_ENCODER);
+            setVisibleIfUnbound(sslEncoderContent, selected == ClassifierHandler.WeightInitStrategy.SSL_ENCODER);
 
-            setVisibleIfUnbound(continueTrainingContent,
-                    selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+            setVisibleIfUnbound(
+                    continueTrainingContent, selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
 
             // The freeze panel applies to strategies that load pretrained weights
             // (backbone pretrained AND continue-training). Hide it for SCRATCH/MAE/SSL,
             // and also hide it entirely in basic mode.
-            boolean freezeApplicable =
-                    selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED
+            boolean freezeApplicable = selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED
                     || selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
             boolean showFreeze = freezeApplicable && advancedMode.get();
             setVisibleIfUnbound(layerFreezeContainer, showFreeze);
@@ -1137,21 +1138,18 @@ public class TrainingDialog {
             boolean continuing = selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
             boolean sslSelected = selected == ClassifierHandler.WeightInitStrategy.SSL_ENCODER;
             if (currentHandlerUI != null) {
-                if (selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER
-                        || sslSelected || continuing) {
+                if (selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER || sslSelected || continuing) {
                     currentHandlerUI.setLocked(true);
                 } else {
                     currentHandlerUI.setLocked(false);
                 }
             }
-            if (selected != ClassifierHandler.WeightInitStrategy.MAE_ENCODER
-                    && maeEncoderInfoLabel != null) {
+            if (selected != ClassifierHandler.WeightInitStrategy.MAE_ENCODER && maeEncoderInfoLabel != null) {
                 maeEncoderInfoLabel.setText("");
                 maeEncoderInfoLabel.setVisible(false);
                 maeEncoderInfoLabel.setManaged(false);
             }
-            if (selected != ClassifierHandler.WeightInitStrategy.SSL_ENCODER
-                    && sslEncoderInfoLabel != null) {
+            if (selected != ClassifierHandler.WeightInitStrategy.SSL_ENCODER && sslEncoderInfoLabel != null) {
                 sslEncoderInfoLabel.setText("");
                 sslEncoderInfoLabel.setVisible(false);
                 sslEncoderInfoLabel.setManaged(false);
@@ -1177,23 +1175,20 @@ public class TrainingDialog {
          * Falls back to the handler's default if the current selection is no longer supported.
          */
         private void updateWeightInitOptions(String architecture) {
-            ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
-                    .orElse(ClassifierRegistry.getDefaultHandler());
-            java.util.Set<ClassifierHandler.WeightInitStrategy> supported =
-                    handler.getSupportedWeightInitStrategies();
+            ClassifierHandler handler =
+                    ClassifierRegistry.getHandler(architecture).orElse(ClassifierRegistry.getDefaultHandler());
+            java.util.Set<ClassifierHandler.WeightInitStrategy> supported = handler.getSupportedWeightInitStrategies();
 
             // Show/hide each radio based on handler support
-            setRadioAvailable(scratchRadio,
-                    supported.contains(ClassifierHandler.WeightInitStrategy.SCRATCH));
-            setRadioAvailable(backbonePretrainedRadio,
+            setRadioAvailable(scratchRadio, supported.contains(ClassifierHandler.WeightInitStrategy.SCRATCH));
+            setRadioAvailable(
+                    backbonePretrainedRadio,
                     supported.contains(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED));
-            setRadioAvailable(maeEncoderRadio,
-                    supported.contains(ClassifierHandler.WeightInitStrategy.MAE_ENCODER));
-            setRadioAvailable(sslEncoderRadio,
-                    supported.contains(ClassifierHandler.WeightInitStrategy.SSL_ENCODER));
+            setRadioAvailable(maeEncoderRadio, supported.contains(ClassifierHandler.WeightInitStrategy.MAE_ENCODER));
+            setRadioAvailable(sslEncoderRadio, supported.contains(ClassifierHandler.WeightInitStrategy.SSL_ENCODER));
             // Continue training is always shown but may be disabled
-            setRadioAvailable(continueTrainingRadio,
-                    supported.contains(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING));
+            setRadioAvailable(
+                    continueTrainingRadio, supported.contains(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING));
 
             // If current selection is no longer supported, fall back to handler default
             ClassifierHandler.WeightInitStrategy current = getSelectedWeightInitStrategy();
@@ -1256,8 +1251,9 @@ public class TrainingDialog {
 
             java.io.File metadataFile = new java.io.File(ptFile.getParentFile(), "metadata.json");
             if (!metadataFile.exists()) {
-                logger.warn("No metadata.json found alongside {}. "
-                        + "Architecture settings will not be locked.", ptFile.getName());
+                logger.warn(
+                        "No metadata.json found alongside {}. " + "Architecture settings will not be locked.",
+                        ptFile.getName());
                 maeEncoderInfoLabel.setText("");
                 maeEncoderInfoLabel.setVisible(false);
                 maeEncoderInfoLabel.setManaged(false);
@@ -1267,8 +1263,7 @@ public class TrainingDialog {
             try (java.io.Reader reader = java.nio.file.Files.newBufferedReader(
                     metadataFile.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
                 JsonObject root = new Gson().fromJson(reader, JsonObject.class);
-                JsonObject arch = root.has("architecture")
-                        ? root.getAsJsonObject("architecture") : null;
+                JsonObject arch = root.has("architecture") ? root.getAsJsonObject("architecture") : null;
                 if (arch == null) {
                     logger.warn("metadata.json has no 'architecture' key; cannot lock settings.");
                     return;
@@ -1315,8 +1310,7 @@ public class TrainingDialog {
 
                 // Build a summary string for the info label
                 StringBuilder info = new StringBuilder("Locked to encoder:");
-                if (archParams.containsKey("model_config"))
-                    info.append(" ").append(archParams.get("model_config"));
+                if (archParams.containsKey("model_config")) info.append(" ").append(archParams.get("model_config"));
                 if (archParams.containsKey("patch_size"))
                     info.append(", patch ").append(archParams.get("patch_size"));
                 if (archParams.containsKey("level_scales"))
@@ -1346,8 +1340,9 @@ public class TrainingDialog {
         private void loadSSLEncoderMetadata(java.io.File ptFile) {
             java.io.File metadataFile = new java.io.File(ptFile.getParentFile(), "metadata.json");
             if (!metadataFile.exists()) {
-                logger.warn("No metadata.json found alongside {}. "
-                        + "Architecture settings will not be locked.", ptFile.getName());
+                logger.warn(
+                        "No metadata.json found alongside {}. " + "Architecture settings will not be locked.",
+                        ptFile.getName());
                 sslEncoderInfoLabel.setText("");
                 sslEncoderInfoLabel.setVisible(false);
                 sslEncoderInfoLabel.setManaged(false);
@@ -1357,29 +1352,28 @@ public class TrainingDialog {
             try (java.io.Reader reader = java.nio.file.Files.newBufferedReader(
                     metadataFile.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
                 JsonObject root = new Gson().fromJson(reader, JsonObject.class);
-                JsonObject arch = root.has("architecture")
-                        ? root.getAsJsonObject("architecture") : null;
+                JsonObject arch = root.has("architecture") ? root.getAsJsonObject("architecture") : null;
                 if (arch == null) {
                     logger.warn("SSL metadata.json has no 'architecture' key.");
                     return;
                 }
 
-                String encoderName = arch.has("encoder_name")
-                        ? arch.get("encoder_name").getAsString() : null;
-                int inputChannels = arch.has("input_channels")
-                        ? arch.get("input_channels").getAsInt() : -1;
-                int tileSize = arch.has("tile_size")
-                        ? arch.get("tile_size").getAsInt() : -1;
+                String encoderName =
+                        arch.has("encoder_name") ? arch.get("encoder_name").getAsString() : null;
+                int inputChannels =
+                        arch.has("input_channels") ? arch.get("input_channels").getAsInt() : -1;
+                int tileSize = arch.has("tile_size") ? arch.get("tile_size").getAsInt() : -1;
 
-                String sslMethod = root.has("ssl_method")
-                        ? root.get("ssl_method").getAsString() : "unknown";
+                String sslMethod =
+                        root.has("ssl_method") ? root.get("ssl_method").getAsString() : "unknown";
 
                 // Lock architecture to UNet and backbone to the pretrained encoder
                 if (architectureCombo != null && architectureCombo.getItems().contains("unet")) {
                     architectureCombo.setValue("unet");
                     architectureCombo.setDisable(true);
                 }
-                if (encoderName != null && backboneCombo != null
+                if (encoderName != null
+                        && backboneCombo != null
                         && backboneCombo.getItems().contains(encoderName)) {
                     backboneCombo.setValue(encoderName);
                     backboneCombo.setDisable(true);
@@ -1392,8 +1386,7 @@ public class TrainingDialog {
                 StringBuilder info = new StringBuilder("Locked to SSL encoder:");
                 info.append(" ").append(sslMethod.toUpperCase());
                 if (encoderName != null) info.append(" ").append(encoderName);
-                if (inputChannels > 0)
-                    info.append(", ").append(inputChannels).append("ch");
+                if (inputChannels > 0) info.append(", ").append(inputChannels).append("ch");
                 if (tileSize > 0)
                     info.append(" (pretrained at ").append(tileSize).append("px)");
 
@@ -1401,8 +1394,12 @@ public class TrainingDialog {
                 sslEncoderInfoLabel.setVisible(true);
                 sslEncoderInfoLabel.setManaged(true);
 
-                logger.info("Loaded SSL encoder metadata: method={}, backbone={}, ch={}, tile={}",
-                        sslMethod, encoderName, inputChannels, tileSize);
+                logger.info(
+                        "Loaded SSL encoder metadata: method={}, backbone={}, ch={}, tile={}",
+                        sslMethod,
+                        encoderName,
+                        inputChannels,
+                        tileSize);
             } catch (Exception e) {
                 logger.warn("Failed to read SSL metadata.json: {}", e.getMessage());
                 sslEncoderInfoLabel.setText("");
@@ -1419,9 +1416,11 @@ public class TrainingDialog {
         private void loadCheckpointFile() {
             FileChooser fileChooser = new FileChooser();
             fileChooser.setTitle("Select Checkpoint File");
-            fileChooser.getExtensionFilters().addAll(
-                    new FileChooser.ExtensionFilter("PyTorch Checkpoint", "*.pt"),
-                    new FileChooser.ExtensionFilter("All Files", "*.*"));
+            fileChooser
+                    .getExtensionFilters()
+                    .addAll(
+                            new FileChooser.ExtensionFilter("PyTorch Checkpoint", "*.pt"),
+                            new FileChooser.ExtensionFilter("All Files", "*.*"));
 
             // Default to the project's classifiers/dl directory when available
             // (where completed models live, plus where in-progress .pt files land
@@ -1429,18 +1428,22 @@ public class TrainingDialog {
             // dir where the Python backend writes best_in_progress_*.pt files.
             java.nio.file.Path initialDir = null;
             QuPathGUI qupathForInitDir = QuPathGUI.getInstance();
-            if (qupathForInitDir != null && qupathForInitDir.getProject() != null
+            if (qupathForInitDir != null
+                    && qupathForInitDir.getProject() != null
                     && qupathForInitDir.getProject().getPath() != null) {
-                java.nio.file.Path projectClassifiersDl = qupathForInitDir.getProject()
-                        .getPath().getParent()
-                        .resolve("classifiers").resolve("dl");
+                java.nio.file.Path projectClassifiersDl = qupathForInitDir
+                        .getProject()
+                        .getPath()
+                        .getParent()
+                        .resolve("classifiers")
+                        .resolve("dl");
                 if (java.nio.file.Files.isDirectory(projectClassifiersDl)) {
                     initialDir = projectClassifiersDl;
                 }
             }
             if (initialDir == null) {
-                java.nio.file.Path userCheckpointDir = java.nio.file.Path.of(
-                        System.getProperty("user.home"), ".dlclassifier", "checkpoints");
+                java.nio.file.Path userCheckpointDir =
+                        java.nio.file.Path.of(System.getProperty("user.home"), ".dlclassifier", "checkpoints");
                 if (java.nio.file.Files.isDirectory(userCheckpointDir)) {
                     initialDir = userCheckpointDir;
                 }
@@ -1460,8 +1463,11 @@ public class TrainingDialog {
             String modelOutputDir = null;
             QuPathGUI qupath = QuPathGUI.getInstance();
             if (qupath != null && qupath.getProject() != null) {
-                java.nio.file.Path classifiersDir = qupath.getProject().getPath().getParent()
-                        .resolve("classifiers").resolve("dl");
+                java.nio.file.Path classifiersDir = qupath.getProject()
+                        .getPath()
+                        .getParent()
+                        .resolve("classifiers")
+                        .resolve("dl");
                 String baseName = selected.getName().replace(".pt", "");
                 java.nio.file.Path outputDir = classifiersDir.resolve("recovered_" + baseName);
                 try {
@@ -1475,67 +1481,67 @@ public class TrainingDialog {
             String finalOutputDir = modelOutputDir;
 
             // Run finalization in background to keep UI responsive
-            Thread recoverThread = new Thread(() -> {
-                try {
-                    ClassifierBackend backend = BackendFactory.getBackend();
-                    ClassifierClient.TrainingResult result =
-                            backend.finalizeTraining(checkpointPath, finalOutputDir);
+            Thread recoverThread = new Thread(
+                    () -> {
+                        try {
+                            ClassifierBackend backend = BackendFactory.getBackend();
+                            ClassifierClient.TrainingResult result =
+                                    backend.finalizeTraining(checkpointPath, finalOutputDir);
 
-                    // Load metadata using ModelManager's parser (handles the
-                    // custom JSON structure that Gson can't auto-map)
-                    ModelManager modelManager = new ModelManager();
-                    java.nio.file.Path modelDir = java.nio.file.Path.of(result.modelPath());
-                    ClassifierMetadata recovered = modelManager.loadMetadata(modelDir);
+                            // Load metadata using ModelManager's parser (handles the
+                            // custom JSON structure that Gson can't auto-map)
+                            ModelManager modelManager = new ModelManager();
+                            java.nio.file.Path modelDir = java.nio.file.Path.of(result.modelPath());
+                            ClassifierMetadata recovered = modelManager.loadMetadata(modelDir);
 
-                    // Store the .pt path directly (getModelPath can't find it
-                    // because the directory name doesn't match the model ID)
-                    java.nio.file.Path recoveredPt = java.nio.file.Path.of(
-                            result.modelPath(), "model.pt");
-                    String recoveredPtPath = java.nio.file.Files.exists(recoveredPt)
-                            ? recoveredPt.toString() : null;
+                            // Store the .pt path directly (getModelPath can't find it
+                            // because the directory name doesn't match the model ID)
+                            java.nio.file.Path recoveredPt = java.nio.file.Path.of(result.modelPath(), "model.pt");
+                            String recoveredPtPath =
+                                    java.nio.file.Files.exists(recoveredPt) ? recoveredPt.toString() : null;
 
-                    ClassifierMetadata finalRecovered = recovered;
-                    String finalPtPath = recoveredPtPath;
-                    Platform.runLater(() -> {
-                        if (finalRecovered != null) {
-                            loadSettingsFromModel(finalRecovered);
-                            // Override the .pt path and arch/backbone since
-                            // getModelPath can't find the recovered model by ID
-                            // (directory name doesn't match model ID).
-                            // Must set AFTER loadSettingsFromModel which clears these.
-                            if (finalPtPath != null) {
-                                pretrainedModelPtPath = finalPtPath;
-                                pretrainedModelArchitecture = finalRecovered.getModelType();
-                                pretrainedModelBackbone = finalRecovered.getBackbone();
-                                selectWeightInitStrategy(
-                                        ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
-                                updateValidation();
-                            }
-                            loadedModelLabel.setText("Recovered from: " + selected.getName());
-                            loadedModelLabel.setStyle(
-                                    "-fx-text-fill: #666; -fx-font-style: italic;");
-                            logger.info("Loaded settings from recovered checkpoint: {} "
-                                    + "(ptPath={}, arch={}, backbone={})",
-                                    selected.getName(), finalPtPath,
-                                    finalRecovered.getModelType(),
-                                    finalRecovered.getBackbone());
-                        } else {
-                            loadedModelLabel.setText("Recovered but could not load metadata");
-                            loadedModelLabel.setStyle(
-                                    "-fx-text-fill: #cc6600; -fx-font-style: italic;");
-                            logger.warn("Checkpoint finalized to {} but metadata not found",
-                                    result.modelPath());
+                            ClassifierMetadata finalRecovered = recovered;
+                            String finalPtPath = recoveredPtPath;
+                            Platform.runLater(() -> {
+                                if (finalRecovered != null) {
+                                    loadSettingsFromModel(finalRecovered);
+                                    // Override the .pt path and arch/backbone since
+                                    // getModelPath can't find the recovered model by ID
+                                    // (directory name doesn't match model ID).
+                                    // Must set AFTER loadSettingsFromModel which clears these.
+                                    if (finalPtPath != null) {
+                                        pretrainedModelPtPath = finalPtPath;
+                                        pretrainedModelArchitecture = finalRecovered.getModelType();
+                                        pretrainedModelBackbone = finalRecovered.getBackbone();
+                                        selectWeightInitStrategy(
+                                                ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+                                        updateValidation();
+                                    }
+                                    loadedModelLabel.setText("Recovered from: " + selected.getName());
+                                    loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+                                    logger.info(
+                                            "Loaded settings from recovered checkpoint: {} "
+                                                    + "(ptPath={}, arch={}, backbone={})",
+                                            selected.getName(),
+                                            finalPtPath,
+                                            finalRecovered.getModelType(),
+                                            finalRecovered.getBackbone());
+                                } else {
+                                    loadedModelLabel.setText("Recovered but could not load metadata");
+                                    loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                                    logger.warn(
+                                            "Checkpoint finalized to {} but metadata not found", result.modelPath());
+                                }
+                            });
+                        } catch (Exception ex) {
+                            logger.error("Failed to recover checkpoint: {}", ex.getMessage(), ex);
+                            Platform.runLater(() -> {
+                                loadedModelLabel.setText("Recovery failed: " + ex.getMessage());
+                                loadedModelLabel.setStyle("-fx-text-fill: #cc0000; -fx-font-style: italic;");
+                            });
                         }
-                    });
-                } catch (Exception ex) {
-                    logger.error("Failed to recover checkpoint: {}", ex.getMessage(), ex);
-                    Platform.runLater(() -> {
-                        loadedModelLabel.setText("Recovery failed: " + ex.getMessage());
-                        loadedModelLabel.setStyle(
-                                "-fx-text-fill: #cc0000; -fx-font-style: italic;");
-                    });
-                }
-            }, "DLClassifier-RecoverCheckpoint");
+                    },
+                    "DLClassifier-RecoverCheckpoint");
             recoverThread.setDaemon(true);
             recoverThread.start();
         }
@@ -1551,7 +1557,8 @@ public class TrainingDialog {
                 architectureCombo.setValue(modelType);
             } else if (modelType != null) {
                 logger.warn("Architecture '{}' from model not available in current registry", modelType);
-                Dialogs.showWarningNotification("Load Settings",
+                Dialogs.showWarningNotification(
+                        "Load Settings",
                         "Architecture '" + modelType + "' is not available.\nKeeping current selection.");
             }
 
@@ -1562,8 +1569,10 @@ public class TrainingDialog {
                     if (backboneCombo.getItems().contains(backbone)) {
                         backboneCombo.setValue(backbone);
                     } else {
-                        logger.warn("Backbone '{}' from model not available for architecture '{}'",
-                                backbone, architectureCombo.getValue());
+                        logger.warn(
+                                "Backbone '{}' from model not available for architecture '{}'",
+                                backbone,
+                                architectureCombo.getValue());
                     }
                     // Sync handler UI (e.g., MuViT modelConfigCombo) to match the
                     // loaded backbone. Without this, the hidden backboneCombo has
@@ -1604,38 +1613,34 @@ public class TrainingDialog {
             if (ts != null) {
                 // Learning rate
                 if (ts.containsKey("learning_rate")) {
-                    learningRateSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("learning_rate")).doubleValue());
+                    learningRateSpinner.getValueFactory().setValue(((Number) ts.get("learning_rate")).doubleValue());
                 }
 
                 // Batch size
                 if (ts.containsKey("batch_size")) {
-                    batchSizeSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("batch_size")).intValue());
+                    batchSizeSpinner.getValueFactory().setValue(((Number) ts.get("batch_size")).intValue());
                 }
 
                 // Validation split (stored as 0.0-1.0, display as %)
                 if (ts.containsKey("validation_split")) {
                     double vs = ((Number) ts.get("validation_split")).doubleValue();
-                    validationSplitSpinner.getValueFactory().setValue(
-                            (int) Math.round(vs * 100));
+                    validationSplitSpinner.getValueFactory().setValue((int) Math.round(vs * 100));
                 }
 
                 // Overlap
                 if (ts.containsKey("overlap")) {
-                    overlapSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("overlap")).intValue());
+                    overlapSpinner.getValueFactory().setValue(((Number) ts.get("overlap")).intValue());
                 }
 
                 // Line stroke width
                 if (ts.containsKey("line_stroke_width")) {
-                    lineStrokeWidthSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("line_stroke_width")).intValue());
+                    lineStrokeWidthSpinner
+                            .getValueFactory()
+                            .setValue(((Number) ts.get("line_stroke_width")).intValue());
                 }
 
                 // Pretrained weights -> weight init radio
-                if (ts.containsKey("use_pretrained_weights")
-                        && Boolean.TRUE.equals(ts.get("use_pretrained_weights"))) {
+                if (ts.containsKey("use_pretrained_weights") && Boolean.TRUE.equals(ts.get("use_pretrained_weights"))) {
                     selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
                 }
 
@@ -1666,34 +1671,29 @@ public class TrainingDialog {
                     lossFunctionCombo.setValue(mapLossFunctionToDisplay((String) ts.get("loss_function")));
                 }
                 if (ts.containsKey("focal_gamma")) {
-                    focalGammaSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("focal_gamma")).doubleValue());
+                    focalGammaSpinner.getValueFactory().setValue(((Number) ts.get("focal_gamma")).doubleValue());
                 }
                 if (ts.containsKey("boundary_sigma")) {
-                    boundarySigmaSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("boundary_sigma")).doubleValue());
+                    boundarySigmaSpinner.getValueFactory().setValue(((Number) ts.get("boundary_sigma")).doubleValue());
                 }
                 if (ts.containsKey("boundary_w_min")) {
-                    boundaryWMinSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("boundary_w_min")).doubleValue());
+                    boundaryWMinSpinner.getValueFactory().setValue(((Number) ts.get("boundary_w_min")).doubleValue());
                 }
                 if (ts.containsKey("ohem_hard_ratio")) {
-                    ohemSpinner.getValueFactory().setValue(
-                            (int) Math.round(((Number) ts.get("ohem_hard_ratio")).doubleValue() * 100));
+                    ohemSpinner.getValueFactory().setValue((int)
+                            Math.round(((Number) ts.get("ohem_hard_ratio")).doubleValue() * 100));
                 }
                 if (ts.containsKey("ohem_hard_ratio_start")) {
-                    ohemStartSpinner.getValueFactory().setValue(
-                            (int) Math.round(((Number) ts.get("ohem_hard_ratio_start")).doubleValue() * 100));
+                    ohemStartSpinner.getValueFactory().setValue((int)
+                            Math.round(((Number) ts.get("ohem_hard_ratio_start")).doubleValue() * 100));
                 } else if (ts.containsKey("ohem_schedule")) {
                     // Back-compat: derive start from the old schedule field.
                     // "anneal" used to mean start at 100%, "fixed" meant start == end.
                     String sched = String.valueOf(ts.get("ohem_schedule"));
-                    ohemStartSpinner.getValueFactory().setValue(
-                            "anneal".equals(sched) ? 100 : ohemSpinner.getValue());
+                    ohemStartSpinner.getValueFactory().setValue("anneal".equals(sched) ? 100 : ohemSpinner.getValue());
                 }
                 if (ts.containsKey("ohem_adaptive_floor")) {
-                    ohemAdaptiveFloorCheck.setSelected(
-                            Boolean.TRUE.equals(ts.get("ohem_adaptive_floor")));
+                    ohemAdaptiveFloorCheck.setSelected(Boolean.TRUE.equals(ts.get("ohem_adaptive_floor")));
                 }
 
                 // Early stopping
@@ -1702,8 +1702,9 @@ public class TrainingDialog {
                             mapEarlyStoppingMetricToDisplay((String) ts.get("early_stopping_metric")));
                 }
                 if (ts.containsKey("early_stopping_patience")) {
-                    earlyStoppingPatienceSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("early_stopping_patience")).intValue());
+                    earlyStoppingPatienceSpinner
+                            .getValueFactory()
+                            .setValue(((Number) ts.get("early_stopping_patience")).intValue());
                 }
 
                 // Mixed precision
@@ -1731,8 +1732,9 @@ public class TrainingDialog {
                     }
                 }
                 if (ts.containsKey("focus_class_min_iou")) {
-                    focusClassMinIoUSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("focus_class_min_iou")).doubleValue());
+                    focusClassMinIoUSpinner
+                            .getValueFactory()
+                            .setValue(((Number) ts.get("focus_class_min_iou")).doubleValue());
                 }
 
                 // Augmentation config
@@ -1770,14 +1772,14 @@ public class TrainingDialog {
 
                 // Gradient accumulation
                 if (ts.containsKey("gradient_accumulation_steps")) {
-                    gradientAccumulationSpinner.getValueFactory().setValue(
-                            ((Number) ts.get("gradient_accumulation_steps")).intValue());
+                    gradientAccumulationSpinner
+                            .getValueFactory()
+                            .setValue(((Number) ts.get("gradient_accumulation_steps")).intValue());
                 }
 
                 // Progressive resize
                 if (ts.containsKey("progressive_resize")) {
-                    progressiveResizeCheck.setSelected(
-                            Boolean.TRUE.equals(ts.get("progressive_resize")));
+                    progressiveResizeCheck.setSelected(Boolean.TRUE.equals(ts.get("progressive_resize")));
                 }
 
                 // Handler-specific parameters (e.g., MuViT model_config, patch_size,
@@ -1802,7 +1804,8 @@ public class TrainingDialog {
             // (not the generic "UNET Classifier" etc.). Otherwise prefix with "Retrain_".
             String originalName = metadata.getName();
             String timestamp = java.time.LocalDate.now().toString().replace("-", "");
-            if (originalName != null && !originalName.isEmpty()
+            if (originalName != null
+                    && !originalName.isEmpty()
                     && !originalName.toUpperCase().endsWith(" CLASSIFIER")) {
                 classifierNameField.setText(originalName);
             } else {
@@ -1826,8 +1829,7 @@ public class TrainingDialog {
                 }
             });
             if (pretrainedModelPtPath == null) {
-                logger.warn("No model.pt found for '{}' -- continue training not available",
-                        metadata.getName());
+                logger.warn("No model.pt found for '{}' -- continue training not available", metadata.getName());
                 loadedModelLabel.setText("No model.pt found for: " + metadata.getName());
                 loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
             } else {
@@ -1843,8 +1845,10 @@ public class TrainingDialog {
                 });
             }
 
-            logger.info("Settings loaded from model '{}'. {} training settings fields applied.",
-                    metadata.getName(), ts != null ? ts.size() : 0);
+            logger.info(
+                    "Settings loaded from model '{}'. {} training settings fields applied.",
+                    metadata.getName(),
+                    ts != null ? ts.size() : 0);
         }
 
         /**
@@ -1868,17 +1872,18 @@ public class TrainingDialog {
                 // Warn but don't disable -- let updateValidation() handle blocking
                 loadedModelLabel.setText(String.format(
                         "Loaded: %s (architecture mismatch: %s/%s)",
-                        loadedModelLabel.getText().replace("Loaded from: ", ""),
-                        currentArch, currentBackbone));
+                        loadedModelLabel.getText().replace("Loaded from: ", ""), currentArch, currentBackbone));
                 loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
                 // Clear the path so validation blocks training
                 pretrainedModelPtPath = null;
-                if (getSelectedWeightInitStrategy() ==
-                        ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
-                    logger.info("Architecture/backbone changed from {}/{} to {}/{} " +
-                            "-- continue training model invalidated",
-                            pretrainedModelArchitecture, pretrainedModelBackbone,
-                            currentArch, currentBackbone);
+                if (getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
+                    logger.info(
+                            "Architecture/backbone changed from {}/{} to {}/{} "
+                                    + "-- continue training model invalidated",
+                            pretrainedModelArchitecture,
+                            pretrainedModelBackbone,
+                            currentArch,
+                            currentBackbone);
                 }
             }
             updateValidation();
@@ -1907,10 +1912,10 @@ public class TrainingDialog {
 
             Label nameLabel = new Label("Classifier Name:");
             TooltipHelper.install(
-                    "Unique identifier for this classifier.\n" +
-                    "Used as the filename when saving.\n" +
-                    "Only letters, numbers, underscore, and hyphen allowed.",
-                    nameLabel, classifierNameField);
+                    "Unique identifier for this classifier.\n" + "Used as the filename when saving.\n"
+                            + "Only letters, numbers, underscore, and hyphen allowed.",
+                    nameLabel,
+                    classifierNameField);
 
             grid.add(nameLabel, 0, row);
             grid.add(classifierNameField, 1, row);
@@ -1924,10 +1929,11 @@ public class TrainingDialog {
 
             Label descLabel = new Label("Description:");
             TooltipHelper.install(
-                    "Optional free-text description of what this classifier detects.\n" +
-                    "Stored in classifier metadata for documentation.\n" +
-                    "Example: 'Collagen vs. epithelium in H&E stained liver sections'",
-                    descLabel, descriptionField);
+                    "Optional free-text description of what this classifier detects.\n"
+                            + "Stored in classifier metadata for documentation.\n"
+                            + "Example: 'Collagen vs. epithelium in H&E stained liver sections'",
+                    descLabel,
+                    descriptionField);
 
             // Description: advanced-only
             descLabel.visibleProperty().bind(advancedMode);
@@ -1941,9 +1947,8 @@ public class TrainingDialog {
             TitledPane pane = new TitledPane("NAME YOUR CLASSIFIER", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create(
-                    "Name and describe your classifier.\n" +
-                    "Positioned after training settings so you can name based on your chosen parameters."));
+            pane.setTooltip(TooltipHelper.create("Name and describe your classifier.\n"
+                    + "Positioned after training settings so you can name based on your chosen parameters."));
             return pane;
         }
 
@@ -1957,10 +1962,11 @@ public class TrainingDialog {
             imageSelectionList = new ListView<>();
             imageSelectionList.setCellFactory(lv -> new ImageSelectionCell(advancedMode));
             imageSelectionList.setPrefHeight(150);
-            TooltipHelper.install(imageSelectionList,
-                    "Check the project images to include in training.\n" +
-                    "Only images with classified annotations are shown.\n" +
-                    "Patches from all selected images are combined into one training set.");
+            TooltipHelper.install(
+                    imageSelectionList,
+                    "Check the project images to include in training.\n"
+                            + "Only images with classified annotations are shown.\n"
+                            + "Patches from all selected images are combined into one training set.");
 
             // Populate project images that have classified annotations
             Project<BufferedImage> project = QuPathGUI.getInstance().getProject();
@@ -1975,8 +1981,7 @@ public class TrainingDialog {
                         int imgH = data.getServer().getHeight();
                         data.getServer().close();
                         if (annotationCount > 0) {
-                            ImageSelectionItem item = new ImageSelectionItem(
-                                    entry, annotationCount, imgW, imgH);
+                            ImageSelectionItem item = new ImageSelectionItem(entry, annotationCount, imgW, imgH);
                             // When image selection changes, update button state, mark classes
                             // stale, and recheck whole-image size warning
                             item.selected.addListener((obs, old, newVal) -> {
@@ -1999,8 +2004,7 @@ public class TrainingDialog {
                             imageSelectionList.getItems().add(item);
                         }
                     } catch (Exception e) {
-                        logger.debug("Could not read image '{}': {}",
-                                entry.getImageName(), e.getMessage());
+                        logger.debug("Could not read image '{}': {}", entry.getImageName(), e.getMessage());
                     }
                 }
             }
@@ -2008,23 +2012,23 @@ public class TrainingDialog {
             // Select All / Select None buttons
             Button selectAllImagesBtn = new Button("Select All");
             TooltipHelper.install(selectAllImagesBtn, "Select all project images for training");
-            selectAllImagesBtn.setOnAction(e ->
-                    imageSelectionList.getItems().forEach(item -> item.selected.set(true)));
+            selectAllImagesBtn.setOnAction(e -> imageSelectionList.getItems().forEach(item -> item.selected.set(true)));
 
             Button selectNoneImagesBtn = new Button("Select None");
             TooltipHelper.install(selectNoneImagesBtn, "Deselect all project images");
-            selectNoneImagesBtn.setOnAction(e ->
-                    imageSelectionList.getItems().forEach(item -> item.selected.set(false)));
+            selectNoneImagesBtn.setOnAction(
+                    e -> imageSelectionList.getItems().forEach(item -> item.selected.set(false)));
 
             autoDistributeBtn = new Button("Auto-Distribute");
-            TooltipHelper.install(autoDistributeBtn,
-                    "Assign selected images to Training or Validation using the current\n" +
-                    "split percentage. Similar images -- same dimensions, channel count,\n" +
-                    "and filename prefix -- are bucketed together so related images\n" +
-                    "aren't clumped on one side of the split.\n\n" +
-                    "Auto-distribute runs once when the dialog opens (highlighted while\n" +
-                    "active). Click again to reshuffle with a new random seed, or use the\n" +
-                    "per-image Train/Val dropdowns to override individual assignments.");
+            TooltipHelper.install(
+                    autoDistributeBtn,
+                    "Assign selected images to Training or Validation using the current\n"
+                            + "split percentage. Similar images -- same dimensions, channel count,\n"
+                            + "and filename prefix -- are bucketed together so related images\n"
+                            + "aren't clumped on one side of the split.\n\n"
+                            + "Auto-distribute runs once when the dialog opens (highlighted while\n"
+                            + "active). Click again to reshuffle with a new random seed, or use the\n"
+                            + "per-image Train/Val dropdowns to override individual assignments.");
             autoDistributeBtn.setOnAction(e -> autoDistributeSelectedImages());
             // Per-image Train/Val dropdowns are only rendered in advanced mode,
             // so the button that manipulates them follows the same visibility.
@@ -2039,10 +2043,11 @@ public class TrainingDialog {
             loadClassesButton = new Button("Load Classes from Selected Images");
             loadClassesButton.setStyle("-fx-font-weight: bold;");
             loadClassesButton.setMaxWidth(Double.MAX_VALUE);
-            TooltipHelper.install(loadClassesButton,
-                    "Read annotations from the selected images and populate\n" +
-                    "the class list with the union of all classes found.\n" +
-                    "Also initializes channel configuration from the first image.");
+            TooltipHelper.install(
+                    loadClassesButton,
+                    "Read annotations from the selected images and populate\n"
+                            + "the class list with the union of all classes found.\n"
+                            + "Also initializes channel configuration from the first image.");
             loadClassesButton.setOnAction(e -> loadClassesFromSelectedImages());
 
             HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn, autoDistributeBtn);
@@ -2053,8 +2058,8 @@ public class TrainingDialog {
             tileEstimateLabel.setVisible(false);
             tileEstimateLabel.setManaged(false);
 
-            content.getChildren().addAll(info, imageSelectionList, imageButtonBox,
-                    loadClassesButton, tileEstimateLabel);
+            content.getChildren()
+                    .addAll(info, imageSelectionList, imageButtonBox, loadClassesButton, tileEstimateLabel);
 
             // Show a message if no annotated images found
             if (imageSelectionList.getItems().isEmpty()) {
@@ -2095,7 +2100,7 @@ public class TrainingDialog {
             int dot = imageName.lastIndexOf('.');
             String stem = (dot > 0) ? imageName.substring(0, dot) : imageName;
             int cut = stem.length();
-            for (char sep : new char[]{'_', '-', ' '}) {
+            for (char sep : new char[] {'_', '-', ' '}) {
                 int idx = stem.indexOf(sep);
                 if (idx > 0 && idx < cut) cut = idx;
             }
@@ -2115,8 +2120,7 @@ public class TrainingDialog {
                     .filter(item -> item.selected.get())
                     .collect(Collectors.toList());
             if (selected.size() < 2) {
-                Dialogs.showInfoNotification("Auto-Distribute",
-                        "Select at least two images before auto-distributing.");
+                Dialogs.showInfoNotification("Auto-Distribute", "Select at least two images before auto-distributing.");
                 return;
             }
             // Guard against the splitRole listener clearing the highlight
@@ -2124,78 +2128,111 @@ public class TrainingDialog {
             inAutoDistribute = true;
             try {
 
-            long fixedCount = selected.stream()
-                    .filter(item -> item.splitRole.get() != SplitRole.BOTH)
-                    .count();
-            if (fixedCount > 0) {
-                boolean proceed = Dialogs.showConfirmDialog("Auto-Distribute",
-                        fixedCount + " of " + selected.size() + " selected images "
-                                + "already have a fixed Train/Val role. "
-                                + "Auto-Distribute will overwrite them. Continue?");
-                if (!proceed) return;
-            }
-
-            int numChannels = -1;
-            try {
-                if (channelPanel != null && channelPanel.isValid()) {
-                    numChannels = channelPanel.getChannelConfiguration().getNumChannels();
+                long fixedCount = selected.stream()
+                        .filter(item -> item.splitRole.get() != SplitRole.BOTH)
+                        .count();
+                if (fixedCount > 0) {
+                    boolean proceed = Dialogs.showConfirmDialog(
+                            "Auto-Distribute",
+                            fixedCount + " of " + selected.size() + " selected images "
+                                    + "already have a fixed Train/Val role. "
+                                    + "Auto-Distribute will overwrite them. Continue?");
+                    if (!proceed) return;
                 }
-            } catch (Exception ignored) {
-                // channel config not loaded yet -- grouping key just won't include channel count
-            }
 
-            int splitPct = (validationSplitSpinner != null)
-                    ? validationSplitSpinner.getValue()
-                    : DLClassifierPreferences.getValidationSplit();
-            double valFraction = splitPct / 100.0;
+                int numChannels = -1;
+                try {
+                    if (channelPanel != null && channelPanel.isValid()) {
+                        numChannels = channelPanel.getChannelConfiguration().getNumChannels();
+                    }
+                } catch (Exception ignored) {
+                    // channel config not loaded yet -- grouping key just won't include channel count
+                }
 
-            Map<String, List<ImageSelectionItem>> buckets = new LinkedHashMap<>();
-            for (ImageSelectionItem item : selected) {
-                String key = item.imageWidth + "x" + item.imageHeight
-                        + "|" + (numChannels > 0 ? String.valueOf(numChannels) : "?")
-                        + "|" + filenamePrefix(item.entry.getImageName());
-                buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
-            }
+                int splitPct = (validationSplitSpinner != null)
+                        ? validationSplitSpinner.getValue()
+                        : DLClassifierPreferences.getValidationSplit();
+                double valFraction = splitPct / 100.0;
 
-            long seed = System.currentTimeMillis();
-            Random rng = new Random(seed);
-            int nTrain = 0;
-            int nVal = 0;
-            StringBuilder summary = new StringBuilder();
-            for (Map.Entry<String, List<ImageSelectionItem>> e : buckets.entrySet()) {
-                List<ImageSelectionItem> bucket = e.getValue();
-                Collections.shuffle(bucket, rng);
-                // Buckets of size 1 always go to training so every bucket
-                // contributes at least one training image; validation gets
-                // items only when the bucket has at least 2 images.
-                int bucketVal = (bucket.size() == 1)
-                        ? 0
-                        : Math.max(1, Math.min(bucket.size() - 1,
-                                (int) Math.round(bucket.size() * valFraction)));
-                for (int i = 0; i < bucket.size(); i++) {
-                    ImageSelectionItem item = bucket.get(i);
-                    if (i < bucketVal) {
-                        item.splitRole.set(SplitRole.VAL_ONLY);
-                        nVal++;
+                Map<String, List<ImageSelectionItem>> buckets = new LinkedHashMap<>();
+                for (ImageSelectionItem item : selected) {
+                    String key = item.imageWidth + "x" + item.imageHeight
+                            + "|" + (numChannels > 0 ? String.valueOf(numChannels) : "?")
+                            + "|" + filenamePrefix(item.entry.getImageName());
+                    buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+                }
+
+                long seed = System.currentTimeMillis();
+                Random rng = new Random(seed);
+                int nTrain = 0;
+                int nVal = 0;
+                StringBuilder summary = new StringBuilder();
+
+                // Pool singletons into one combined bucket. Without this, a set of
+                // 11 whole-slide images with different dimensions becomes 11 size-1
+                // buckets and the per-bucket "size==1 -> train" rule sends them all
+                // to train. With pooling they're split as one group of 11.
+                List<ImageSelectionItem> singletonPool = new ArrayList<>();
+                Map<String, List<ImageSelectionItem>> multiBuckets = new LinkedHashMap<>();
+                for (Map.Entry<String, List<ImageSelectionItem>> e : buckets.entrySet()) {
+                    if (e.getValue().size() == 1) {
+                        singletonPool.add(e.getValue().get(0));
                     } else {
-                        item.splitRole.set(SplitRole.TRAIN_ONLY);
-                        nTrain++;
+                        multiBuckets.put(e.getKey(), e.getValue());
                     }
                 }
-                if (summary.length() > 0) summary.append(", ");
-                summary.append(e.getKey()).append(": ")
-                        .append(bucket.size() - bucketVal).append("t/")
-                        .append(bucketVal).append("v");
-            }
+                if (!singletonPool.isEmpty()) {
+                    multiBuckets.put("singletons(" + singletonPool.size() + ")", singletonPool);
+                }
 
-            logger.info("Auto-distribute (seed={}): {} train / {} val across {} bucket(s); {}",
-                    seed, nTrain, nVal, buckets.size(), summary);
-            // The splitRole listeners installed when items were added will
-            // fire updateValidationSplitSpinnerState() for us.
+                for (Map.Entry<String, List<ImageSelectionItem>> e : multiBuckets.entrySet()) {
+                    List<ImageSelectionItem> bucket = e.getValue();
+                    Collections.shuffle(bucket, rng);
+                    // Pooled singletons get the standard val fraction (no minimum)
+                    // because there is no "siblings on both sides" risk to defend
+                    // against. Multi-buckets keep at least one train and at least
+                    // one val item so every group contributes to both sides.
+                    int bucketVal;
+                    if (bucket.size() == 1) {
+                        // Should not happen now that singletons are pooled, but
+                        // guard anyway.
+                        bucketVal = (rng.nextDouble() < valFraction) ? 1 : 0;
+                    } else {
+                        bucketVal =
+                                Math.max(1, Math.min(bucket.size() - 1, (int) Math.round(bucket.size() * valFraction)));
+                    }
+                    for (int i = 0; i < bucket.size(); i++) {
+                        ImageSelectionItem item = bucket.get(i);
+                        if (i < bucketVal) {
+                            item.splitRole.set(SplitRole.VAL_ONLY);
+                            nVal++;
+                        } else {
+                            item.splitRole.set(SplitRole.TRAIN_ONLY);
+                            nTrain++;
+                        }
+                    }
+                    if (summary.length() > 0) summary.append(", ");
+                    summary.append(e.getKey())
+                            .append(": ")
+                            .append(bucket.size() - bucketVal)
+                            .append("t/")
+                            .append(bucketVal)
+                            .append("v");
+                }
 
-            // Highlight the button so the user can see the assignment came
-            // from auto-distribute (vs. a manual or saved choice).
-            applyAutoDistributeHighlight(true);
+                logger.info(
+                        "Auto-distribute (seed={}): {} train / {} val across {} bucket(s); {}",
+                        seed,
+                        nTrain,
+                        nVal,
+                        multiBuckets.size(),
+                        summary);
+                // The splitRole listeners installed when items were added will
+                // fire updateValidationSplitSpinnerState() for us.
+
+                // Highlight the button so the user can see the assignment came
+                // from auto-distribute (vs. a manual or saved choice).
+                applyAutoDistributeHighlight(true);
             } finally {
                 inAutoDistribute = false;
             }
@@ -2209,8 +2246,7 @@ public class TrainingDialog {
         private void applyAutoDistributeHighlight(boolean active) {
             if (autoDistributeBtn == null) return;
             if (active) {
-                autoDistributeBtn.setStyle(
-                        "-fx-background-color: #fff3cd; "
+                autoDistributeBtn.setStyle("-fx-background-color: #fff3cd; "
                         + "-fx-border-color: #d39e00; "
                         + "-fx-border-width: 2; "
                         + "-fx-border-radius: 3; "
@@ -2273,8 +2309,7 @@ public class TrainingDialog {
                 if (validationSplitSpinner.isDisable() && lastUserValidationSplitPct != null) {
                     updatingSpinnerProgrammatically = true;
                     try {
-                        validationSplitSpinner.getValueFactory()
-                                .setValue(lastUserValidationSplitPct);
+                        validationSplitSpinner.getValueFactory().setValue(lastUserValidationSplitPct);
                     } finally {
                         updatingSpinnerProgrammatically = false;
                     }
@@ -2284,8 +2319,7 @@ public class TrainingDialog {
                 if (validationSplitObservedLabel != null) {
                     if (fixedTotal > 0) {
                         validationSplitObservedLabel.setText(String.format(
-                                "Plus %d image(s) fixed to Train, %d fixed to Val "
-                                        + "from manual assignments.",
+                                "Plus %d image(s) fixed to Train, %d fixed to Val " + "from manual assignments.",
                                 nTrain, nVal));
                     } else {
                         validationSplitObservedLabel.setText("");
@@ -2321,20 +2355,20 @@ public class TrainingDialog {
             }
             Label archLabel = new Label("Architecture:");
             TooltipHelper.installWithLink(
-                    "Segmentation architecture:\n\n" +
-                    "UNet: Encoder-decoder with skip connections.\n" +
-                    "  Best general-purpose choice. Good default for most tasks.\n\n" +
-                    "Tiny UNet: Minimal UNet, no pretrained weights.\n" +
-                    "  Fast experiments, any channel count, low VRAM.\n\n" +
-                    "Fast Pretrained: UNet with mobile encoders.\n" +
-                    "  Quick training with lightweight ImageNet weights.\n\n" +
-                    "MuViT (Transformer): Multi-resolution Vision Transformer.\n" +
-                    "  Multi-scale fusion. Supports MAE pretraining.\n\n" +
-                    "Custom ONNX: Import externally trained models.\n" +
-                    "  Inference only. UNTESTED -- expect rough edges.\n\n" +
-                    "Click '?' for detailed guide with references.",
+                    "Segmentation architecture:\n\n" + "UNet: Encoder-decoder with skip connections.\n"
+                            + "  Best general-purpose choice. Good default for most tasks.\n\n"
+                            + "Tiny UNet: Minimal UNet, no pretrained weights.\n"
+                            + "  Fast experiments, any channel count, low VRAM.\n\n"
+                            + "Fast Pretrained: UNet with mobile encoders.\n"
+                            + "  Quick training with lightweight ImageNet weights.\n\n"
+                            + "MuViT (Transformer): Multi-resolution Vision Transformer.\n"
+                            + "  Multi-scale fusion. Supports MAE pretraining.\n\n"
+                            + "Custom ONNX: Import externally trained models.\n"
+                            + "  Inference only. UNTESTED -- expect rough edges.\n\n"
+                            + "Click '?' for detailed guide with references.",
                     "https://arxiv.org/abs/1505.04597",
-                    archLabel, architectureCombo);
+                    archLabel,
+                    architectureCombo);
             architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateBackboneOptions(newVal));
 
             Button archHelpBtn = new Button("?");
@@ -2361,46 +2395,44 @@ public class TrainingDialog {
 
             // When architecture or backbone changes, invalidate pretrained weight loading
             // if the new selection doesn't match the source model
-            architectureCombo.valueProperty().addListener((obs, old, newVal) ->
-                    validatePretrainedModelCompatibility());
-            backboneCombo.valueProperty().addListener((obs, old, newVal) ->
-                    validatePretrainedModelCompatibility());
+            architectureCombo.valueProperty().addListener((obs, old, newVal) -> validatePretrainedModelCompatibility());
+            backboneCombo.valueProperty().addListener((obs, old, newVal) -> validatePretrainedModelCompatibility());
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
 
             backboneLabel = new Label("Encoder:");
             TooltipHelper.installWithLink(
-                    "Encoder (backbone) that extracts image features.\n" +
-                    "Options depend on the selected architecture.\n\n" +
-                    "--- UNet: Standard (ImageNet) ---\n" +
-                    "resnet34: Best default. Good balance of speed and accuracy.\n" +
-                    "resnet50: More capacity for larger datasets.\n" +
-                    "efficientnet-b0: Lightweight, fast inference.\n" +
-                    "mobilenet_v2: Fastest inference, smallest model.\n\n" +
-                    "--- UNet: Histology-pretrained ---\n" +
-                    "Lunit, Kather100K, TCGA-BRCA: Trained on H&E tissue\n" +
-                    "at 20x. Best for H&E brightfield. ~100MB download.\n\n" +
-                    "--- UNet: Foundation Models ---\n" +
-                    "H-optimus-0, Virchow, Hibou, Midnight, DINOv2:\n" +
-                    "Large-scale models (86M-1.1B params). ~200MB-2GB download.\n" +
-                    "Gated models need HF_TOKEN env var.\n\n" +
-                    "--- Tiny UNet ---\n" +
-                    "Size presets (Nano/Tiny/Compact/Small). No pretrained\n" +
-                    "weights -- trains from scratch, any channel count.\n\n" +
-                    "--- Fast Pretrained ---\n" +
-                    "EfficientNet-Lite0 or MobileNetV3-Small. Lightweight\n" +
-                    "ImageNet encoders for fast training.\n\n" +
-                    "Click '?' on the Architecture row for a detailed guide.",
+                    "Encoder (backbone) that extracts image features.\n"
+                            + "Options depend on the selected architecture.\n\n"
+                            + "--- UNet: Standard (ImageNet) ---\n"
+                            + "resnet34: Best default. Good balance of speed and accuracy.\n"
+                            + "resnet50: More capacity for larger datasets.\n"
+                            + "efficientnet-b0: Lightweight, fast inference.\n"
+                            + "mobilenet_v2: Fastest inference, smallest model.\n\n"
+                            + "--- UNet: Histology-pretrained ---\n"
+                            + "Lunit, Kather100K, TCGA-BRCA: Trained on H&E tissue\n"
+                            + "at 20x. Best for H&E brightfield. ~100MB download.\n\n"
+                            + "--- UNet: Foundation Models ---\n"
+                            + "H-optimus-0, Virchow, Hibou, Midnight, DINOv2:\n"
+                            + "Large-scale models (86M-1.1B params). ~200MB-2GB download.\n"
+                            + "Gated models need HF_TOKEN env var.\n\n"
+                            + "--- Tiny UNet ---\n"
+                            + "Size presets (Nano/Tiny/Compact/Small). No pretrained\n"
+                            + "weights -- trains from scratch, any channel count.\n\n"
+                            + "--- Fast Pretrained ---\n"
+                            + "EfficientNet-Lite0 or MobileNetV3-Small. Lightweight\n"
+                            + "ImageNet encoders for fast training.\n\n"
+                            + "Click '?' on the Architecture row for a detailed guide.",
                     "https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection",
-                    backboneLabel, backboneCombo);
+                    backboneLabel,
+                    backboneCombo);
             grid.add(backboneLabel, 0, row);
             grid.add(backboneCombo, 1, row);
             row++;
 
             // Basic mode guidance (hidden in advanced)
-            Label basicModelHint = new Label(
-                    "Small: Fast training, low VRAM. Good starting point.\n" +
-                    "Medium: Best balance of speed and accuracy (recommended).\n" +
-                    "Large: Most capacity, needs more data and VRAM.");
+            Label basicModelHint = new Label("Small: Fast training, low VRAM. Good starting point.\n"
+                    + "Medium: Best balance of speed and accuracy (recommended).\n"
+                    + "Large: Most capacity, needs more data and VRAM.");
             basicModelHint.setWrapText(true);
             basicModelHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
             basicModelHint.visibleProperty().bind(advancedMode.not());
@@ -2443,10 +2475,10 @@ public class TrainingDialog {
             TitledPane pane = new TitledPane("MODEL ARCHITECTURE", modelContent);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            TooltipHelper.install(pane,
-                    "Select the neural network encoder.\n" +
-                    "In basic mode, only ResNet encoders are shown.\n" +
-                    "Switch to advanced mode for all architectures and encoders.");
+            TooltipHelper.install(
+                    pane,
+                    "Select the neural network encoder.\n" + "In basic mode, only ResNet encoders are shown.\n"
+                            + "Switch to advanced mode for all architectures and encoders.");
             return pane;
         }
 
@@ -2536,29 +2568,23 @@ public class TrainingDialog {
                     .hasPerImageSplitRoles(computeHasPerImageSplitRoles())
                     .ohemHardRatio(ohemSpinner.getValue() / 100.0)
                     .ohemHardRatioStart(ohemStartSpinner.getValue() / 100.0)
-                    .ohemSchedule(ohemStartSpinner.getValue() > ohemSpinner.getValue()
-                            ? "anneal" : "fixed")
+                    .ohemSchedule(ohemStartSpinner.getValue() > ohemSpinner.getValue() ? "anneal" : "fixed")
                     .ohemAdaptiveFloor(ohemAdaptiveFloorCheck.isSelected())
                     .inMemoryDataset(DLClassifierPreferences.getDefaultInMemoryDataset())
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
-                    .fusedOptimizer(fusedOptimizerCheck != null
-                            ? fusedOptimizerCheck.isSelected() : true)
-                    .useLrFinder(useLrFinderCheck != null
-                            ? useLrFinderCheck.isSelected() : true)
-                    .gpuAugmentation(gpuAugmentationCheck != null
-                            && gpuAugmentationCheck.isSelected())
-                    .useTorchCompile(useTorchCompileCheck != null
-                            && useTorchCompileCheck.isSelected())
+                    .fusedOptimizer(fusedOptimizerCheck != null ? fusedOptimizerCheck.isSelected() : true)
+                    .useLrFinder(useLrFinderCheck != null ? useLrFinderCheck.isSelected() : true)
+                    .gpuAugmentation(gpuAugmentationCheck != null && gpuAugmentationCheck.isSelected())
+                    .useTorchCompile(useTorchCompileCheck != null && useTorchCompileCheck.isSelected())
                     .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
                     .progressiveResize(progressiveResizeCheck.isSelected())
                     .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
                     .focusClassMinIoU(focusClassMinIoUSpinner.getValue())
                     .pretrainedModelPath(pretrainedPath)
                     .wholeImage(wholeImageCheck.isSelected())
-                    .handlerParameters(currentHandlerUI != null
-                            ? currentHandlerUI.getParameters() : Map.of())
+                    .handlerParameters(currentHandlerUI != null ? currentHandlerUI.getParameters() : Map.of())
                     .build();
         }
 
@@ -2573,8 +2599,7 @@ public class TrainingDialog {
             for (ImageSelectionItem item : imageSelectionList.getItems()) {
                 if (!item.selected.get()) continue;
                 SplitRole role = item.splitRole.get();
-                if (role == SplitRole.TRAIN_ONLY
-                        || role == SplitRole.VAL_ONLY) {
+                if (role == SplitRole.TRAIN_ONLY || role == SplitRole.VAL_ONLY) {
                     return true;
                 }
             }
@@ -2606,14 +2631,12 @@ public class TrainingDialog {
             if (lrInfoLabel == null || schedulerCombo == null) return;
             String sched = schedulerCombo.getValue();
             if ("One Cycle".equals(sched)) {
-                lrInfoLabel.setText(
-                        "OneCycleLR: LR Finder will auto-adjust peak lr " +
-                        "(capped at 10x this value). This value sets the " +
-                        "base for discriminative LR ratios.");
-                lrInfoLabel.setStyle(
-                        "-fx-text-fill: #856404; -fx-font-size: 0.85em; " +
-                        "-fx-background-color: #FFF3CD; -fx-padding: 4 6; " +
-                        "-fx-background-radius: 3;");
+                lrInfoLabel.setText("OneCycleLR: LR Finder will auto-adjust peak lr "
+                        + "(capped at 10x this value). This value sets the "
+                        + "base for discriminative LR ratios.");
+                lrInfoLabel.setStyle("-fx-text-fill: #856404; -fx-font-size: 0.85em; "
+                        + "-fx-background-color: #FFF3CD; -fx-padding: 4 6; "
+                        + "-fx-background-radius: 3;");
             } else if ("None".equals(sched)) {
                 lrInfoLabel.setText("Constant lr throughout training.");
                 lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
@@ -2625,12 +2648,10 @@ public class TrainingDialog {
         }
 
         private void updateEffectiveLrLabel() {
-            if (effectiveLrLabel == null || learningRateSpinner == null
-                    || discriminativeLrSpinner == null) return;
+            if (effectiveLrLabel == null || learningRateSpinner == null || discriminativeLrSpinner == null) return;
 
             ClassifierHandler.WeightInitStrategy strategy = getSelectedWeightInitStrategy();
-            boolean isPretrained = strategy != null
-                    && strategy != ClassifierHandler.WeightInitStrategy.SCRATCH;
+            boolean isPretrained = strategy != null && strategy != ClassifierHandler.WeightInitStrategy.SCRATCH;
 
             if (!isPretrained) {
                 effectiveLrLabel.setText("");
@@ -2641,8 +2662,7 @@ public class TrainingDialog {
             double ratio = discriminativeLrSpinner.getValue();
             double encoderLr = lr * ratio;
 
-            String text = String.format("Encoder: %.6f | Decoder: %.6f | Head: %.6f",
-                    encoderLr, lr, lr);
+            String text = String.format("Encoder: %.6f | Decoder: %.6f | Head: %.6f", encoderLr, lr, lr);
 
             if (schedulerCombo != null && "One Cycle".equals(schedulerCombo.getValue())) {
                 text += " (peak LRs auto-found by LR finder)";
@@ -2657,32 +2677,28 @@ public class TrainingDialog {
             // Basic mode: simplified language for non-ML users
             if (!advancedMode.get()) {
                 backbonePretrainedRadio.setText("Start from a pre-trained model (recommended)");
-                backboneInfo.setText(
-                        "The model begins with knowledge learned from millions of images, " +
-                        "so it needs less of your data to learn well.");
+                backboneInfo.setText("The model begins with knowledge learned from millions of images, "
+                        + "so it needs less of your data to learn well.");
                 return;
             }
 
             // Advanced mode: full technical detail
             if (isFoundationModel(backbone)) {
-                backboneInfo.setText(
-                        "Foundation model encoder (downloaded on-demand from HuggingFace). " +
-                        "Large-scale vision model with rich feature representations. " +
-                        "Gated models need HF_TOKEN env var. " +
-                        "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).");
+                backboneInfo.setText("Foundation model encoder (downloaded on-demand from HuggingFace). "
+                        + "Large-scale vision model with rich feature representations. "
+                        + "Gated models need HF_TOKEN env var. "
+                        + "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).");
                 backbonePretrainedRadio.setText("Use foundation model pretrained weights");
             } else if (backbone.contains("_")) {
-                backboneInfo.setText(
-                        "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
-                        "Best for H&E brightfield. Less freezing needed. " +
-                        "For fluorescence or multi-channel images, use an ImageNet backbone instead. " +
-                        "~100MB download on first use (cached).");
+                backboneInfo.setText("Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). "
+                        + "Best for H&E brightfield. Less freezing needed. "
+                        + "For fluorescence or multi-channel images, use an ImageNet backbone instead. "
+                        + "~100MB download on first use (cached).");
                 backbonePretrainedRadio.setText("Use histology pretrained weights");
             } else {
-                backboneInfo.setText(
-                        "ImageNet-pretrained weights provide general edge/texture features " +
-                        "that transfer to most image types including fluorescence and multi-channel. " +
-                        "Freeze early layers to preserve these features.");
+                backboneInfo.setText("ImageNet-pretrained weights provide general edge/texture features "
+                        + "that transfer to most image types including fluorescence and multi-channel. "
+                        + "Freeze early layers to preserve these features.");
                 backbonePretrainedRadio.setText("Use pretrained backbone weights");
             }
         }
@@ -2693,15 +2709,13 @@ public class TrainingDialog {
                     ? mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue())
                     : "mean_iou";
             if ("disabled".equals(metric)) {
-                earlyStoppingStatusLabel.setText(
-                        "Early stopping disabled (will train all configured epochs)");
+                earlyStoppingStatusLabel.setText("Early stopping disabled (will train all configured epochs)");
                 return;
             }
-            int patience = earlyStoppingPatienceSpinner != null
-                    ? earlyStoppingPatienceSpinner.getValue() : 15;
+            int patience = earlyStoppingPatienceSpinner != null ? earlyStoppingPatienceSpinner.getValue() : 15;
             String metricDisplay = "mean_iou".equals(metric) ? "Mean IoU" : "Validation Loss";
-            earlyStoppingStatusLabel.setText(String.format(
-                    "Early stopping enabled (patience: %d, metric: %s)", patience, metricDisplay));
+            earlyStoppingStatusLabel.setText(
+                    String.format("Early stopping enabled (patience: %d, metric: %s)", patience, metricDisplay));
         }
 
         private void updateLayerFreezeInfoLabel(ClassifierHandler.WeightInitStrategy selected) {
@@ -2713,8 +2727,7 @@ public class TrainingDialog {
                 layerFreezeInfoLabel.setStyle("-fx-text-fill: #856404; "
                         + "-fx-background-color: #fff3cd; -fx-padding: 6 8; "
                         + "-fx-background-radius: 3; -fx-font-size: 11px;");
-                layerFreezeInfoLabel.setText(
-                        "Continuing training inherits the freeze list from the loaded "
+                layerFreezeInfoLabel.setText("Continuing training inherits the freeze list from the loaded "
                         + "model. Changing it has real consequences:\n"
                         + "  - UNFREEZING early encoder layers (conv1, layer1, layer2) "
                         + "lets the model adapt low-level features (color, scale, "
@@ -2729,8 +2742,7 @@ public class TrainingDialog {
                         + "stain, or downsample, prefer unfreezing the encoder.");
             } else if (selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
                 layerFreezeInfoLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
-                layerFreezeInfoLabel.setText(
-                        "Freezing early encoder layers preserves ImageNet/MAE features "
+                layerFreezeInfoLabel.setText("Freezing early encoder layers preserves ImageNet/MAE features "
                         + "and trains faster, but limits how much the model can adapt "
                         + "to your data. Unfreeze more layers if your images differ "
                         + "strongly from the pretrained domain.");
@@ -2764,8 +2776,8 @@ public class TrainingDialog {
                     // Load layers asynchronously to avoid blocking the FX thread on HTTP call
                     final int ch = numChannels;
                     final int cls = numClasses;
-                    final int ctxScale = contextScaleCombo != null
-                            ? parseContextScale(contextScaleCombo.getValue()) : 1;
+                    final int ctxScale =
+                            contextScaleCombo != null ? parseContextScale(contextScaleCombo.getValue()) : 1;
                     CompletableFuture.runAsync(() -> {
                         layerFreezePanel.loadLayers(architecture, encoder, ch, cls, ctxScale);
                     });
@@ -2805,13 +2817,14 @@ public class TrainingDialog {
 
             Label epochsLabel = new Label("Epochs:");
             TooltipHelper.install(
-                    "Number of complete passes through the training data.\n" +
-                    "More epochs allow the model to learn more but risk overfitting.\n" +
-                    "Watch validation loss to determine when to stop.\n\n" +
-                    "Typical range: 50-200 for small datasets, 20-100 for large.\n" +
-                    "Early stopping will halt training automatically if the model\n" +
-                    "stops improving, so it is safe to set a high value.",
-                    epochsLabel, epochsSpinner);
+                    "Number of complete passes through the training data.\n"
+                            + "More epochs allow the model to learn more but risk overfitting.\n"
+                            + "Watch validation loss to determine when to stop.\n\n"
+                            + "Typical range: 50-200 for small datasets, 20-100 for large.\n"
+                            + "Early stopping will halt training automatically if the model\n"
+                            + "stops improving, so it is safe to set a high value.",
+                    epochsLabel,
+                    epochsSpinner);
 
             grid.add(epochsLabel, 0, row);
             grid.add(epochsSpinner, 1, row);
@@ -2841,17 +2854,17 @@ public class TrainingDialog {
             validationSplitSpinner.setPrefWidth(100);
             Label valSplitLabel = new Label("Validation Split (%):");
             TooltipHelper.install(
-                    "Percentage of annotated tiles held out for validation.\n" +
-                    "Used to monitor overfitting and select the best model.\n" +
-                    "Higher values give more reliable validation metrics\n" +
-                    "but leave less data for training.\n\n" +
-                    "15-25% is typical. Use 10% for very small datasets\n" +
-                    "(fewer than ~50 annotations). Use 25-30% for large\n" +
-                    "datasets where you can afford it.\n\n" +
-                    "Important: if you use a Focus Class, ensure it has\n" +
-                    "enough annotations that some end up in the validation\n" +
-                    "split. A focus class with 0 validation samples will\n" +
-                    "always show 0.0 IoU, preventing meaningful model selection.",
+                    "Percentage of annotated tiles held out for validation.\n"
+                            + "Used to monitor overfitting and select the best model.\n"
+                            + "Higher values give more reliable validation metrics\n"
+                            + "but leave less data for training.\n\n"
+                            + "15-25% is typical. Use 10% for very small datasets\n"
+                            + "(fewer than ~50 annotations). Use 25-30% for large\n"
+                            + "datasets where you can afford it.\n\n"
+                            + "Important: if you use a Focus Class, ensure it has\n"
+                            + "enough annotations that some end up in the validation\n"
+                            + "split. A focus class with 0 validation samples will\n"
+                            + "always show 0.0 IoU, preventing meaningful model selection.",
                     valSplitLabel, validationSplitSpinner);
             valSplitLabel.visibleProperty().bind(advancedMode);
             valSplitLabel.managedProperty().bind(advancedMode);
@@ -2880,33 +2893,38 @@ public class TrainingDialog {
             validationSplitObservedLabel.setMaxWidth(280);
             validationSplitObservedLabel.setVisible(false);
             validationSplitObservedLabel.setManaged(false);
-            validationSplitObservedLabel.visibleProperty().bind(advancedMode.and(
-                    validationSplitObservedLabel.textProperty().isNotEmpty()));
-            validationSplitObservedLabel.managedProperty().bind(advancedMode.and(
-                    validationSplitObservedLabel.textProperty().isNotEmpty()));
+            validationSplitObservedLabel
+                    .visibleProperty()
+                    .bind(advancedMode.and(
+                            validationSplitObservedLabel.textProperty().isNotEmpty()));
+            validationSplitObservedLabel
+                    .managedProperty()
+                    .bind(advancedMode.and(
+                            validationSplitObservedLabel.textProperty().isNotEmpty()));
             grid.add(validationSplitObservedLabel, 1, row, 2, 1);
             row++;
 
             // Early stopping metric
-            earlyStoppingMetricCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "Mean IoU", "Validation Loss", "Disabled"));
+            earlyStoppingMetricCombo =
+                    new ComboBox<>(FXCollections.observableArrayList("Mean IoU", "Validation Loss", "Disabled"));
             earlyStoppingMetricCombo.setValue(
                     mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
             Label esMetricLabel = new Label("Early Stop Metric:");
             TooltipHelper.install(
-                    "Which metric decides WHEN TO STOP training.\n" +
-                    "Independent of Focus Class: Focus Class drives 'best\n" +
-                    "model' checkpoint selection, while this metric drives\n" +
-                    "early stopping and the plateau LR scheduler.\n\n" +
-                    "Mean IoU (recommended): Intersection-over-union averaged\n" +
-                    "  across all classes. Directly measures segmentation\n" +
-                    "  quality. Stops when overall accuracy plateaus.\n\n" +
-                    "Validation Loss: Combined loss on held-out data.\n" +
-                    "  Can oscillate while IoU still improves, so Mean IoU\n" +
-                    "  is generally more reliable.\n\n" +
-                    "Disabled: Train for the full epoch count regardless of\n" +
-                    "  metric progress. Best-model selection still applies.",
-                    esMetricLabel, earlyStoppingMetricCombo);
+                    "Which metric decides WHEN TO STOP training.\n"
+                            + "Independent of Focus Class: Focus Class drives 'best\n"
+                            + "model' checkpoint selection, while this metric drives\n"
+                            + "early stopping and the plateau LR scheduler.\n\n"
+                            + "Mean IoU (recommended): Intersection-over-union averaged\n"
+                            + "  across all classes. Directly measures segmentation\n"
+                            + "  quality. Stops when overall accuracy plateaus.\n\n"
+                            + "Validation Loss: Combined loss on held-out data.\n"
+                            + "  Can oscillate while IoU still improves, so Mean IoU\n"
+                            + "  is generally more reliable.\n\n"
+                            + "Disabled: Train for the full epoch count regardless of\n"
+                            + "  metric progress. Best-model selection still applies.",
+                    esMetricLabel,
+                    earlyStoppingMetricCombo);
             esMetricLabel.visibleProperty().bind(advancedMode);
             esMetricLabel.managedProperty().bind(advancedMode);
             earlyStoppingMetricCombo.visibleProperty().bind(advancedMode);
@@ -2917,21 +2935,22 @@ public class TrainingDialog {
             row++;
 
             // Early stopping patience
-            earlyStoppingPatienceSpinner = new Spinner<>(3, 50,
-                    DLClassifierPreferences.getDefaultEarlyStoppingPatience(), 1);
+            earlyStoppingPatienceSpinner =
+                    new Spinner<>(3, 50, DLClassifierPreferences.getDefaultEarlyStoppingPatience(), 1);
             earlyStoppingPatienceSpinner.setEditable(true);
             earlyStoppingPatienceSpinner.setPrefWidth(100);
             Label esPatienceLabel = new Label("Early Stop Patience:");
             TooltipHelper.install(
-                    "How many consecutive epochs without improvement before stopping.\n\n" +
-                    "After each epoch, if the early stop metric hasn't improved in\n" +
-                    "this many epochs, training stops and the best model is saved.\n\n" +
-                    "10-15: Good default for most runs.\n" +
-                    "20-30: Use with cosine annealing or noisy loss curves.\n" +
-                    "3-5: For quick experiments.\n\n" +
-                    "It is safe to set a high epoch count (e.g. 200) and rely on\n" +
-                    "patience to stop training -- you won't waste GPU time.",
-                    esPatienceLabel, earlyStoppingPatienceSpinner);
+                    "How many consecutive epochs without improvement before stopping.\n\n"
+                            + "After each epoch, if the early stop metric hasn't improved in\n"
+                            + "this many epochs, training stops and the best model is saved.\n\n"
+                            + "10-15: Good default for most runs.\n"
+                            + "20-30: Use with cosine annealing or noisy loss curves.\n"
+                            + "3-5: For quick experiments.\n\n"
+                            + "It is safe to set a high epoch count (e.g. 200) and rely on\n"
+                            + "patience to stop training -- you won't waste GPU time.",
+                    esPatienceLabel,
+                    earlyStoppingPatienceSpinner);
             esPatienceLabel.visibleProperty().bind(advancedMode);
             esPatienceLabel.managedProperty().bind(advancedMode);
             earlyStoppingPatienceSpinner.visibleProperty().bind(advancedMode);
@@ -2942,27 +2961,26 @@ public class TrainingDialog {
             row++;
 
             // Focus class
-            focusClassCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "None (use Mean IoU)"));
+            focusClassCombo = new ComboBox<>(FXCollections.observableArrayList("None (use Mean IoU)"));
             focusClassCombo.setValue("None (use Mean IoU)");
             Label focusClassLabel = new Label("Focus Class:");
             TooltipHelper.install(
-                    "Optionally select a class to focus on for BEST-MODEL\n" +
-                    "checkpoint selection.\n\n" +
-                    "When set, the focus class's per-class IoU decides which\n" +
-                    "epoch's weights are saved as the final model. The Early\n" +
-                    "Stop Metric (above) is INDEPENDENT -- it controls when\n" +
-                    "training stops based on its own metric (Mean IoU or\n" +
-                    "Validation Loss).\n\n" +
-                    "Combine them: e.g., Focus Class = 'vein' + Early Stop\n" +
-                    "Metric = 'Mean IoU' saves the best vein model but lets\n" +
-                    "training run until overall mean IoU plateaus.\n\n" +
-                    "Use this when you care more about one class than the\n" +
-                    "others. For example, if detecting 'Hinge' is critical,\n" +
-                    "set it as the focus class so the best model is the one\n" +
-                    "with the best Hinge IoU, not the best average across\n" +
-                    "all classes.",
-                    focusClassLabel, focusClassCombo);
+                    "Optionally select a class to focus on for BEST-MODEL\n" + "checkpoint selection.\n\n"
+                            + "When set, the focus class's per-class IoU decides which\n"
+                            + "epoch's weights are saved as the final model. The Early\n"
+                            + "Stop Metric (above) is INDEPENDENT -- it controls when\n"
+                            + "training stops based on its own metric (Mean IoU or\n"
+                            + "Validation Loss).\n\n"
+                            + "Combine them: e.g., Focus Class = 'vein' + Early Stop\n"
+                            + "Metric = 'Mean IoU' saves the best vein model but lets\n"
+                            + "training run until overall mean IoU plateaus.\n\n"
+                            + "Use this when you care more about one class than the\n"
+                            + "others. For example, if detecting 'Hinge' is critical,\n"
+                            + "set it as the focus class so the best model is the one\n"
+                            + "with the best Hinge IoU, not the best average across\n"
+                            + "all classes.",
+                    focusClassLabel,
+                    focusClassCombo);
             focusClassLabel.visibleProperty().bind(advancedMode);
             focusClassLabel.managedProperty().bind(advancedMode);
             focusClassCombo.visibleProperty().bind(advancedMode);
@@ -2987,16 +3005,17 @@ public class TrainingDialog {
             // Focus class min IoU threshold (hidden by default)
             focusClassMinIoULabel = new Label("Min Focus IoU:");
             double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
-            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0,
-                    savedMinIoU > 0 ? savedMinIoU : 0.5, 0.05);
+            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0, savedMinIoU > 0 ? savedMinIoU : 0.5, 0.05);
             focusClassMinIoUSpinner.setEditable(true);
             focusClassMinIoUSpinner.setPrefWidth(100);
-            var minIoUFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) focusClassMinIoUSpinner.getValueFactory();
+            var minIoUFactory =
+                    (SpinnerValueFactory.DoubleSpinnerValueFactory) focusClassMinIoUSpinner.getValueFactory();
             minIoUFactory.setConverter(new javafx.util.StringConverter<Double>() {
                 @Override
                 public String toString(Double value) {
                     return value == null ? "" : String.format("%.2f", value);
                 }
+
                 @Override
                 public Double fromString(String string) {
                     try {
@@ -3007,15 +3026,16 @@ public class TrainingDialog {
                 }
             });
             TooltipHelper.install(
-                    "Minimum IoU threshold for the focus class.\n\n" +
-                    "Training will not stop early until the focus class\n" +
-                    "reaches this IoU, regardless of patience.\n\n" +
-                    "0.00: No minimum -- early stopping works normally.\n" +
-                    "0.30: Training continues until focus class IoU >= 0.30,\n" +
-                    "  then patience-based stopping resumes.\n\n" +
-                    "Set this to prevent the model from stopping before the\n" +
-                    "focus class has had a chance to learn.",
-                    focusClassMinIoULabel, focusClassMinIoUSpinner);
+                    "Minimum IoU threshold for the focus class.\n\n"
+                            + "Training will not stop early until the focus class\n"
+                            + "reaches this IoU, regardless of patience.\n\n"
+                            + "0.00: No minimum -- early stopping works normally.\n"
+                            + "0.30: Training continues until focus class IoU >= 0.30,\n"
+                            + "  then patience-based stopping resumes.\n\n"
+                            + "Set this to prevent the model from stopping before the\n"
+                            + "focus class has had a chance to learn.",
+                    focusClassMinIoULabel,
+                    focusClassMinIoUSpinner);
 
             // Hidden by default
             focusClassMinIoUSpinner.setVisible(false);
@@ -3033,12 +3053,12 @@ public class TrainingDialog {
             seedSpinner.setPrefWidth(100);
             Label seedLabel = new Label("Random Seed:");
             TooltipHelper.install(
-                    "Set a fixed seed for reproducible training results.\n\n" +
-                    "0 (default): Non-deterministic -- results vary between runs.\n" +
-                    "Any positive value: Deterministic -- same results given same\n" +
-                    "  data and settings. Useful for ablation studies.\n\n" +
-                    "Note: Deterministic mode may reduce training speed by 10-20%\n" +
-                    "due to cuDNN deterministic algorithms.",
+                    "Set a fixed seed for reproducible training results.\n\n"
+                            + "0 (default): Non-deterministic -- results vary between runs.\n"
+                            + "Any positive value: Deterministic -- same results given same\n"
+                            + "  data and settings. Useful for ablation studies.\n\n"
+                            + "Note: Deterministic mode may reduce training speed by 10-20%\n"
+                            + "due to cuDNN deterministic algorithms.",
                     seedLabel, seedSpinner);
             seedLabel.visibleProperty().bind(advancedMode);
             seedLabel.managedProperty().bind(advancedMode);
@@ -3059,15 +3079,13 @@ public class TrainingDialog {
                 updateEarlyStoppingStatusLabel();
                 applyEarlyStoppingDisableState.run();
             });
-            earlyStoppingPatienceSpinner.valueProperty().addListener(
-                    (obs, o, n) -> updateEarlyStoppingStatusLabel());
+            earlyStoppingPatienceSpinner.valueProperty().addListener((obs, o, n) -> updateEarlyStoppingStatusLabel());
             applyEarlyStoppingDisableState.run();
 
             TitledPane pane = new TitledPane("DURATION & STOPPING", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create(
-                    "How long to train and when to stop: epochs, validation split, "
+            pane.setTooltip(TooltipHelper.create("How long to train and when to stop: epochs, validation split, "
                     + "early stopping, focus class, and seed."));
             return pane;
         }
@@ -3083,13 +3101,14 @@ public class TrainingDialog {
 
             Label batchLabel = new Label("Batch Size:");
             TooltipHelper.install(
-                    "Number of tiles processed together in each training step.\n" +
-                    "Larger batches give more stable gradients but use more GPU memory.\n" +
-                    "Reduce if you get CUDA out-of-memory errors.\n\n" +
-                    "Typical: 4-16 depending on tile size and GPU VRAM.\n" +
-                    "With 512px tiles: 4-8 for 8GB VRAM, 8-16 for 12+ GB VRAM.\n" +
-                    "With 256px tiles: double the above batch sizes.",
-                    batchLabel, batchSizeSpinner);
+                    "Number of tiles processed together in each training step.\n"
+                            + "Larger batches give more stable gradients but use more GPU memory.\n"
+                            + "Reduce if you get CUDA out-of-memory errors.\n\n"
+                            + "Typical: 4-16 depending on tile size and GPU VRAM.\n"
+                            + "With 512px tiles: 4-8 for 8GB VRAM, 8-16 for 12+ GB VRAM.\n"
+                            + "With 256px tiles: double the above batch sizes.",
+                    batchLabel,
+                    batchSizeSpinner);
 
             grid.add(batchLabel, 0, row);
             grid.add(batchSizeSpinner, 1, row);
@@ -3105,19 +3124,20 @@ public class TrainingDialog {
             row++;
 
             // Gradient accumulation (advanced only)
-            gradientAccumulationSpinner = new Spinner<>(1, 8,
-                    DLClassifierPreferences.getDefaultGradientAccumulation(), 1);
+            gradientAccumulationSpinner =
+                    new Spinner<>(1, 8, DLClassifierPreferences.getDefaultGradientAccumulation(), 1);
             gradientAccumulationSpinner.setEditable(true);
             gradientAccumulationSpinner.setPrefWidth(100);
             Label gradAccLabel = new Label("Gradient Accumulation:");
             TooltipHelper.install(
-                    "Accumulate gradients over N batches before updating weights.\n\n" +
-                    "Effective batch size = Batch Size x Accumulation Steps.\n" +
-                    "Use this when GPU memory is too limited for large batches.\n\n" +
-                    "1: Normal training (no accumulation).\n" +
-                    "2-4: Simulates 2-4x larger batch without extra memory.\n" +
-                    "8: Maximum accumulation; very stable but slower per epoch.",
-                    gradAccLabel, gradientAccumulationSpinner);
+                    "Accumulate gradients over N batches before updating weights.\n\n"
+                            + "Effective batch size = Batch Size x Accumulation Steps.\n"
+                            + "Use this when GPU memory is too limited for large batches.\n\n"
+                            + "1: Normal training (no accumulation).\n"
+                            + "2-4: Simulates 2-4x larger batch without extra memory.\n"
+                            + "8: Maximum accumulation; very stable but slower per epoch.",
+                    gradAccLabel,
+                    gradientAccumulationSpinner);
             gradAccLabel.visibleProperty().bind(advancedMode);
             gradAccLabel.managedProperty().bind(advancedMode);
             gradientAccumulationSpinner.visibleProperty().bind(advancedMode);
@@ -3137,12 +3157,13 @@ public class TrainingDialog {
             // Mixed precision (advanced only)
             mixedPrecisionCheck = new CheckBox("Enable mixed precision (AMP)");
             mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
-            TooltipHelper.installWithLink(mixedPrecisionCheck,
-                    "Use automatic mixed precision (FP16/FP32) on CUDA GPUs.\n" +
-                    "Typically provides ~2x speedup with no accuracy loss.\n" +
-                    "Only active when training on NVIDIA GPUs; ignored on CPU/MPS.\n\n" +
-                    "Safe to leave enabled -- PyTorch automatically manages which\n" +
-                    "operations use FP16 vs FP32 for numerical stability.",
+            TooltipHelper.installWithLink(
+                    mixedPrecisionCheck,
+                    "Use automatic mixed precision (FP16/FP32) on CUDA GPUs.\n"
+                            + "Typically provides ~2x speedup with no accuracy loss.\n"
+                            + "Only active when training on NVIDIA GPUs; ignored on CPU/MPS.\n\n"
+                            + "Safe to leave enabled -- PyTorch automatically manages which\n"
+                            + "operations use FP16 vs FP32 for numerical stability.",
                     "https://pytorch.org/docs/stable/amp.html");
             mixedPrecisionCheck.visibleProperty().bind(advancedMode);
             mixedPrecisionCheck.managedProperty().bind(advancedMode);
@@ -3184,34 +3205,36 @@ public class TrainingDialog {
             tileSizeSpinner.setPrefWidth(100);
             Label tileSizeLabel = new Label("Tile Size:");
             TooltipHelper.install(
-                    "Size of square patches extracted from annotations for training.\n" +
-                    "Must be divisible by 32 (encoder downsampling requirement).\n" +
-                    "Larger tiles capture more context but use more memory.\n\n" +
-                    "256: Good for cell-level features. Faster training.\n" +
-                    "512: Good balance of context and memory. Recommended default.\n" +
-                    "1024: Maximum context but requires large GPU VRAM.",
-                    tileSizeLabel, tileSizeSpinner);
+                    "Size of square patches extracted from annotations for training.\n"
+                            + "Must be divisible by 32 (encoder downsampling requirement).\n"
+                            + "Larger tiles capture more context but use more memory.\n\n"
+                            + "256: Good for cell-level features. Faster training.\n"
+                            + "512: Good balance of context and memory. Recommended default.\n"
+                            + "1024: Maximum context but requires large GPU VRAM.",
+                    tileSizeLabel,
+                    tileSizeSpinner);
 
             // Whole-image checkbox
             wholeImageCheck = new CheckBox("Whole image\n(small images only)");
             wholeImageCheck.setWrapText(true);
             wholeImageCheck.setStyle("-fx-text-fill: #CC7A00; -fx-font-weight: bold;");
-            TooltipHelper.install(wholeImageCheck,
-                    "Use the entire image as a single training tile.\n" +
-                    "Disables tile size, overlap, and context scale controls --\n" +
-                    "each image becomes one training sample.\n" +
-                    "Downsample remains unlocked so you can adjust resolution\n" +
-                    "to fit within the architecture's max tile size.\n\n" +
-                    "Use only for small images where tiling is unnecessary.\n" +
-                    "The effective tile size is computed from image dimensions\n" +
-                    "at export time and rounded to a multiple of 32.\n\n" +
-                    "For multi-image training, the largest image dimensions\n" +
-                    "across all selected images are used (smaller images are\n" +
-                    "padded with unlabeled=255).");
+            TooltipHelper.install(
+                    wholeImageCheck,
+                    "Use the entire image as a single training tile.\n"
+                            + "Disables tile size, overlap, and context scale controls --\n"
+                            + "each image becomes one training sample.\n"
+                            + "Downsample remains unlocked so you can adjust resolution\n"
+                            + "to fit within the architecture's max tile size.\n\n"
+                            + "Use only for small images where tiling is unnecessary.\n"
+                            + "The effective tile size is computed from image dimensions\n"
+                            + "at export time and rounded to a multiple of 32.\n\n"
+                            + "For multi-image training, the largest image dimensions\n"
+                            + "across all selected images are used (smaller images are\n"
+                            + "padded with unlabeled=255).");
             wholeImageCheck.selectedProperty().addListener((obs, old, checked) -> {
                 // Keep controls locked if continuing from saved model
-                boolean continuing = getSelectedWeightInitStrategy() ==
-                        ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
+                boolean continuing =
+                        getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
                 tileSizeSpinner.setDisable(checked || continuing);
                 overlapSpinner.setDisable(checked);
                 // Downsample stays enabled in whole-image mode -- the user may
@@ -3259,35 +3282,34 @@ public class TrainingDialog {
                     "2x (Half resolution)",
                     "4x (Quarter resolution)",
                     "8x (1/8 resolution)",
-                    "16x (1/16 resolution)"
-            ));
+                    "16x (1/16 resolution)"));
             downsampleCombo.setValue(mapDownsampleToDisplay(DLClassifierPreferences.getDefaultDownsample()));
             Label resLabel = new Label("Resolution:");
             TooltipHelper.install(
-                    "Controls image resolution for training.\n" +
-                    "Higher downsample = more spatial context per tile but less detail.\n\n" +
-                    "1x: Full resolution -- best for cell-level features.\n" +
-                    "2x: Half resolution -- good for tissue structures.\n" +
-                    "4x: Quarter resolution -- each 512px tile covers 2048px of tissue.\n" +
-                    "8x: Low resolution -- for large-scale region classification.\n" +
-                    "16x: Very low resolution -- for whole-slide macro features.\n\n" +
-                    "Locked when continuing training from a saved model.\n\n" +
-                    "Tip: If your data is higher resolution than the model was\n" +
-                    "trained on, consider downsampling to match. For example,\n" +
-                    "use 2x for 40x data when the model was trained on 20x data,\n" +
-                    "so the model sees features at the expected physical scale.\n\n" +
-                    "Use the Preview button to see what the model will see\n" +
-                    "at the selected downsample level.\n\n" +
-                    "Must match at inference time for consistent results.",
-                    resLabel, downsampleCombo);
+                    "Controls image resolution for training.\n"
+                            + "Higher downsample = more spatial context per tile but less detail.\n\n"
+                            + "1x: Full resolution -- best for cell-level features.\n"
+                            + "2x: Half resolution -- good for tissue structures.\n"
+                            + "4x: Quarter resolution -- each 512px tile covers 2048px of tissue.\n"
+                            + "8x: Low resolution -- for large-scale region classification.\n"
+                            + "16x: Very low resolution -- for whole-slide macro features.\n\n"
+                            + "Locked when continuing training from a saved model.\n\n"
+                            + "Tip: If your data is higher resolution than the model was\n"
+                            + "trained on, consider downsampling to match. For example,\n"
+                            + "use 2x for 40x data when the model was trained on 20x data,\n"
+                            + "so the model sees features at the expected physical scale.\n\n"
+                            + "Use the Preview button to see what the model will see\n"
+                            + "at the selected downsample level.\n\n"
+                            + "Must match at inference time for consistent results.",
+                    resLabel,
+                    downsampleCombo);
 
             Button previewBtn = new Button("Preview");
             previewBtn.setMinWidth(Region.USE_PREF_SIZE);
             previewBtn.setOnAction(e -> {
                 QuPathViewer viewer = QuPathGUI.getInstance().getViewer();
                 if (viewer == null || viewer.getImageData() == null) {
-                    Dialogs.showWarningNotification("Preview",
-                            "No image is currently open.");
+                    Dialogs.showWarningNotification("Preview", "No image is currently open.");
                     return;
                 }
                 double ds = parseDownsample(downsampleCombo.getValue());
@@ -3313,10 +3335,11 @@ public class TrainingDialog {
                 }
                 linkPreviewStages();
             });
-            TooltipHelper.install(previewBtn,
-                    "Open a preview window showing the image at the\n" +
-                    "selected downsample level. This is what the model\n" +
-                    "will see during training.");
+            TooltipHelper.install(
+                    previewBtn,
+                    "Open a preview window showing the image at the\n"
+                            + "selected downsample level. This is what the model\n"
+                            + "will see during training.");
 
             grid.add(resLabel, 0, row);
             HBox dsBox = new HBox(8, downsampleCombo, previewBtn);
@@ -3333,32 +3356,27 @@ public class TrainingDialog {
 
             // Context scale
             contextScaleCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "None (single scale)",
-                    "2x context",
-                    "4x context (Recommended)",
-                    "8x context",
-                    "16x context"
-            ));
+                    "None (single scale)", "2x context", "4x context (Recommended)", "8x context", "16x context"));
             contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
             contextScaleLabel = new Label("Surrounding context:");
             TooltipHelper.install(
-                    "Not sure? Leave at 1x for your first run. Try 4x if classification\n" +
-                    "depends on surrounding tissue structure (e.g., tumor vs. stroma).\n\n" +
-                    "Multi-scale context feeds the model two views of each location:\n" +
-                    "the full-resolution tile for detail, plus a larger surrounding\n" +
-                    "region (downsampled to the same pixel size) for spatial context.\n\n" +
-                    "None: Single-scale input (current behavior).\n" +
-                    "2x: Context covers 2x the area. Moderate additional context.\n" +
-                    "4x: Context covers 4x the area. Good for tissue-level patterns.\n" +
-                    "8x: Context covers 8x the area. For large-scale classification.\n" +
-                    "16x: Context covers 16x the area. Maximum spatial context.\n\n" +
-                    "When to use: classification depends on what surrounds a region,\n" +
-                    "not just the region itself. For example, distinguishing tumor\n" +
-                    "from stroma may require seeing the tissue architecture around\n" +
-                    "each tile. Not needed when local texture is sufficient (e.g.,\n" +
-                    "collagen vs. epithelium in H&E).\n\n" +
-                    "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n" +
-                    "Modest memory increase (~5-10%). Compatible with all architectures.",
+                    "Not sure? Leave at 1x for your first run. Try 4x if classification\n"
+                            + "depends on surrounding tissue structure (e.g., tumor vs. stroma).\n\n"
+                            + "Multi-scale context feeds the model two views of each location:\n"
+                            + "the full-resolution tile for detail, plus a larger surrounding\n"
+                            + "region (downsampled to the same pixel size) for spatial context.\n\n"
+                            + "None: Single-scale input (current behavior).\n"
+                            + "2x: Context covers 2x the area. Moderate additional context.\n"
+                            + "4x: Context covers 4x the area. Good for tissue-level patterns.\n"
+                            + "8x: Context covers 8x the area. For large-scale classification.\n"
+                            + "16x: Context covers 16x the area. Maximum spatial context.\n\n"
+                            + "When to use: classification depends on what surrounds a region,\n"
+                            + "not just the region itself. For example, distinguishing tumor\n"
+                            + "from stroma may require seeing the tissue architecture around\n"
+                            + "each tile. Not needed when local texture is sufficient (e.g.,\n"
+                            + "collagen vs. epithelium in H&E).\n\n"
+                            + "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n"
+                            + "Modest memory increase (~5-10%). Compatible with all architectures.",
                     contextScaleLabel, contextScaleCombo);
 
             Button contextPreviewBtn = new Button("Preview");
@@ -3366,14 +3384,13 @@ public class TrainingDialog {
             contextPreviewBtn.setOnAction(e -> {
                 QuPathViewer viewer = QuPathGUI.getInstance().getViewer();
                 if (viewer == null || viewer.getImageData() == null) {
-                    Dialogs.showWarningNotification("Context Preview",
-                            "No image is currently open.");
+                    Dialogs.showWarningNotification("Context Preview", "No image is currently open.");
                     return;
                 }
                 int ctxScale = parseContextScale(contextScaleCombo.getValue());
                 if (ctxScale <= 1) {
-                    Dialogs.showWarningNotification("Context Preview",
-                            "Context scale is set to None. Select a context scale first.");
+                    Dialogs.showWarningNotification(
+                            "Context Preview", "Context scale is set to None. Select a context scale first.");
                     return;
                 }
                 double ds = parseDownsample(downsampleCombo.getValue()) * ctxScale;
@@ -3383,8 +3400,8 @@ public class TrainingDialog {
                 contextPreviewStage = new Stage();
                 contextPreviewStage.initOwner(QuPathGUI.getInstance().getStage());
                 contextPreviewStage.setAlwaysOnTop(true);
-                contextPreviewStage.setTitle(String.format(
-                        "Context Preview (%dx context at %.0fx downsample)", ctxScale, ds));
+                contextPreviewStage.setTitle(
+                        String.format("Context Preview (%dx context at %.0fx downsample)", ctxScale, ds));
                 Scene ctxScene = new Scene(contextPreviewManager.getPane(), 400, 400);
                 contextPreviewStage.setScene(ctxScene);
                 contextPreviewStage.setOnHiding(ev -> {
@@ -3400,12 +3417,13 @@ public class TrainingDialog {
                 }
                 linkPreviewStages();
             });
-            TooltipHelper.install(contextPreviewBtn,
-                    "Open a preview window showing what the context\n" +
-                    "channel sees -- the same location but covering a\n" +
-                    "wider area, downsampled to the same tile size.\n" +
-                    "Compare with the Resolution Preview to see how\n" +
-                    "the model receives both detail and context.");
+            TooltipHelper.install(
+                    contextPreviewBtn,
+                    "Open a preview window showing what the context\n"
+                            + "channel sees -- the same location but covering a\n"
+                            + "wider area, downsampled to the same tile size.\n"
+                            + "Compare with the Resolution Preview to see how\n"
+                            + "the model receives both detail and context.");
 
             grid.add(contextScaleLabel, 0, row);
             HBox ctxBox = new HBox(8, contextScaleCombo, contextPreviewBtn);
@@ -3481,12 +3499,12 @@ public class TrainingDialog {
             overlapSpinner.setPrefWidth(100);
             Label overlapLabel = new Label("Tile Overlap (%):");
             TooltipHelper.install(
-                    "Overlap between adjacent training tiles as a percentage.\n" +
-                    "Higher overlap generates more training patches from\n" +
-                    "the same annotations but increases extraction time.\n\n" +
-                    "0%: No overlap -- fastest extraction, fewer tiles.\n" +
-                    "10-25%: Typical range -- good balance of diversity and speed.\n" +
-                    "Higher overlap is most beneficial with limited annotations.",
+                    "Overlap between adjacent training tiles as a percentage.\n"
+                            + "Higher overlap generates more training patches from\n"
+                            + "the same annotations but increases extraction time.\n\n"
+                            + "0%: No overlap -- fastest extraction, fewer tiles.\n"
+                            + "10-25%: Typical range -- good balance of diversity and speed.\n"
+                            + "Higher overlap is most beneficial with limited annotations.",
                     overlapLabel, overlapSpinner);
             overlapLabel.visibleProperty().bind(advancedMode);
             overlapLabel.managedProperty().bind(advancedMode);
@@ -3517,7 +3535,8 @@ public class TrainingDialog {
             int savedStroke = DLClassifierPreferences.getLastLineStrokeWidth();
             if (savedStroke <= 0) {
                 try {
-                    savedStroke = (int) Math.max(1, PathPrefs.annotationStrokeThicknessProperty().get());
+                    savedStroke = (int) Math.max(
+                            1, PathPrefs.annotationStrokeThicknessProperty().get());
                 } catch (Exception e) {
                     savedStroke = 5;
                     logger.debug("Could not read QuPath annotation stroke thickness, using default");
@@ -3528,13 +3547,14 @@ public class TrainingDialog {
             lineStrokeWidthSpinner.setPrefWidth(100);
             lineStrokeLabel = new Label("Line Stroke Width:");
             TooltipHelper.install(
-                    "Width in pixels for rendering line/polyline annotations as training masks.\n" +
-                    "Pre-filled from QuPath's annotation stroke thickness.\n\n" +
-                    "Thin strokes (<5px) produce sparse training signal from polyline\n" +
-                    "annotations -- consider increasing for better training.\n" +
-                    "Only affects line/polyline annotations; area annotations are\n" +
-                    "filled completely regardless of this setting.",
-                    lineStrokeLabel, lineStrokeWidthSpinner);
+                    "Width in pixels for rendering line/polyline annotations as training masks.\n"
+                            + "Pre-filled from QuPath's annotation stroke thickness.\n\n"
+                            + "Thin strokes (<5px) produce sparse training signal from polyline\n"
+                            + "annotations -- consider increasing for better training.\n"
+                            + "Only affects line/polyline annotations; area annotations are\n"
+                            + "filled completely regardless of this setting.",
+                    lineStrokeLabel,
+                    lineStrokeWidthSpinner);
 
             grid.add(lineStrokeLabel, 0, row);
             grid.add(lineStrokeWidthSpinner, 1, row);
@@ -3562,6 +3582,7 @@ public class TrainingDialog {
                 public String toString(Double value) {
                     return value == null ? "" : String.format("%.5f", value);
                 }
+
                 @Override
                 public Double fromString(String string) {
                     try {
@@ -3573,15 +3594,16 @@ public class TrainingDialog {
             });
             Label lrLabel = new Label("Learning Rate:");
             TooltipHelper.install(
-                    "Controls the step size during gradient descent.\n" +
-                    "Too high: training oscillates or diverges. Too low: training stalls.\n\n" +
-                    "Recommended: 1e-4 (0.0001) -- stable for both fresh training and\n" +
-                    "continue-training. With discriminative LRs, the encoder gets 1/10th\n" +
-                    "this rate (1e-5) and decoder/head get the full rate.\n\n" +
-                    "Only increase to 1e-3 if training is very slow to converge and you\n" +
-                    "are using OneCycleLR (which auto-finds the optimal max LR).\n\n" +
-                    "The LR scheduler will further adjust the rate during training.",
-                    lrLabel, learningRateSpinner);
+                    "Controls the step size during gradient descent.\n"
+                            + "Too high: training oscillates or diverges. Too low: training stalls.\n\n"
+                            + "Recommended: 1e-4 (0.0001) -- stable for both fresh training and\n"
+                            + "continue-training. With discriminative LRs, the encoder gets 1/10th\n"
+                            + "this rate (1e-5) and decoder/head get the full rate.\n\n"
+                            + "Only increase to 1e-3 if training is very slow to converge and you\n"
+                            + "are using OneCycleLR (which auto-finds the optimal max LR).\n\n"
+                            + "The LR scheduler will further adjust the rate during training.",
+                    lrLabel,
+                    learningRateSpinner);
             lrLabel.visibleProperty().bind(advancedMode);
             lrLabel.managedProperty().bind(advancedMode);
             learningRateSpinner.visibleProperty().bind(advancedMode);
@@ -3602,32 +3624,39 @@ public class TrainingDialog {
             row++;
 
             // Discriminative LR ratio (advanced only)
-            discriminativeLrSpinner = new Spinner<>(0.01, 1.0,
-                    DLClassifierPreferences.getDefaultDiscriminativeLrRatio(), 0.05);
+            discriminativeLrSpinner =
+                    new Spinner<>(0.01, 1.0, DLClassifierPreferences.getDefaultDiscriminativeLrRatio(), 0.05);
             discriminativeLrSpinner.setEditable(true);
             discriminativeLrSpinner.setPrefWidth(100);
-            var discLrFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory)
-                    discriminativeLrSpinner.getValueFactory();
+            var discLrFactory =
+                    (SpinnerValueFactory.DoubleSpinnerValueFactory) discriminativeLrSpinner.getValueFactory();
             discLrFactory.setConverter(new javafx.util.StringConverter<Double>() {
-                @Override public String toString(Double value) {
+                @Override
+                public String toString(Double value) {
                     return value == null ? "" : String.format("%.2f", value);
                 }
-                @Override public Double fromString(String string) {
-                    try { return Double.parseDouble(string.trim()); }
-                    catch (NumberFormatException e) { return discLrFactory.getValue(); }
+
+                @Override
+                public Double fromString(String string) {
+                    try {
+                        return Double.parseDouble(string.trim());
+                    } catch (NumberFormatException e) {
+                        return discLrFactory.getValue();
+                    }
                 }
             });
             Label discLrLabel = new Label("Encoder LR Factor:");
             TooltipHelper.install(
-                    "Ratio applied to the base learning rate for encoder layers.\n\n" +
-                    "0.1 (default): Encoder trains at 1/10th the decoder LR.\n" +
-                    "  Good for ImageNet-pretrained backbones on new domains.\n\n" +
-                    "0.3 - 0.5: For histology-pretrained backbones on histology data.\n" +
-                    "  The pretrained features are already domain-relevant.\n\n" +
-                    "1.0: Same LR for all layers (no discriminative LRs).\n\n" +
-                    "Lower values preserve pretrained features more aggressively.\n" +
-                    "Only applies when using pretrained weights (not from scratch).",
-                    discLrLabel, discriminativeLrSpinner);
+                    "Ratio applied to the base learning rate for encoder layers.\n\n"
+                            + "0.1 (default): Encoder trains at 1/10th the decoder LR.\n"
+                            + "  Good for ImageNet-pretrained backbones on new domains.\n\n"
+                            + "0.3 - 0.5: For histology-pretrained backbones on histology data.\n"
+                            + "  The pretrained features are already domain-relevant.\n\n"
+                            + "1.0: Same LR for all layers (no discriminative LRs).\n\n"
+                            + "Lower values preserve pretrained features more aggressively.\n"
+                            + "Only applies when using pretrained weights (not from scratch).",
+                    discLrLabel,
+                    discriminativeLrSpinner);
             discLrLabel.visibleProperty().bind(advancedMode);
             discLrLabel.managedProperty().bind(advancedMode);
             discriminativeLrSpinner.visibleProperty().bind(advancedMode);
@@ -3651,30 +3680,34 @@ public class TrainingDialog {
             updateEffectiveLrLabel();
 
             // Weight decay (advanced only)
-            weightDecaySpinner = new Spinner<>(0.0, 0.5,
-                    DLClassifierPreferences.getDefaultWeightDecay(), 0.005);
+            weightDecaySpinner = new Spinner<>(0.0, 0.5, DLClassifierPreferences.getDefaultWeightDecay(), 0.005);
             weightDecaySpinner.setEditable(true);
             weightDecaySpinner.setPrefWidth(100);
-            var wdFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory)
-                    weightDecaySpinner.getValueFactory();
+            var wdFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) weightDecaySpinner.getValueFactory();
             wdFactory.setConverter(new javafx.util.StringConverter<Double>() {
-                @Override public String toString(Double value) {
+                @Override
+                public String toString(Double value) {
                     return value == null ? "" : String.format("%.3f", value);
                 }
-                @Override public Double fromString(String string) {
-                    try { return Double.parseDouble(string.trim()); }
-                    catch (NumberFormatException e) { return wdFactory.getValue(); }
+
+                @Override
+                public Double fromString(String string) {
+                    try {
+                        return Double.parseDouble(string.trim());
+                    } catch (NumberFormatException e) {
+                        return wdFactory.getValue();
+                    }
                 }
             });
             Label wdLabel = new Label("Weight Decay:");
             TooltipHelper.install(
-                    "L2 regularization strength (AdamW). Penalizes large weights\n" +
-                    "to prevent overfitting.\n\n" +
-                    "0.01 (default): Good for most training runs.\n" +
-                    "0.05 - 0.1: Increase for very small datasets.\n" +
-                    "0.001: Decrease for large datasets or from-scratch training.\n" +
-                    "0: Disable weight decay entirely.",
-                    wdLabel, weightDecaySpinner);
+                    "L2 regularization strength (AdamW). Penalizes large weights\n" + "to prevent overfitting.\n\n"
+                            + "0.01 (default): Good for most training runs.\n"
+                            + "0.05 - 0.1: Increase for very small datasets.\n"
+                            + "0.001: Decrease for large datasets or from-scratch training.\n"
+                            + "0: Disable weight decay entirely.",
+                    wdLabel,
+                    weightDecaySpinner);
             wdLabel.visibleProperty().bind(advancedMode);
             wdLabel.managedProperty().bind(advancedMode);
             weightDecaySpinner.visibleProperty().bind(advancedMode);
@@ -3689,18 +3722,19 @@ public class TrainingDialog {
             schedulerCombo.setValue(mapSchedulerToDisplay(DLClassifierPreferences.getDefaultScheduler()));
             Label schedulerLabel = new Label("LR Scheduler:");
             TooltipHelper.installWithLink(
-                    "Learning rate schedule during training:\n\n" +
-                    "One Cycle (recommended): Smooth ramp-up then decay.\n" +
-                    "  Auto-runs LR finder to choose max learning rate.\n\n" +
-                    "Cosine Annealing: Periodic warm restarts.\n" +
-                    "  Can escape local minima but may cause LR spikes.\n\n" +
-                    "Reduce on Plateau: Halves LR when metric stops improving.\n" +
-                    "  Adapts to training dynamics. Good for long runs.\n\n" +
-                    "Step Decay: Reduce LR by factor every N epochs.\n" +
-                    "  Predictable but requires manual tuning of step schedule.\n\n" +
-                    "None: Constant learning rate throughout training.",
+                    "Learning rate schedule during training:\n\n"
+                            + "One Cycle (recommended): Smooth ramp-up then decay.\n"
+                            + "  Auto-runs LR finder to choose max learning rate.\n\n"
+                            + "Cosine Annealing: Periodic warm restarts.\n"
+                            + "  Can escape local minima but may cause LR spikes.\n\n"
+                            + "Reduce on Plateau: Halves LR when metric stops improving.\n"
+                            + "  Adapts to training dynamics. Good for long runs.\n\n"
+                            + "Step Decay: Reduce LR by factor every N epochs.\n"
+                            + "  Predictable but requires manual tuning of step schedule.\n\n"
+                            + "None: Constant learning rate throughout training.",
                     "https://pytorch.org/docs/stable/optim.html",
-                    schedulerLabel, schedulerCombo);
+                    schedulerLabel,
+                    schedulerCombo);
 
             grid.add(schedulerLabel, 0, row);
             grid.add(schedulerCombo, 1, row);
@@ -3717,30 +3751,32 @@ public class TrainingDialog {
                 int epochs = epochsSpinner.getValue();
                 int peakEpoch = Math.max(1, (int) (epochs * 0.3));
                 switch (sel) {
-                    case "One Cycle" -> schedulerDesc.setText(String.format(
-                            "LR ramps up to a peak (auto-found) at ~epoch %d of %d, "
-                            + "then cosine-decays to near zero. Expect validation "
-                            + "volatility during ramp-up (epochs 1-%d). Best "
-                            + "results emerge during the decay phase (epochs %d-%d).",
-                            peakEpoch, epochs, peakEpoch, peakEpoch, epochs));
-                    case "Reduce on Plateau" -> schedulerDesc.setText(String.format(
-                            "Starts at your set learning rate and halves it when "
-                            + "validation stops improving. Stable from epoch 1 -- "
-                            + "no ramp-up volatility. May converge to a slightly "
-                            + "worse optimum than One Cycle. With %d epochs, "
-                            + "expect 3-5 LR reductions.",
-                            epochs));
-                    case "Cosine Annealing" -> schedulerDesc.setText(
-                            "Periodically decays LR to zero then warm-restarts. "
-                            + "Can help escape local minima but causes periodic "
-                            + "LR spikes that may destabilize minority classes.");
-                    case "Step Decay" -> schedulerDesc.setText(
-                            "Reduces LR by a fixed factor every N epochs. "
-                            + "Predictable but requires manual tuning of the "
-                            + "step schedule.");
-                    case "None" -> schedulerDesc.setText(
-                            "Constant learning rate throughout training. Only "
-                            + "useful for short experiments or debugging.");
+                    case "One Cycle" ->
+                        schedulerDesc.setText(String.format(
+                                "LR ramps up to a peak (auto-found) at ~epoch %d of %d, "
+                                        + "then cosine-decays to near zero. Expect validation "
+                                        + "volatility during ramp-up (epochs 1-%d). Best "
+                                        + "results emerge during the decay phase (epochs %d-%d).",
+                                peakEpoch, epochs, peakEpoch, peakEpoch, epochs));
+                    case "Reduce on Plateau" ->
+                        schedulerDesc.setText(String.format(
+                                "Starts at your set learning rate and halves it when "
+                                        + "validation stops improving. Stable from epoch 1 -- "
+                                        + "no ramp-up volatility. May converge to a slightly "
+                                        + "worse optimum than One Cycle. With %d epochs, "
+                                        + "expect 3-5 LR reductions.",
+                                epochs));
+                    case "Cosine Annealing" ->
+                        schedulerDesc.setText("Periodically decays LR to zero then warm-restarts. "
+                                + "Can help escape local minima but causes periodic "
+                                + "LR spikes that may destabilize minority classes.");
+                    case "Step Decay" ->
+                        schedulerDesc.setText("Reduces LR by a fixed factor every N epochs. "
+                                + "Predictable but requires manual tuning of the "
+                                + "step schedule.");
+                    case "None" ->
+                        schedulerDesc.setText("Constant learning rate throughout training. Only "
+                                + "useful for short experiments or debugging.");
                     default -> schedulerDesc.setText("");
                 }
             };
@@ -3758,23 +3794,24 @@ public class TrainingDialog {
             // Auto-find learning rate (LR Finder presweep toggle)
             useLrFinderCheck = new CheckBox("Auto-find learning rate (LR Finder)");
             useLrFinderCheck.setSelected(true);
-            TooltipHelper.install(useLrFinderCheck,
-                    "Run a 100-iteration LR Finder presweep before training to pick\n" +
-                    "a good OneCycleLR peak learning rate.\n\n" +
-                    "When to disable:\n" +
-                    "- Training a tiny model where the presweep is a big fraction of\n" +
-                    "  total training time\n" +
-                    "- You already know a good learning rate for this task\n\n" +
-                    "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n" +
-                    "Only affects training when the scheduler is OneCycleLR.");
+            TooltipHelper.install(
+                    useLrFinderCheck,
+                    "Run a 100-iteration LR Finder presweep before training to pick\n"
+                            + "a good OneCycleLR peak learning rate.\n\n"
+                            + "When to disable:\n"
+                            + "- Training a tiny model where the presweep is a big fraction of\n"
+                            + "  total training time\n"
+                            + "- You already know a good learning rate for this task\n\n"
+                            + "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n"
+                            + "Only affects training when the scheduler is OneCycleLR.");
             grid.add(useLrFinderCheck, 0, row, 2, 1);
             row++;
 
             TitledPane pane = new TitledPane("LEARNING RATE & OPTIMIZER", grid);
             pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create(
-                    "Learning rate, encoder LR factor, weight decay, scheduler, and LR Finder."));
+            pane.setTooltip(
+                    TooltipHelper.create("Learning rate, encoder LR factor, weight decay, scheduler, and LR Finder."));
             return pane;
         }
 
@@ -3791,41 +3828,42 @@ public class TrainingDialog {
             lossFunctionCombo.setValue(mapLossFunctionToDisplay(DLClassifierPreferences.getDefaultLossFunction()));
             Label lossLabel = new Label("Loss Function:");
             TooltipHelper.installWithLink(
-                    "Loss function for training:\n\n" +
-                    "CE + Dice (recommended): Combines per-pixel Cross Entropy with\n" +
-                    "  region overlap Dice loss. Modern standard for segmentation.\n\n" +
-                    "Cross Entropy: Per-pixel classification loss only.\n\n" +
-                    "Focal + Dice: Focal loss down-weights easy pixels via\n" +
-                    "  (1-p)^gamma, combined with Dice. Best when some regions\n" +
-                    "  are much harder than others (e.g., small structures).\n\n" +
-                    "Focal: Focal loss only (no Dice component).\n\n" +
-                    "Boundary-softened CE: CE with per-pixel distance-transform\n" +
-                    "  weighting. Down-weights pixels near class boundaries in\n" +
-                    "  the annotation. Use when manual annotations have noisy /\n" +
-                    "  imprecise edges. Reference: inverse of Ronneberger 2015\n" +
-                    "  boundary weighting.\n\n" +
-                    "Boundary-softened CE + Dice: combines the above with Dice,\n" +
-                    "  recommended when edge noise is the main error source.\n\n" +
-                    "Lovasz-Softmax: directly optimises mean IoU. Best used\n" +
-                    "  after a CE warmup (or as CE + Lovasz). No hyperparameters.\n" +
-                    "  Berman et al., CVPR 2018 (arXiv:1705.08790).\n\n" +
-                    "CE + Lovasz-Softmax: CE provides stable early gradient,\n" +
-                    "  Lovasz pushes directly toward IoU. OHEM is disabled\n" +
-                    "  for the two Lovasz variants (Lovasz is a sorted-\n" +
-                    "  errors surrogate, not a per-pixel loss).\n\n" +
-                    "OHEM composes with all other variants:\n" +
-                    "- With CE / CE+Dice: top-K of the per-pixel CE.\n" +
-                    "- With Focal / Focal+Dice: the focal modulation\n" +
-                    "  (1-p_t)^gamma is applied BEFORE the top-K sort\n" +
-                    "  (OHEMFocalLoss), so focal_gamma is preserved.\n" +
-                    "- With Boundary-softened CE: the boundary weight\n" +
-                    "  map is applied BEFORE top-K, pushing edge\n" +
-                    "  annotation noise out of the hard set and\n" +
-                    "  focusing OHEM capacity on interior errors.\n\n" +
-                    "Class weights apply everywhere: CE, Focal, Boundary-\n" +
-                    "softened CE, and Lovasz-Softmax (all variants).",
+                    "Loss function for training:\n\n"
+                            + "CE + Dice (recommended): Combines per-pixel Cross Entropy with\n"
+                            + "  region overlap Dice loss. Modern standard for segmentation.\n\n"
+                            + "Cross Entropy: Per-pixel classification loss only.\n\n"
+                            + "Focal + Dice: Focal loss down-weights easy pixels via\n"
+                            + "  (1-p)^gamma, combined with Dice. Best when some regions\n"
+                            + "  are much harder than others (e.g., small structures).\n\n"
+                            + "Focal: Focal loss only (no Dice component).\n\n"
+                            + "Boundary-softened CE: CE with per-pixel distance-transform\n"
+                            + "  weighting. Down-weights pixels near class boundaries in\n"
+                            + "  the annotation. Use when manual annotations have noisy /\n"
+                            + "  imprecise edges. Reference: inverse of Ronneberger 2015\n"
+                            + "  boundary weighting.\n\n"
+                            + "Boundary-softened CE + Dice: combines the above with Dice,\n"
+                            + "  recommended when edge noise is the main error source.\n\n"
+                            + "Lovasz-Softmax: directly optimises mean IoU. Best used\n"
+                            + "  after a CE warmup (or as CE + Lovasz). No hyperparameters.\n"
+                            + "  Berman et al., CVPR 2018 (arXiv:1705.08790).\n\n"
+                            + "CE + Lovasz-Softmax: CE provides stable early gradient,\n"
+                            + "  Lovasz pushes directly toward IoU. OHEM is disabled\n"
+                            + "  for the two Lovasz variants (Lovasz is a sorted-\n"
+                            + "  errors surrogate, not a per-pixel loss).\n\n"
+                            + "OHEM composes with all other variants:\n"
+                            + "- With CE / CE+Dice: top-K of the per-pixel CE.\n"
+                            + "- With Focal / Focal+Dice: the focal modulation\n"
+                            + "  (1-p_t)^gamma is applied BEFORE the top-K sort\n"
+                            + "  (OHEMFocalLoss), so focal_gamma is preserved.\n"
+                            + "- With Boundary-softened CE: the boundary weight\n"
+                            + "  map is applied BEFORE top-K, pushing edge\n"
+                            + "  annotation noise out of the hard set and\n"
+                            + "  focusing OHEM capacity on interior errors.\n\n"
+                            + "Class weights apply everywhere: CE, Focal, Boundary-\n"
+                            + "softened CE, and Lovasz-Softmax (all variants).",
                     "https://smp.readthedocs.io/en/latest/losses.html",
-                    lossLabel, lossFunctionCombo);
+                    lossLabel,
+                    lossFunctionCombo);
 
             grid.add(lossLabel, 0, row);
             grid.add(lossFunctionCombo, 1, row);
@@ -3833,23 +3871,23 @@ public class TrainingDialog {
 
             // Focal gamma (visible only when focal variant selected)
             focalGammaLabel = new Label("Focal Gamma:");
-            focalGammaSpinner = new Spinner<>(
-                    new SpinnerValueFactory.DoubleSpinnerValueFactory(
-                            0.5, 5.0, DLClassifierPreferences.getDefaultFocalGamma(), 0.5));
+            focalGammaSpinner = new Spinner<>(new SpinnerValueFactory.DoubleSpinnerValueFactory(
+                    0.5, 5.0, DLClassifierPreferences.getDefaultFocalGamma(), 0.5));
             focalGammaSpinner.setEditable(true);
             TooltipHelper.install(
-                    "Focal loss focusing parameter (gamma). Down-weights\n" +
-                    "easy pixels so the model pays more attention to mistakes.\n\n" +
-                    "  gamma=0: equivalent to standard Cross Entropy\n" +
-                    "  gamma=1: mild focusing\n" +
-                    "  gamma=2: standard (recommended)\n" +
-                    "  gamma=3-5: aggressive focusing for very hard regions\n\n" +
-                    "When to use: your classes have very different difficulty\n" +
-                    "levels (e.g., small structures surrounded by large easy\n" +
-                    "regions). Unlike OHEM, focal loss keeps ALL pixels but\n" +
-                    "gradually reduces the weight of confident predictions.\n" +
-                    "Good first step before trying the more aggressive OHEM.",
-                    focalGammaLabel, focalGammaSpinner);
+                    "Focal loss focusing parameter (gamma). Down-weights\n"
+                            + "easy pixels so the model pays more attention to mistakes.\n\n"
+                            + "  gamma=0: equivalent to standard Cross Entropy\n"
+                            + "  gamma=1: mild focusing\n"
+                            + "  gamma=2: standard (recommended)\n"
+                            + "  gamma=3-5: aggressive focusing for very hard regions\n\n"
+                            + "When to use: your classes have very different difficulty\n"
+                            + "levels (e.g., small structures surrounded by large easy\n"
+                            + "regions). Unlike OHEM, focal loss keeps ALL pixels but\n"
+                            + "gradually reduces the weight of confident predictions.\n"
+                            + "Good first step before trying the more aggressive OHEM.",
+                    focalGammaLabel,
+                    focalGammaSpinner);
             boolean focalSelected = isFocalLossSelected(lossFunctionCombo.getValue());
             focalGammaLabel.setVisible(focalSelected);
             focalGammaLabel.setManaged(focalSelected);
@@ -3863,42 +3901,40 @@ public class TrainingDialog {
             // variant is selected). sigma controls the EDT falloff length;
             // w_min is the floor weight applied at exact boundaries.
             boundarySigmaLabel = new Label("Boundary Sigma (px):");
-            boundarySigmaSpinner = new Spinner<>(
-                    new SpinnerValueFactory.DoubleSpinnerValueFactory(
-                            0.5, 32.0, DLClassifierPreferences.getDefaultBoundarySigma(), 0.5));
+            boundarySigmaSpinner = new Spinner<>(new SpinnerValueFactory.DoubleSpinnerValueFactory(
+                    0.5, 32.0, DLClassifierPreferences.getDefaultBoundarySigma(), 0.5));
             boundarySigmaSpinner.setEditable(true);
             TooltipHelper.install(
-                    "Boundary-softening falloff length in pixels.\n\n" +
-                    "Each pixel's CE loss is weighted by\n" +
-                    "  w = w_min + (1 - w_min) * (1 - exp(-d / sigma))\n" +
-                    "where d is the Euclidean distance to the nearest\n" +
-                    "annotation boundary. Larger sigma = wider soft band.\n\n" +
-                    "  sigma=1-2 px: very tight band (strict).\n" +
-                    "  sigma=3 px (default): matches typical annotator\n" +
-                    "    jitter on 256-px tiles.\n" +
-                    "  sigma=5-10 px: aggressive softening; try when edge\n" +
-                    "    noise is severe (e.g. polygon-traced annotations).\n\n" +
-                    "Tile size divided by 2^depth (for Tiny UNet depth=4, that's\n" +
-                    "16 px) is a reasonable upper bound -- beyond that most\n" +
-                    "pixels are 'near' a boundary and the weighting does nothing.",
-                    boundarySigmaLabel, boundarySigmaSpinner);
+                    "Boundary-softening falloff length in pixels.\n\n" + "Each pixel's CE loss is weighted by\n"
+                            + "  w = w_min + (1 - w_min) * (1 - exp(-d / sigma))\n"
+                            + "where d is the Euclidean distance to the nearest\n"
+                            + "annotation boundary. Larger sigma = wider soft band.\n\n"
+                            + "  sigma=1-2 px: very tight band (strict).\n"
+                            + "  sigma=3 px (default): matches typical annotator\n"
+                            + "    jitter on 256-px tiles.\n"
+                            + "  sigma=5-10 px: aggressive softening; try when edge\n"
+                            + "    noise is severe (e.g. polygon-traced annotations).\n\n"
+                            + "Tile size divided by 2^depth (for Tiny UNet depth=4, that's\n"
+                            + "16 px) is a reasonable upper bound -- beyond that most\n"
+                            + "pixels are 'near' a boundary and the weighting does nothing.",
+                    boundarySigmaLabel,
+                    boundarySigmaSpinner);
 
             boundaryWMinLabel = new Label("Boundary Floor Weight:");
-            boundaryWMinSpinner = new Spinner<>(
-                    new SpinnerValueFactory.DoubleSpinnerValueFactory(
-                            0.0, 1.0, DLClassifierPreferences.getDefaultBoundaryWMin(), 0.05));
+            boundaryWMinSpinner = new Spinner<>(new SpinnerValueFactory.DoubleSpinnerValueFactory(
+                    0.0, 1.0, DLClassifierPreferences.getDefaultBoundaryWMin(), 0.05));
             boundaryWMinSpinner.setEditable(true);
             TooltipHelper.install(
-                    "Minimum weight applied at an exact annotation boundary.\n\n" +
-                    "  w_min=0.0: edges contribute no gradient at all\n" +
-                    "    (equivalent to setting the annotation boundary\n" +
-                    "    as an ignore band).\n" +
-                    "  w_min=0.1 (default): edges contribute 10% of\n" +
-                    "    interior gradient. Safe starting point.\n" +
-                    "  w_min=1.0: no softening (equivalent to plain CE).\n\n" +
-                    "Pair with sigma to shape the curve: (sigma=3, w_min=0.1)\n" +
-                    "means boundary pixels get 10% weight, recovering to ~63%\n" +
-                    "at distance = sigma and ~95% at distance = 3 * sigma.",
+                    "Minimum weight applied at an exact annotation boundary.\n\n"
+                            + "  w_min=0.0: edges contribute no gradient at all\n"
+                            + "    (equivalent to setting the annotation boundary\n"
+                            + "    as an ignore band).\n"
+                            + "  w_min=0.1 (default): edges contribute 10% of\n"
+                            + "    interior gradient. Safe starting point.\n"
+                            + "  w_min=1.0: no softening (equivalent to plain CE).\n\n"
+                            + "Pair with sigma to shape the curve: (sigma=3, w_min=0.1)\n"
+                            + "means boundary pixels get 10% weight, recovering to ~63%\n"
+                            + "at distance = sigma and ~95% at distance = 3 * sigma.",
                     boundaryWMinLabel, boundaryWMinSpinner);
 
             boolean boundarySelected = isBoundaryLossSelected(lossFunctionCombo.getValue());
@@ -3939,31 +3975,30 @@ public class TrainingDialog {
             // Minimum is 5% to match the tooltip's "5% = very aggressive"
             // guidance; the previous 10% floor blocked the tooltip's own
             // recommendation.
-            ohemSpinner = new Spinner<>(
-                    new SpinnerValueFactory.IntegerSpinnerValueFactory(
-                            5, 100, DLClassifierPreferences.getDefaultOhemHardPixelPct(), 5));
+            ohemSpinner = new Spinner<>(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                    5, 100, DLClassifierPreferences.getDefaultOhemHardPixelPct(), 5));
             ohemSpinner.setEditable(true);
             Label ohemLabel = new Label("Hard Pixel End %:");
             TooltipHelper.install(
-                    "Online Hard Example Mining (OHEM): each batch, keep only the\n" +
-                    "hardest N% of pixels and ignore the rest. Resets every batch\n" +
-                    "(not cumulative across epochs).\n\n" +
-                    "This value is the END / target ratio training converges to.\n" +
-                    "Combined with Hard Pixel Start %, you can anneal from a\n" +
-                    "wide start to a narrow end, or just hold a fixed ratio.\n\n" +
-                    "100% = all pixels (no OHEM).\n" +
-                    "25% = keep only the hardest quarter -- aggressive.\n" +
-                    "5% = very aggressive, focuses almost entirely on mistakes.\n\n" +
-                    "When to use: your images have large uniform regions (e.g.,\n" +
-                    "background, empty glass) that the model learns quickly. Without\n" +
-                    "OHEM, easy pixels dominate training and the model spends most\n" +
-                    "of its time on regions it already classifies correctly. With\n" +
-                    "OHEM, training focuses on boundaries and confusing regions\n" +
-                    "where accuracy actually needs improvement.\n\n" +
-                    "Tip: try Focal loss first as a softer alternative -- it\n" +
-                    "down-weights easy pixels rather than completely ignoring them.\n" +
-                    "Note: only affects the pixel-loss component; Dice loss still\n" +
-                    "uses all pixels so the model doesn't forget easy classes.",
+                    "Online Hard Example Mining (OHEM): each batch, keep only the\n"
+                            + "hardest N% of pixels and ignore the rest. Resets every batch\n"
+                            + "(not cumulative across epochs).\n\n"
+                            + "This value is the END / target ratio training converges to.\n"
+                            + "Combined with Hard Pixel Start %, you can anneal from a\n"
+                            + "wide start to a narrow end, or just hold a fixed ratio.\n\n"
+                            + "100% = all pixels (no OHEM).\n"
+                            + "25% = keep only the hardest quarter -- aggressive.\n"
+                            + "5% = very aggressive, focuses almost entirely on mistakes.\n\n"
+                            + "When to use: your images have large uniform regions (e.g.,\n"
+                            + "background, empty glass) that the model learns quickly. Without\n"
+                            + "OHEM, easy pixels dominate training and the model spends most\n"
+                            + "of its time on regions it already classifies correctly. With\n"
+                            + "OHEM, training focuses on boundaries and confusing regions\n"
+                            + "where accuracy actually needs improvement.\n\n"
+                            + "Tip: try Focal loss first as a softer alternative -- it\n"
+                            + "down-weights easy pixels rather than completely ignoring them.\n"
+                            + "Note: only affects the pixel-loss component; Dice loss still\n"
+                            + "uses all pixels so the model doesn't forget easy classes.",
                     ohemLabel, ohemSpinner);
             grid.add(ohemLabel, 0, row);
             grid.add(ohemSpinner, 1, row);
@@ -3979,28 +4014,26 @@ public class TrainingDialog {
             if (defaultStartPct < ohemSpinner.getValue()) {
                 defaultStartPct = ohemSpinner.getValue();
             }
-            ohemStartSpinner = new Spinner<>(
-                    new SpinnerValueFactory.IntegerSpinnerValueFactory(
-                            5, 100, defaultStartPct, 5));
+            ohemStartSpinner =
+                    new Spinner<>(new SpinnerValueFactory.IntegerSpinnerValueFactory(5, 100, defaultStartPct, 5));
             ohemStartSpinner.setEditable(true);
             Label ohemStartLabel = new Label("Hard Pixel Start %:");
             TooltipHelper.install(
-                    "Hard Pixel % used at the start of training. Combined with\n" +
-                    "Hard Pixel End %, controls whether OHEM anneals or stays fixed.\n\n" +
-                    "Start > End: Linearly anneal from Start to End over the first\n" +
-                    "  75% of epochs. Lets the model learn basic class distributions\n" +
-                    "  from all pixels early, then gradually shift focus to hard\n" +
-                    "  cases (boundaries, confusing regions).\n\n" +
-                    "Start == End: Fixed at that value throughout training.\n" +
-                    "  Use this when continuing training from an existing model\n" +
-                    "  that has already learned the easy pixels -- skip the warm-up\n" +
-                    "  and go straight to mining hard examples.\n\n" +
-                    "Must be >= Hard Pixel End %.",
+                    "Hard Pixel % used at the start of training. Combined with\n"
+                            + "Hard Pixel End %, controls whether OHEM anneals or stays fixed.\n\n"
+                            + "Start > End: Linearly anneal from Start to End over the first\n"
+                            + "  75% of epochs. Lets the model learn basic class distributions\n"
+                            + "  from all pixels early, then gradually shift focus to hard\n"
+                            + "  cases (boundaries, confusing regions).\n\n"
+                            + "Start == End: Fixed at that value throughout training.\n"
+                            + "  Use this when continuing training from an existing model\n"
+                            + "  that has already learned the easy pixels -- skip the warm-up\n"
+                            + "  and go straight to mining hard examples.\n\n"
+                            + "Must be >= Hard Pixel End %.",
                     ohemStartLabel, ohemStartSpinner);
             // Hide the schedule combo -- behavior is now derived from start vs end.
             ohemScheduleLabel = new Label("Hard Pixel Schedule:");
-            ohemScheduleCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "Fixed", "Anneal"));
+            ohemScheduleCombo = new ComboBox<>(FXCollections.observableArrayList("Fixed", "Anneal"));
             ohemScheduleLabel.setVisible(false);
             ohemScheduleLabel.setManaged(false);
             ohemScheduleCombo.setVisible(false);
@@ -4034,26 +4067,25 @@ public class TrainingDialog {
 
             // OHEM pixel-selection strategy. Visible only when OHEM is active.
             ohemAdaptiveFloorCheck = new CheckBox("Adaptive per-class floor");
-            ohemAdaptiveFloorCheck.setSelected(
-                    DLClassifierPreferences.isDefaultOhemAdaptiveFloor());
+            ohemAdaptiveFloorCheck.setSelected(DLClassifierPreferences.isDefaultOhemAdaptiveFloor());
             TooltipHelper.install(
-                    "Which pixels OHEM keeps when selecting the hardest N%.\n\n" +
-                    "UNCHECKED (legacy, per-class proportional):\n" +
-                    "  For each class, keep the hardest (hard_ratio * class_count)\n" +
-                    "  pixels. The rare class's share of the selected loss matches\n" +
-                    "  its natural fraction of the batch -- so if rare is 5% of\n" +
-                    "  pixels it stays 5% of the loss. Simple and stable, but\n" +
-                    "  weak when class imbalance is extreme.\n\n" +
-                    "CHECKED (adaptive, global topk + per-class floor):\n" +
-                    "  1. Select the hardest N% globally, ignoring class.\n" +
-                    "  2. For every class present in the batch, top it up to at\n" +
-                    "     least floor = min(class_count, max(32, k / (2 * num_classes)))\n" +
-                    "     with that class's hardest remaining pixels.\n" +
-                    "  Lets hard pixels naturally concentrate on whichever class\n" +
-                    "  the model is currently failing (usually the minority),\n" +
-                    "  while guaranteeing no present class drops to zero pixels.\n\n" +
-                    "Try this when rare classes stagnate while majority classes\n" +
-                    "are already near IoU 1.0 and OHEM doesn't seem to help.",
+                    "Which pixels OHEM keeps when selecting the hardest N%.\n\n"
+                            + "UNCHECKED (legacy, per-class proportional):\n"
+                            + "  For each class, keep the hardest (hard_ratio * class_count)\n"
+                            + "  pixels. The rare class's share of the selected loss matches\n"
+                            + "  its natural fraction of the batch -- so if rare is 5% of\n"
+                            + "  pixels it stays 5% of the loss. Simple and stable, but\n"
+                            + "  weak when class imbalance is extreme.\n\n"
+                            + "CHECKED (adaptive, global topk + per-class floor):\n"
+                            + "  1. Select the hardest N% globally, ignoring class.\n"
+                            + "  2. For every class present in the batch, top it up to at\n"
+                            + "     least floor = min(class_count, max(32, k / (2 * num_classes)))\n"
+                            + "     with that class's hardest remaining pixels.\n"
+                            + "  Lets hard pixels naturally concentrate on whichever class\n"
+                            + "  the model is currently failing (usually the minority),\n"
+                            + "  while guaranteeing no present class drops to zero pixels.\n\n"
+                            + "Try this when rare classes stagnate while majority classes\n"
+                            + "are already near IoU 1.0 and OHEM doesn't seem to help.",
                     ohemAdaptiveFloorCheck);
 
             boolean ohemActiveNow = ohemSpinner.getValue() < 100;
@@ -4082,31 +4114,32 @@ public class TrainingDialog {
             // Fused optimizer: one-kernel AdamW update, saves 2-5 ms/step on tiny models.
             fusedOptimizerCheck = new CheckBox("Fused optimizer (CUDA only)");
             fusedOptimizerCheck.setSelected(true);
-            TooltipHelper.install(fusedOptimizerCheck,
-                    "Use PyTorch's fused AdamW implementation on NVIDIA GPUs.\n\n" +
-                    "Benefits:\n" +
-                    "- Single CUDA kernel for the full param update (2-5 ms/step saved)\n" +
-                    "- No accuracy change; same math as the standard implementation\n\n" +
-                    "Safe to leave enabled. Ignored on CPU, MPS, and older PyTorch (<2.0).\n" +
-                    "Disable only if you hit a CUDA kernel error that mentions 'fused'.");
+            TooltipHelper.install(
+                    fusedOptimizerCheck,
+                    "Use PyTorch's fused AdamW implementation on NVIDIA GPUs.\n\n" + "Benefits:\n"
+                            + "- Single CUDA kernel for the full param update (2-5 ms/step saved)\n"
+                            + "- No accuracy change; same math as the standard implementation\n\n"
+                            + "Safe to leave enabled. Ignored on CPU, MPS, and older PyTorch (<2.0).\n"
+                            + "Disable only if you hit a CUDA kernel error that mentions 'fused'.");
             grid.add(fusedOptimizerCheck, 0, row, 2, 1);
             row++;
 
             // Progressive resizing
             progressiveResizeCheck = new CheckBox("Progressive resizing");
             progressiveResizeCheck.setSelected(DLClassifierPreferences.isDefaultProgressiveResize());
-            TooltipHelper.install(progressiveResizeCheck,
-                    "Train at half tile resolution for the first 40% of epochs,\n" +
-                    "then switch to full resolution.\n\n" +
-                    "Benefits:\n" +
-                    "- Faster early training (4x fewer pixels)\n" +
-                    "- Acts as regularization (prevents overfitting)\n" +
-                    "- Helps model learn coarse features first\n\n" +
-                    "When to use: you have limited training data and the model\n" +
-                    "overfits before learning good features. Also helpful for\n" +
-                    "long training runs where you want faster initial epochs.\n" +
-                    "Leave unchecked for standard training or when you have\n" +
-                    "plenty of annotated data.");
+            TooltipHelper.install(
+                    progressiveResizeCheck,
+                    "Train at half tile resolution for the first 40% of epochs,\n"
+                            + "then switch to full resolution.\n\n"
+                            + "Benefits:\n"
+                            + "- Faster early training (4x fewer pixels)\n"
+                            + "- Acts as regularization (prevents overfitting)\n"
+                            + "- Helps model learn coarse features first\n\n"
+                            + "When to use: you have limited training data and the model\n"
+                            + "overfits before learning good features. Also helpful for\n"
+                            + "long training runs where you want faster initial epochs.\n"
+                            + "Leave unchecked for standard training or when you have\n"
+                            + "plenty of annotated data.");
 
             grid.add(progressiveResizeCheck, 0, row, 2, 1);
             row++;
@@ -4114,20 +4147,21 @@ public class TrainingDialog {
             // GPU augmentation via kornia (experimental, opt-in).
             gpuAugmentationCheck = new CheckBox("GPU augmentation (experimental, CUDA only)");
             gpuAugmentationCheck.setSelected(false);
-            TooltipHelper.installWithLink(gpuAugmentationCheck,
-                    "Run data augmentation on the GPU via kornia instead of on\n" +
-                    "the CPU via albumentations. When the in-memory dataset\n" +
-                    "preload is active, CPU augmentation is the dominant cost\n" +
-                    "per batch; moving it to the GPU can speed up an epoch\n" +
-                    "10-20x on small models.\n\n" +
-                    "Covered augmentations:\n" +
-                    "- Horizontal / vertical flip, 90 deg rotation\n" +
-                    "- Color jitter (brightfield) or brightness/contrast (other)\n" +
-                    "- Low-probability Gaussian noise and blur\n\n" +
-                    "Skipped on the GPU path (still available via CPU):\n" +
-                    "- Elastic transform, grid distortion, arbitrary-angle rotation\n\n" +
-                    "Safe to leave off. Silently falls back to CPU albumentations\n" +
-                    "when kornia is not installed or the device is not CUDA.",
+            TooltipHelper.installWithLink(
+                    gpuAugmentationCheck,
+                    "Run data augmentation on the GPU via kornia instead of on\n"
+                            + "the CPU via albumentations. When the in-memory dataset\n"
+                            + "preload is active, CPU augmentation is the dominant cost\n"
+                            + "per batch; moving it to the GPU can speed up an epoch\n"
+                            + "10-20x on small models.\n\n"
+                            + "Covered augmentations:\n"
+                            + "- Horizontal / vertical flip, 90 deg rotation\n"
+                            + "- Color jitter (brightfield) or brightness/contrast (other)\n"
+                            + "- Low-probability Gaussian noise and blur\n\n"
+                            + "Skipped on the GPU path (still available via CPU):\n"
+                            + "- Elastic transform, grid distortion, arbitrary-angle rotation\n\n"
+                            + "Safe to leave off. Silently falls back to CPU albumentations\n"
+                            + "when kornia is not installed or the device is not CUDA.",
                     "https://kornia.readthedocs.io/en/latest/augmentation.html");
             grid.add(gpuAugmentationCheck, 0, row, 2, 1);
             row++;
@@ -4138,37 +4172,37 @@ public class TrainingDialog {
             // Windows or macOS today, so even if the user toggled it the Python
             // side would log "torch.compile is Linux-gated" and fall back. Grey
             // the box + append a hint so that gate is visible in the UI.
-            boolean isLinux = System.getProperty("os.name", "")
-                    .toLowerCase().contains("linux");
+            boolean isLinux = System.getProperty("os.name", "").toLowerCase().contains("linux");
             String compileLabel = isLinux
                     ? "torch.compile (experimental, Linux+CUDA)"
                     : "torch.compile (Linux-only, disabled on this OS)";
             useTorchCompileCheck = new CheckBox(compileLabel);
             useTorchCompileCheck.setSelected(false);
             useTorchCompileCheck.setDisable(!isLinux);
-            TooltipHelper.installWithLink(useTorchCompileCheck,
-                    "Wrap the training model with torch.compile(mode=\"reduce-overhead\")\n" +
-                    "for kernel fusion and CUDA graph capture. On tiny models this is\n" +
-                    "usually a 1.4-2x steady-state speedup after the compile cost\n" +
-                    "(~15-40 s on the first iteration).\n\n" +
-                    "Requirements auto-checked at runtime:\n" +
-                    "- Linux host (triton does not install cleanly on Windows yet)\n" +
-                    "- CUDA GPU with compute capability 7.0+ (Volta or newer)\n" +
-                    "- triton importable in the Python environment\n\n" +
-                    "Known caveat: BatchRenorm's in-place buffer updates can trigger\n" +
-                    "graph breaks that limit the speedup. For maximum benefit, pair\n" +
-                    "with Tiny UNet + norm=gn instead of the default norm=brn.\n\n" +
-                    "Safe to leave off. Silently falls back to eager mode on any\n" +
-                    "failure; check the training log for the actual outcome.",
+            TooltipHelper.installWithLink(
+                    useTorchCompileCheck,
+                    "Wrap the training model with torch.compile(mode=\"reduce-overhead\")\n"
+                            + "for kernel fusion and CUDA graph capture. On tiny models this is\n"
+                            + "usually a 1.4-2x steady-state speedup after the compile cost\n"
+                            + "(~15-40 s on the first iteration).\n\n"
+                            + "Requirements auto-checked at runtime:\n"
+                            + "- Linux host (triton does not install cleanly on Windows yet)\n"
+                            + "- CUDA GPU with compute capability 7.0+ (Volta or newer)\n"
+                            + "- triton importable in the Python environment\n\n"
+                            + "Known caveat: BatchRenorm's in-place buffer updates can trigger\n"
+                            + "graph breaks that limit the speedup. For maximum benefit, pair\n"
+                            + "with Tiny UNet + norm=gn instead of the default norm=brn.\n\n"
+                            + "Safe to leave off. Silently falls back to eager mode on any\n"
+                            + "failure; check the training log for the actual outcome.",
                     "https://pytorch.org/docs/stable/generated/torch.compile.html");
             grid.add(useTorchCompileCheck, 0, row, 2, 1);
 
             TitledPane pane = new TitledPane("PERFORMANCE", grid);
             pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create(
-                    "Optional speed/accuracy trade-offs: fused optimizer, progressive resize, "
-                    + "GPU augmentation, torch.compile."));
+            pane.setTooltip(
+                    TooltipHelper.create("Optional speed/accuracy trade-offs: fused optimizer, progressive resize, "
+                            + "GPU augmentation, torch.compile."));
             return pane;
         }
 
@@ -4209,48 +4243,54 @@ public class TrainingDialog {
             classListView = new ListView<>();
             classListView.setCellFactory(lv -> new ClassListCell(advancedMode));
             classListView.setPrefHeight(120);
-            TooltipHelper.install(classListView,
-                    "Annotation classes found in the selected images.\n" +
-                    "At least 2 classes must be selected for training.\n" +
-                    "Each class should have representative annotations.\n\n" +
-                    "Tip: Line/polyline annotations are recommended over area\n" +
-                    "annotations. Lines focus training on class boundaries\n" +
-                    "where accuracy matters most, and avoid overtraining on\n" +
-                    "easy central regions.\n\n" +
-                    "Use the weight spinner (right) to boost underrepresented\n" +
-                    "classes. For example, set weight=2.0 for a rare class.");
+            TooltipHelper.install(
+                    classListView,
+                    "Annotation classes found in the selected images.\n"
+                            + "At least 2 classes must be selected for training.\n"
+                            + "Each class should have representative annotations.\n\n"
+                            + "Tip: Line/polyline annotations are recommended over area\n"
+                            + "annotations. Lines focus training on class boundaries\n"
+                            + "where accuracy matters most, and avoid overtraining on\n"
+                            + "easy central regions.\n\n"
+                            + "Use the weight spinner (right) to boost underrepresented\n"
+                            + "classes. For example, set weight=2.0 for a rare class.");
 
             // Add select all / none / rebalance buttons
             Button selectAllBtn = new Button("Select All");
             TooltipHelper.install(selectAllBtn, "Select all annotation classes for training");
-            selectAllBtn.setOnAction(e -> classListView.getItems().forEach(item -> item.selected().set(true)));
+            selectAllBtn.setOnAction(e ->
+                    classListView.getItems().forEach(item -> item.selected().set(true)));
 
             Button selectNoneBtn = new Button("Select None");
             TooltipHelper.install(selectNoneBtn, "Deselect all annotation classes");
-            selectNoneBtn.setOnAction(e -> classListView.getItems().forEach(item -> item.selected().set(false)));
+            selectNoneBtn.setOnAction(e ->
+                    classListView.getItems().forEach(item -> item.selected().set(false)));
 
             Button rebalanceBtn = new Button("Rebalance Classes");
-            TooltipHelper.install(rebalanceBtn,
-                    "Auto-set weight multipliers to compensate for class imbalance.\n\n" +
-                    "Classes with fewer annotated pixels receive higher weights so the\n" +
-                    "model pays equal attention to all classes during training.\n\n" +
-                    "Works with both area and line annotations. For lines, pixel\n" +
-                    "coverage is estimated from line length x stroke width.\n\n" +
-                    "Note: Rebalancing weights helps but does NOT replace having\n" +
-                    "sufficient training data. Adding more annotations for under-\n" +
-                    "represented classes will produce better results than relying\n" +
-                    "on weight compensation alone.");
+            TooltipHelper.install(
+                    rebalanceBtn,
+                    "Auto-set weight multipliers to compensate for class imbalance.\n\n"
+                            + "Classes with fewer annotated pixels receive higher weights so the\n"
+                            + "model pays equal attention to all classes during training.\n\n"
+                            + "Works with both area and line annotations. For lines, pixel\n"
+                            + "coverage is estimated from line length x stroke width.\n\n"
+                            + "Note: Rebalancing weights helps but does NOT replace having\n"
+                            + "sufficient training data. Adding more annotations for under-\n"
+                            + "represented classes will produce better results than relying\n"
+                            + "on weight compensation alone.");
             rebalanceBtn.setOnAction(e -> rebalanceClassWeights());
 
             rebalanceByDefaultCheck = new CheckBox("Rebalance by default");
             rebalanceByDefaultCheck.setSelected(DLClassifierPreferences.isRebalanceByDefault());
-            rebalanceByDefaultCheck.selectedProperty().addListener((obs, old, newVal) ->
-                    DLClassifierPreferences.setRebalanceByDefault(newVal));
-            TooltipHelper.install(rebalanceByDefaultCheck,
-                    "Automatically rebalance class weights when classes are loaded.\n\n" +
-                    "When checked, class weights are auto-set each time you load\n" +
-                    "classes, so underrepresented classes receive higher weights.\n" +
-                    "You can still manually adjust weights after loading.");
+            rebalanceByDefaultCheck
+                    .selectedProperty()
+                    .addListener((obs, old, newVal) -> DLClassifierPreferences.setRebalanceByDefault(newVal));
+            TooltipHelper.install(
+                    rebalanceByDefaultCheck,
+                    "Automatically rebalance class weights when classes are loaded.\n\n"
+                            + "When checked, class weights are auto-set each time you load\n"
+                            + "classes, so underrepresented classes receive higher weights.\n"
+                            + "You can still manually adjust weights after loading.");
 
             // Rebalance controls: advanced-only
             rebalanceBtn.visibleProperty().bind(advancedMode);
@@ -4263,8 +4303,8 @@ public class TrainingDialog {
 
             HBox buttonBox = new HBox(10, selectAllBtn, selectNoneBtn, rebalanceBtn);
 
-            content.getChildren().addAll(infoLabel, classDistributionChart, classListView,
-                    rebalanceByDefaultCheck, buttonBox);
+            content.getChildren()
+                    .addAll(infoLabel, classDistributionChart, classListView, rebalanceByDefaultCheck, buttonBox);
 
             TitledPane pane = new TitledPane("ANNOTATION CLASSES", content);
             pane.setExpanded(true);
@@ -4279,26 +4319,28 @@ public class TrainingDialog {
 
             flipHorizontalCheck = new CheckBox("Horizontal flip");
             flipHorizontalCheck.setSelected(DLClassifierPreferences.isAugFlipHorizontal());
-            TooltipHelper.install(flipHorizontalCheck,
-                    "Randomly mirror tiles left-right during training.\n" +
-                    "Effective for tissue where orientation is arbitrary.\n" +
-                    "Almost always beneficial; disable only if horizontal\n" +
-                    "orientation carries meaning in your images.");
+            TooltipHelper.install(
+                    flipHorizontalCheck,
+                    "Randomly mirror tiles left-right during training.\n"
+                            + "Effective for tissue where orientation is arbitrary.\n"
+                            + "Almost always beneficial; disable only if horizontal\n"
+                            + "orientation carries meaning in your images.");
 
             flipVerticalCheck = new CheckBox("Vertical flip");
             flipVerticalCheck.setSelected(DLClassifierPreferences.isAugFlipVertical());
-            TooltipHelper.install(flipVerticalCheck,
-                    "Randomly mirror tiles top-bottom during training.\n" +
-                    "Same rationale as horizontal flip.\n" +
-                    "Safe to enable for most histopathology images.");
+            TooltipHelper.install(
+                    flipVerticalCheck,
+                    "Randomly mirror tiles top-bottom during training.\n" + "Same rationale as horizontal flip.\n"
+                            + "Safe to enable for most histopathology images.");
 
             rotationCheck = new CheckBox("Random rotation (90 deg)");
             rotationCheck.setSelected(DLClassifierPreferences.isAugRotation());
-            TooltipHelper.install(rotationCheck,
-                    "Randomly rotate tiles by 0/90/180/270 degrees.\n" +
-                    "Preserves pixel alignment (no interpolation artifacts).\n" +
-                    "Beneficial when tissue structures have no preferred\n" +
-                    "orientation. Combines well with flips for 8x augmentation.");
+            TooltipHelper.install(
+                    rotationCheck,
+                    "Randomly rotate tiles by 0/90/180/270 degrees.\n"
+                            + "Preserves pixel alignment (no interpolation artifacts).\n"
+                            + "Beneficial when tissue structures have no preferred\n"
+                            + "orientation. Combines well with flips for 8x augmentation.");
 
             // Intensity augmentation mode (replaces color jitter checkbox)
             Label intensityLabel = new Label("Intensity augmentation:");
@@ -4309,37 +4351,39 @@ public class TrainingDialog {
             // Track manual user changes so auto-detection doesn't override
             intensityAugCombo.setOnAction(e -> intensityAugUserModified = true);
             TooltipHelper.install(
-                    "Intensity augmentation mode.\n\n" +
-                    "None: No intensity/color transforms.\n\n" +
-                    "Brightfield: Correlated brightness, contrast, and gamma\n" +
-                    "  across all channels. Recommended for H&E stained images.\n\n" +
-                    "Fluorescence: Independent random intensity scaling per channel.\n" +
-                    "  Recommended for fluorescence or multi-spectral images where\n" +
-                    "  each channel is an independent signal.",
-                    intensityLabel, intensityAugCombo);
+                    "Intensity augmentation mode.\n\n" + "None: No intensity/color transforms.\n\n"
+                            + "Brightfield: Correlated brightness, contrast, and gamma\n"
+                            + "  across all channels. Recommended for H&E stained images.\n\n"
+                            + "Fluorescence: Independent random intensity scaling per channel.\n"
+                            + "  Recommended for fluorescence or multi-spectral images where\n"
+                            + "  each channel is an independent signal.",
+                    intensityLabel,
+                    intensityAugCombo);
             HBox intensityRow = new HBox(10, intensityLabel, intensityAugCombo);
             intensityRow.setAlignment(Pos.CENTER_LEFT);
 
             elasticCheck = new CheckBox("Elastic deformation");
             elasticCheck.setSelected(DLClassifierPreferences.isAugElasticDeform());
-            TooltipHelper.installWithLink(elasticCheck,
-                    "Apply smooth random spatial deformations to tiles.\n" +
-                    "Simulates tissue distortion and cutting artifacts.\n" +
-                    "Computationally expensive but effective for histopathology.\n" +
-                    "May reduce training speed by ~30%.\n\n" +
-                    "Most beneficial when training data is limited and the\n" +
-                    "model needs to handle shape variations in the tissue.",
+            TooltipHelper.installWithLink(
+                    elasticCheck,
+                    "Apply smooth random spatial deformations to tiles.\n"
+                            + "Simulates tissue distortion and cutting artifacts.\n"
+                            + "Computationally expensive but effective for histopathology.\n"
+                            + "May reduce training speed by ~30%.\n\n"
+                            + "Most beneficial when training data is limited and the\n"
+                            + "model needs to handle shape variations in the tissue.",
                     "https://albumentations.ai/docs/");
 
             // Advanced augmentation button -- opens a popup for strength/probability tuning.
             // Visible only in advanced mode; bound below via advancedMode binding.
             Button advancedAugButton = new Button("Advanced augmentation settings...");
-            TooltipHelper.install(advancedAugButton,
-                    "Fine-tune augmentation strengths and probabilities:\n" +
-                    "brightness/contrast/gamma limits, elastic alpha/sigma,\n" +
-                    "noise std, and per-augmentation probabilities.\n\n" +
-                    "Defaults match the built-in augmentation pipeline --\n" +
-                    "changes here override those defaults for all future training runs.");
+            TooltipHelper.install(
+                    advancedAugButton,
+                    "Fine-tune augmentation strengths and probabilities:\n"
+                            + "brightness/contrast/gamma limits, elastic alpha/sigma,\n"
+                            + "noise std, and per-augmentation probabilities.\n\n"
+                            + "Defaults match the built-in augmentation pipeline --\n"
+                            + "changes here override those defaults for all future training runs.");
             advancedAugButton.setOnAction(e -> {
                 AdvancedAugmentationDialog dialog = new AdvancedAugmentationDialog(
                         advancedAugButton.getScene() != null
@@ -4350,14 +4394,14 @@ public class TrainingDialog {
             advancedAugButton.visibleProperty().bind(advancedMode);
             advancedAugButton.managedProperty().bind(advancedMode);
 
-            content.getChildren().addAll(
-                    flipHorizontalCheck,
-                    flipVerticalCheck,
-                    rotationCheck,
-                    intensityRow,
-                    elasticCheck,
-                    advancedAugButton
-            );
+            content.getChildren()
+                    .addAll(
+                            flipHorizontalCheck,
+                            flipVerticalCheck,
+                            rotationCheck,
+                            intensityRow,
+                            elasticCheck,
+                            advancedAugButton);
 
             TitledPane pane = new TitledPane("DATA AUGMENTATION", content);
             pane.setExpanded(false); // Collapsed by default
@@ -4368,12 +4412,9 @@ public class TrainingDialog {
 
         private VBox createErrorSummaryPanel() {
             errorSummaryPanel = new VBox(5);
-            errorSummaryPanel.setStyle(
-                    "-fx-background-color: #fff3cd; " +
-                    "-fx-border-color: #ffc107; " +
-                    "-fx-border-width: 1px; " +
-                    "-fx-padding: 10px;"
-            );
+            errorSummaryPanel.setStyle("-fx-background-color: #fff3cd; " + "-fx-border-color: #ffc107; "
+                    + "-fx-border-width: 1px; "
+                    + "-fx-padding: 10px;");
             errorSummaryPanel.setVisible(false);
             errorSummaryPanel.setManaged(false);
 
@@ -4431,15 +4472,16 @@ public class TrainingDialog {
 
                         // Collect pixel size from each image
                         try {
-                            double ps = data.getServer().getPixelCalibration()
-                                    .getAveragedPixelSizeMicrons();
+                            double ps = data.getServer().getPixelCalibration().getAveragedPixelSizeMicrons();
                             if (!Double.isNaN(ps) && ps > 0) {
                                 // Round to 4 decimal places for comparison
                                 pixelSizes.add(Math.round(ps * 10000.0) / 10000.0);
                             }
                         } catch (Exception e) {
-                            logger.debug("Could not read pixel size from '{}': {}",
-                                    selItem.entry.getImageName(), e.getMessage());
+                            logger.debug(
+                                    "Could not read pixel size from '{}': {}",
+                                    selItem.entry.getImageName(),
+                                    e.getMessage());
                         }
 
                         for (PathObject annotation : data.getHierarchy().getAnnotationObjects()) {
@@ -4474,8 +4516,7 @@ public class TrainingDialog {
                             }
                         }
                     } catch (Exception e) {
-                        logger.warn("Could not read image '{}': {}",
-                                selItem.entry.getImageName(), e.getMessage());
+                        logger.warn("Could not read image '{}': {}", selItem.entry.getImageName(), e.getMessage());
                     }
                 }
 
@@ -4528,8 +4569,7 @@ public class TrainingDialog {
                     for (Map.Entry<String, PathClass> entry : finalClassMap.entrySet()) {
                         PathClass pathClass = entry.getValue();
                         double area = finalClassAreas.getOrDefault(entry.getKey(), 0.0);
-                        ClassItem classItem = new ClassItem(
-                                pathClass.getName(), pathClass.getColor(), true, area);
+                        ClassItem classItem = new ClassItem(pathClass.getName(), pathClass.getColor(), true, area);
                         classItem.selected().addListener((obs, old, newVal) -> {
                             refreshPieChart();
                             updateValidation();
@@ -4539,7 +4579,8 @@ public class TrainingDialog {
 
                     // Compute tile estimate from annotation areas
                     double totalArea = finalClassAreas.values().stream()
-                            .mapToDouble(d -> d).sum();
+                            .mapToDouble(d -> d)
+                            .sum();
                     cachedTotalAnnotationArea = totalArea;
                     lastLoadedClassCount = finalClassMap.size();
                     lastLoadedImageCount = selectedItems.size();
@@ -4569,16 +4610,14 @@ public class TrainingDialog {
                     updateLoadClassesButtonState();
                     updateValidation();
 
-                    logger.info("Loaded {} classes from {} images",
-                            finalClassMap.size(), selectedItems.size());
+                    logger.info("Loaded {} classes from {} images", finalClassMap.size(), selectedItems.size());
                 });
             });
         }
 
         /** Enables/disables the Load Classes button based on whether any images are checked. */
         private void updateLoadClassesButtonState() {
-            boolean anySelected = imageSelectionList.getItems().stream()
-                    .anyMatch(item -> item.selected.get());
+            boolean anySelected = imageSelectionList.getItems().stream().anyMatch(item -> item.selected.get());
             loadClassesButton.setDisable(!anySelected);
         }
 
@@ -4588,8 +4627,7 @@ public class TrainingDialog {
             int est = estimateTileCount();
             StringBuilder sb = new StringBuilder();
             sb.append(String.format(
-                    "Loaded %d classes from %d images. Estimated ~%,d training tiles.",
-                    classCount, imageCount, est));
+                    "Loaded %d classes from %d images. Estimated ~%,d training tiles.", classCount, imageCount, est));
             appendInMemoryCacheEstimate(sb, est);
             tileEstimateLabel.setText(sb.toString());
             tileEstimateLabel.setVisible(true);
@@ -4625,8 +4663,7 @@ public class TrainingDialog {
             // numBands <= 4 AND dataType == TYPE_BYTE; otherwise float32 .raw
             // at 4 bytes per channel per pixel.
             int bytesPerPixel = (chs <= 4 && bitDepth == 8) ? 1 : 4;
-            int ctxScale = contextScaleCombo != null
-                    ? parseContextScale(contextScaleCombo.getValue()) : 1;
+            int ctxScale = contextScaleCombo != null ? parseContextScale(contextScaleCombo.getValue()) : 1;
             boolean hasContext = ctxScale > 1;
             long perImage = (long) tile * tile * chs * bytesPerPixel;
             if (hasContext) perImage *= 2L;
@@ -4674,11 +4711,8 @@ public class TrainingDialog {
                     verdict = "on -> forced";
                 }
             }
-            sb.append(String.format(
-                    " In-memory cache: ~%.2f GB of %.2f GB free RAM (%s).",
-                    estGb, availGb, verdict));
-            tileEstimateLabel.setStyle(
-                    "-fx-text-fill: " + color + "; -fx-font-size: 11px;");
+            sb.append(String.format(" In-memory cache: ~%.2f GB of %.2f GB free RAM (%s).", estGb, availGb, verdict));
+            tileEstimateLabel.setStyle("-fx-text-fill: " + color + "; -fx-font-size: 11px;");
         }
 
         /** Estimates tile count from cached annotation area and current settings. */
@@ -4695,8 +4729,7 @@ public class TrainingDialog {
         /** Visual indicator when images change after classes were already loaded. */
         private void markClassesStale() {
             loadClassesButton.setText("Reload Classes (images changed)");
-            loadClassesButton.setStyle(
-                    "-fx-font-weight: bold; -fx-text-fill: #cc6600;");
+            loadClassesButton.setStyle("-fx-font-weight: bold; -fx-text-fill: #cc6600;");
         }
 
         /**
@@ -4719,9 +4752,8 @@ public class TrainingDialog {
             }
 
             // Check which model classes were not found in annotations
-            Set<String> annotationClassNames = classListView.getItems().stream()
-                    .map(ClassItem::name)
-                    .collect(Collectors.toSet());
+            Set<String> annotationClassNames =
+                    classListView.getItems().stream().map(ClassItem::name).collect(Collectors.toSet());
             for (String modelClass : sourceModelClassNames) {
                 if (!annotationClassNames.contains(modelClass)) {
                     notFound.add(modelClass);
@@ -4732,12 +4764,13 @@ public class TrainingDialog {
             updateValidation();
 
             if (!notFound.isEmpty()) {
-                Dialogs.showInfoNotification("Class Auto-Match",
+                Dialogs.showInfoNotification(
+                        "Class Auto-Match",
                         "Matched " + matched.size() + " of " + sourceModelClassNames.size()
-                        + " model classes.\nNot found in annotations: "
-                        + String.join(", ", notFound));
-                logger.info("Class auto-match: {} matched, {} not found: {}",
-                        matched.size(), notFound.size(), notFound);
+                                + " model classes.\nNot found in annotations: "
+                                + String.join(", ", notFound));
+                logger.info(
+                        "Class auto-match: {} matched, {} not found: {}", matched.size(), notFound.size(), notFound);
             } else {
                 logger.info("Class auto-match: all {} model classes matched", matched.size());
             }
@@ -4767,8 +4800,7 @@ public class TrainingDialog {
                 focusClassCombo.setValue(currentSelection);
             } else {
                 String savedFocus = DLClassifierPreferences.getDefaultFocusClass();
-                if (savedFocus != null && !savedFocus.isEmpty()
-                        && items.contains(savedFocus)) {
+                if (savedFocus != null && !savedFocus.isEmpty() && items.contains(savedFocus)) {
                     focusClassCombo.setValue(savedFocus);
                     double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
                     if (savedMinIoU > 0) {
@@ -4834,13 +4866,13 @@ public class TrainingDialog {
             } else if (classesLoaded) {
                 // Classes loaded but no calibration -- tell the user why
                 resolutionInfoLabel.setText(String.format(
-                        "Detail tile: %dpx x %dpx covers %d x %d native pixels " +
-                        "(pixel size not available -- images lack calibration or have mixed pixel sizes)",
+                        "Detail tile: %dpx x %dpx covers %d x %d native pixels "
+                                + "(pixel size not available -- images lack calibration or have mixed pixel sizes)",
                         tileSize, tileSize, detailCoveragePixels, detailCoveragePixels));
             } else {
                 resolutionInfoLabel.setText(String.format(
-                        "Detail tile: %dpx x %dpx covers %d x %d native pixels " +
-                        "(load classes to show physical dimensions)",
+                        "Detail tile: %dpx x %dpx covers %d x %d native pixels "
+                                + "(load classes to show physical dimensions)",
                         tileSize, tileSize, detailCoveragePixels, detailCoveragePixels));
             }
 
@@ -4851,16 +4883,17 @@ public class TrainingDialog {
                 if (hasCalibration) {
                     double contextCoverageUm = contextCoveragePixels * nativePixelSizeMicrons;
                     contextInfoLabel.setText(String.format(
-                            "Context window: %.0f x %.0fum (%dx the detail tile area, " +
-                            "downsampled to %dpx x %dpx)",
-                            contextCoverageUm, contextCoverageUm, contextScale * contextScale,
-                            tileSize, tileSize));
+                            "Context window: %.0f x %.0fum (%dx the detail tile area, " + "downsampled to %dpx x %dpx)",
+                            contextCoverageUm, contextCoverageUm, contextScale * contextScale, tileSize, tileSize));
                 } else {
                     contextInfoLabel.setText(String.format(
-                            "Context window: %d x %d native pixels (%dx the detail tile area, " +
-                            "downsampled to %dpx x %dpx)",
-                            contextCoveragePixels, contextCoveragePixels, contextScale * contextScale,
-                            tileSize, tileSize));
+                            "Context window: %d x %d native pixels (%dx the detail tile area, "
+                                    + "downsampled to %dpx x %dpx)",
+                            contextCoveragePixels,
+                            contextCoveragePixels,
+                            contextScale * contextScale,
+                            tileSize,
+                            tileSize));
                 }
             }
         }
@@ -4875,9 +4908,8 @@ public class TrainingDialog {
                 double ds = parseDownsample(downsampleCombo.getValue()) * ctxScale;
                 contextPreviewManager.setDownsample(ds);
                 if (contextPreviewStage != null) {
-                    contextPreviewStage.setTitle(String.format(
-                            "Context Preview (%dx context at %.0fx downsample)",
-                            ctxScale, ds));
+                    contextPreviewStage.setTitle(
+                            String.format("Context Preview (%dx context at %.0fx downsample)", ctxScale, ds));
                 }
             }
         }
@@ -4888,8 +4920,10 @@ public class TrainingDialog {
          */
         private void linkPreviewStages() {
             // Only link when both stages exist and are showing
-            if (previewStage == null || contextPreviewStage == null
-                    || !previewStage.isShowing() || !contextPreviewStage.isShowing()) {
+            if (previewStage == null
+                    || contextPreviewStage == null
+                    || !previewStage.isShowing()
+                    || !contextPreviewStage.isShowing()) {
                 return;
             }
 
@@ -4897,8 +4931,8 @@ public class TrainingDialog {
             unlinkPreviewStages();
 
             // Compute the initial offset (context relative to resolution)
-            final double[] offsetX = { contextPreviewStage.getX() - previewStage.getX() };
-            final double[] offsetY = { contextPreviewStage.getY() - previewStage.getY() };
+            final double[] offsetX = {contextPreviewStage.getX() - previewStage.getX()};
+            final double[] offsetY = {contextPreviewStage.getY() - previewStage.getY()};
 
             // Resolution stage drives context stage
             resPosXListener = (obs, old, newX) -> {
@@ -4968,12 +5002,12 @@ public class TrainingDialog {
          * Foundation models are downloaded on-demand from HuggingFace.
          */
         private static boolean isFoundationModel(String backbone) {
-            return backbone != null && (
-                    backbone.equals("h-optimus-0") ||
-                    backbone.equals("virchow") ||
-                    backbone.startsWith("hibou-") ||
-                    backbone.equals("midnight") ||
-                    backbone.startsWith("dinov2-"));
+            return backbone != null
+                    && (backbone.equals("h-optimus-0")
+                            || backbone.equals("virchow")
+                            || backbone.startsWith("hibou-")
+                            || backbone.equals("midnight")
+                            || backbone.startsWith("dinov2-"));
         }
 
         /**
@@ -4984,8 +5018,8 @@ public class TrainingDialog {
             handlerUIContainer.getChildren().clear();
             currentHandlerUI = null;
 
-            ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
-                    .orElse(null);
+            ClassifierHandler handler =
+                    ClassifierRegistry.getHandler(architecture).orElse(null);
             if (handler == null) return;
 
             handler.createTrainingUI().ifPresent(ui -> {
@@ -5053,8 +5087,8 @@ public class TrainingDialog {
             }
 
             String arch = architectureCombo.getValue();
-            ClassifierHandler handler = ClassifierRegistry.getHandler(arch)
-                    .orElse(ClassifierRegistry.getDefaultHandler());
+            ClassifierHandler handler =
+                    ClassifierRegistry.getHandler(arch).orElse(ClassifierRegistry.getDefaultHandler());
             List<Integer> sizes = handler.getSupportedTileSizes();
             int maxTile = sizes.isEmpty()
                     ? Integer.MAX_VALUE
@@ -5073,8 +5107,7 @@ public class TrainingDialog {
             if (imageSelectionList != null) {
                 for (ImageSelectionItem item : imageSelectionList.getItems()) {
                     if (!item.selected.get()) continue;
-                    int dim = (int) Math.ceil(
-                            Math.max(item.imageWidth, item.imageHeight) / downsample);
+                    int dim = (int) Math.ceil(Math.max(item.imageWidth, item.imageHeight) / downsample);
                     if (dim > maxDimAtDs) {
                         maxDimAtDs = dim;
                         largestImageName = item.entry.getImageName();
@@ -5086,26 +5119,24 @@ public class TrainingDialog {
 
             if (willBeTiled) {
                 // RED: images exceed max tile size -- whole-image mode will be ignored
-                wholeImageInfoLabel.setStyle(
-                        "-fx-text-fill: #CC0000; -fx-font-size: 11px; -fx-font-weight: bold;");
+                wholeImageInfoLabel.setStyle("-fx-text-fill: #CC0000; -fx-font-size: 11px; -fx-font-weight: bold;");
                 wholeImageInfoLabel.setText(String.format(
                         "WARNING: \"%s\" is %dpx at %.0fx downsample, exceeding the %dpx max. "
-                        + "This image WILL BE TILED, not processed whole. "
-                        + "Increase downsample to fit within %dpx.",
+                                + "This image WILL BE TILED, not processed whole. "
+                                + "Increase downsample to fit within %dpx.",
                         largestImageName, maxDimAtDs, downsample, maxTile, maxTile));
             } else {
                 // ORANGE: informational -- images fit, but there is a cap
-                wholeImageInfoLabel.setStyle(
-                        "-fx-text-fill: #CC7A00; -fx-font-size: 11px; -fx-font-weight: normal;");
+                wholeImageInfoLabel.setStyle("-fx-text-fill: #CC7A00; -fx-font-size: 11px; -fx-font-weight: normal;");
                 if (maxDimAtDs > 0) {
                     wholeImageInfoLabel.setText(String.format(
                             "%s limits tiles to %dpx max. Your largest selected image is "
-                            + "%dpx at %.0fx downsample -- fits within the limit.",
+                                    + "%dpx at %.0fx downsample -- fits within the limit.",
                             handler.getDisplayName(), maxTile, maxDimAtDs, downsample));
                 } else {
                     wholeImageInfoLabel.setText(String.format(
                             "%s limits tiles to %dpx max. If your image exceeds %dpx "
-                            + "at the selected downsample, it will be tiled automatically.",
+                                    + "at the selected downsample, it will be tiled automatically.",
                             handler.getDisplayName(), maxTile, maxTile));
                 }
             }
@@ -5114,8 +5145,7 @@ public class TrainingDialog {
         }
 
         /** Backbones shown in basic mode (simple ResNets only). */
-        private static final List<String> BASIC_BACKBONES =
-                List.of("resnet18", "resnet34", "resnet50");
+        private static final List<String> BASIC_BACKBONES = List.of("resnet18", "resnet34", "resnet50");
 
         /** User-friendly labels for basic mode backbone selection. */
         private static String getBasicModeBackboneLabel(String backbone) {
@@ -5128,8 +5158,8 @@ public class TrainingDialog {
         }
 
         private void updateBackboneOptions(String architecture) {
-            ClassifierHandler handler = ClassifierRegistry.getHandler(architecture)
-                    .orElse(ClassifierRegistry.getDefaultHandler());
+            ClassifierHandler handler =
+                    ClassifierRegistry.getHandler(architecture).orElse(ClassifierRegistry.getDefaultHandler());
 
             Map<String, Object> params = handler.getArchitectureParams(null);
             Object backbones = params.get("available_backbones");
@@ -5202,12 +5232,12 @@ public class TrainingDialog {
                 return;
             }
             boolean isHistologyBackbone = backbone.contains("_lunit")
-                    || backbone.contains("_kather") || backbone.contains("_tcga")
+                    || backbone.contains("_kather")
+                    || backbone.contains("_tcga")
                     || backbone.contains("_pathology");
             if (isHistologyBackbone && !lastImageIsBrightfield) {
-                backboneCompatWarning.setText(
-                        "Histology backbone selected but images appear to be fluorescence. " +
-                        "Consider a standard backbone (resnet34, resnet50) for best results.");
+                backboneCompatWarning.setText("Histology backbone selected but images appear to be fluorescence. "
+                        + "Consider a standard backbone (resnet34, resnet50) for best results.");
                 backboneCompatWarning.setVisible(true);
                 backboneCompatWarning.setManaged(true);
             } else {
@@ -5238,8 +5268,8 @@ public class TrainingDialog {
         private void showTemporaryNotification(String message) {
             Label note = new Label(message);
             note.setWrapText(true);
-            note.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; " +
-                    "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            note.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+                    + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
             // Insert before the error summary panel (which is near the bottom)
             VBox dialogContent = (VBox) errorSummaryPanel.getParent();
             if (dialogContent != null) {
@@ -5261,7 +5291,8 @@ public class TrainingDialog {
             if (name == null || name.trim().isEmpty()) {
                 validationErrors.put("name", "Classifier name is required");
             } else if (!name.matches("[a-zA-Z0-9_-]+")) {
-                validationErrors.put("name", "Classifier name can only contain letters, numbers, underscore, and hyphen");
+                validationErrors.put(
+                        "name", "Classifier name can only contain letters, numbers, underscore, and hyphen");
             } else {
                 validationErrors.remove("name");
             }
@@ -5271,8 +5302,7 @@ public class TrainingDialog {
         private void updateValidation() {
             // Check that classes have been loaded
             if (!classesLoaded) {
-                validationErrors.put("classesLoaded",
-                        "Select images and click 'Load Classes from Selected Images'");
+                validationErrors.put("classesLoaded", "Select images and click 'Load Classes from Selected Images'");
                 // Clear channel/class errors since they are not relevant yet
                 validationErrors.remove("channels");
                 validationErrors.remove("classes");
@@ -5313,12 +5343,14 @@ public class TrainingDialog {
             ClassifierHandler.WeightInitStrategy weightStrategy = getSelectedWeightInitStrategy();
             if (weightStrategy == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING
                     && (pretrainedModelPtPath == null || pretrainedModelPtPath.isEmpty())) {
-                validationErrors.put("weightInit",
+                validationErrors.put(
+                        "weightInit",
                         "Continue training requires a model -- click 'Select model...' or 'Load checkpoint...'");
             } else if (weightStrategy == ClassifierHandler.WeightInitStrategy.MAE_ENCODER
-                    && (maeEncoderPathField.getText() == null || maeEncoderPathField.getText().isEmpty())) {
-                validationErrors.put("weightInit",
-                        "MAE encoder requires a .pt file -- click 'Browse...' to select one");
+                    && (maeEncoderPathField.getText() == null
+                            || maeEncoderPathField.getText().isEmpty())) {
+                validationErrors.put(
+                        "weightInit", "MAE encoder requires a .pt file -- click 'Browse...' to select one");
             } else {
                 validationErrors.remove("weightInit");
             }
@@ -5400,18 +5432,17 @@ public class TrainingDialog {
             logger.info("Rebalance: classListView has {} items", allItems.size());
 
             if (allItems.isEmpty()) {
-                Dialogs.showWarningNotification("Rebalance",
-                        "No classes loaded. Click 'Load Classes from Selected Images' first.");
+                Dialogs.showWarningNotification(
+                        "Rebalance", "No classes loaded. Click 'Load Classes from Selected Images' first.");
                 return;
             }
 
-            List<ClassItem> selected = allItems.stream()
-                    .filter(item -> item.selected().get())
-                    .collect(Collectors.toList());
+            List<ClassItem> selected =
+                    allItems.stream().filter(item -> item.selected().get()).collect(Collectors.toList());
 
             if (selected.isEmpty()) {
-                Dialogs.showWarningNotification("Rebalance",
-                        "No classes are selected. Check at least 2 classes to rebalance.");
+                Dialogs.showWarningNotification(
+                        "Rebalance", "No classes are selected. Check at least 2 classes to rebalance.");
                 logger.warn("Rebalance: no selected classes");
                 return;
             }
@@ -5429,12 +5460,13 @@ public class TrainingDialog {
                     .collect(Collectors.toList());
 
             if (areas.isEmpty()) {
-                Dialogs.showWarningNotification("Rebalance",
-                        "All selected classes have zero estimated pixel coverage.\n" +
-                        "Try reloading classes (coverage is estimated from annotation\n" +
-                        "area or line length x stroke width).");
-                logger.warn("Rebalance: all selected classes have zero coverage -- cannot compute weights. " +
-                        "Are annotations point ROIs? Line/area annotations are required.");
+                Dialogs.showWarningNotification(
+                        "Rebalance",
+                        "All selected classes have zero estimated pixel coverage.\n"
+                                + "Try reloading classes (coverage is estimated from annotation\n"
+                                + "area or line length x stroke width).");
+                logger.warn("Rebalance: all selected classes have zero coverage -- cannot compute weights. "
+                        + "Are annotations point ROIs? Line/area annotations are required.");
                 return;
             }
 
@@ -5466,12 +5498,12 @@ public class TrainingDialog {
             for (ClassItem item : selected) {
                 if (sb.length() > 0) sb.append(", ");
                 sb.append(item.name())
-                  .append("=").append(String.format("%.2f", item.weightMultiplier().get()));
+                        .append("=")
+                        .append(String.format("%.2f", item.weightMultiplier().get()));
             }
             String summary = sb.toString();
             logger.info("Rebalanced class weights: {}", summary);
-            Dialogs.showInfoNotification("Rebalance",
-                    "Weights updated: " + summary);
+            Dialogs.showInfoNotification("Rebalance", "Weights updated: " + summary);
         }
 
         private TrainingDialogResult buildResult() {
@@ -5515,8 +5547,7 @@ public class TrainingDialog {
             DLClassifierPreferences.setDefaultBoundarySigma(boundarySigmaSpinner.getValue());
             DLClassifierPreferences.setDefaultBoundaryWMin(boundaryWMinSpinner.getValue());
             DLClassifierPreferences.setDefaultProgressiveResize(progressiveResizeCheck.isSelected());
-            DLClassifierPreferences.setDefaultFocusClass(
-                    mapFocusClassFromDisplay(focusClassCombo.getValue()));
+            DLClassifierPreferences.setDefaultFocusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()));
             DLClassifierPreferences.setDefaultFocusClassMinIoU(focusClassMinIoUSpinner.getValue());
 
             // Build training config from unified weight init strategy
@@ -5527,15 +5558,14 @@ public class TrainingDialog {
             // return the user to the dialog if they pick Cancel; INFO/WARN
             // watchers show a single popup they can dismiss or suppress
             // per-warning.
-            var interactionWarnings = qupath.ext.dlclassifier.service
-                    .warnings.InteractionWarningService.evaluate(trainingConfig);
-            var visibleInteractionWarnings = qupath.ext.dlclassifier.service
-                    .warnings.InteractionWarningService.filterVisible(
+            var interactionWarnings =
+                    qupath.ext.dlclassifier.service.warnings.InteractionWarningService.evaluate(trainingConfig);
+            var visibleInteractionWarnings =
+                    qupath.ext.dlclassifier.service.warnings.InteractionWarningService.filterVisible(
                             interactionWarnings);
             if (!visibleInteractionWarnings.isEmpty()) {
-                boolean proceed = qupath.ext.dlclassifier.service
-                        .warnings.InteractionWarningService.showIfAny(
-                                visibleInteractionWarnings, dialog);
+                boolean proceed = qupath.ext.dlclassifier.service.warnings.InteractionWarningService.showIfAny(
+                        visibleInteractionWarnings, dialog);
                 if (!proceed) {
                     return null;
                 }
@@ -5549,11 +5579,13 @@ public class TrainingDialog {
                     && getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.MAE_ENCODER) {
                 int selectedChannels = channelConfig.getNumChannels();
                 if (selectedChannels != maeEncoderInputChannels) {
-                    Dialogs.showErrorMessage("Channel Mismatch",
-                            String.format("The MAE encoder was pretrained with %d channels "
-                                    + "but %d channels are currently selected.\n\n"
-                                    + "Change the channel selection to match, or choose "
-                                    + "a different weight initialization strategy.",
+                    Dialogs.showErrorMessage(
+                            "Channel Mismatch",
+                            String.format(
+                                    "The MAE encoder was pretrained with %d channels "
+                                            + "but %d channels are currently selected.\n\n"
+                                            + "Change the channel selection to match, or choose "
+                                            + "a different weight initialization strategy.",
                                     maeEncoderInputChannels, selectedChannels));
                     return null;
                 }
@@ -5569,7 +5601,7 @@ public class TrainingDialog {
             if ("bounded".equalsIgnoreCase(trainingConfig.getInMemoryDataset())
                     && !DLClassifierPreferences.isBoundedCacheNoticeDismissed()) {
                 if (!showBoundedCacheNotice()) {
-                    return null;  // user cancelled; keep dialog open
+                    return null; // user cancelled; keep dialog open
                 }
             }
 
@@ -5601,7 +5633,7 @@ public class TrainingDialog {
                             actMultiplier *= 1.1;
                         }
 
-                        double areaScale = (double)(effectiveTile * effectiveTile) / (256.0 * 256.0);
+                        double areaScale = (double) (effectiveTile * effectiveTile) / (256.0 * 256.0);
                         double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
                         double budgetMb = totalMb * 0.85;
 
@@ -5610,31 +5642,40 @@ public class TrainingDialog {
                             int maxBatchAtTile = 0;
                             for (int b = batchSize; b >= 1; b--) {
                                 double est = modelMb * (1 + 3 + actMultiplier * areaScale * b);
-                                if (est <= budgetMb) { maxBatchAtTile = b; break; }
+                                if (est <= budgetMb) {
+                                    maxBatchAtTile = b;
+                                    break;
+                                }
                             }
 
                             int effectiveBatch = batchSize * gradAccum;
                             StringBuilder suggestions = new StringBuilder();
                             suggestions.append(String.format(
                                     "Estimated VRAM: %.0f MB (GPU has %d MB, ~%.0f MB usable).\n"
-                                    + "Current: %s (%s), %dx%d tiles, batch %d"
-                                    + (gradAccum > 1 ? " (x%d accum = %d effective)" : "")
-                                    + ".\n\n",
-                                    estimatedMb, totalMb, budgetMb,
-                                    modelType, backbone, tileSize, tileSize,
-                                    batchSize, gradAccum, effectiveBatch));
+                                            + "Current: %s (%s), %dx%d tiles, batch %d"
+                                            + (gradAccum > 1 ? " (x%d accum = %d effective)" : "")
+                                            + ".\n\n",
+                                    estimatedMb,
+                                    totalMb,
+                                    budgetMb,
+                                    modelType,
+                                    backbone,
+                                    tileSize,
+                                    tileSize,
+                                    batchSize,
+                                    gradAccum,
+                                    effectiveBatch));
 
                             if (maxBatchAtTile > 0) {
                                 // Can fit at current tile size with smaller batch
-                                int suggestedAccum = Math.max(1,
-                                        (int) Math.ceil((double) effectiveBatch / maxBatchAtTile));
+                                int suggestedAccum =
+                                        Math.max(1, (int) Math.ceil((double) effectiveBatch / maxBatchAtTile));
                                 double estFit = modelMb * (1 + 3 + actMultiplier * areaScale * maxBatchAtTile);
                                 suggestions.append("Suggested settings that fit in VRAM:\n");
                                 suggestions.append(String.format(
                                         "  - Batch size %d with gradient accumulation %d "
-                                        + "(effective batch %d, ~%.0f MB)\n",
-                                        maxBatchAtTile, suggestedAccum,
-                                        maxBatchAtTile * suggestedAccum, estFit));
+                                                + "(effective batch %d, ~%.0f MB)\n",
+                                        maxBatchAtTile, suggestedAccum, maxBatchAtTile * suggestedAccum, estFit));
                             } else {
                                 // Even batch=1 doesn't fit at this tile size
                                 suggestions.append("Even batch size 1 exceeds VRAM at this tile size.\n");
@@ -5642,26 +5683,27 @@ public class TrainingDialog {
                             }
 
                             // Suggest smaller tile sizes if needed
-                            for (int candidate : new int[]{512, 384, 256, 128}) {
+                            for (int candidate : new int[] {512, 384, 256, 128}) {
                                 if (candidate >= tileSize) continue;
-                                int candEffective = contextScale > 1
-                                        ? candidate + 2 * (candidate / contextScale) : candidate;
-                                double candArea = (double)(candEffective * candEffective) / (256.0 * 256.0);
+                                int candEffective =
+                                        contextScale > 1 ? candidate + 2 * (candidate / contextScale) : candidate;
+                                double candArea = (double) (candEffective * candEffective) / (256.0 * 256.0);
                                 // Find max batch at this tile size
                                 int candMaxBatch = 0;
                                 for (int b = batchSize; b >= 1; b--) {
                                     double bEst = modelMb * (1 + 3 + actMultiplier * candArea * b);
-                                    if (bEst <= budgetMb) { candMaxBatch = b; break; }
+                                    if (bEst <= budgetMb) {
+                                        candMaxBatch = b;
+                                        break;
+                                    }
                                 }
                                 if (candMaxBatch > 0) {
-                                    int candAccum = Math.max(1,
-                                            (int) Math.ceil((double) effectiveBatch / candMaxBatch));
+                                    int candAccum =
+                                            Math.max(1, (int) Math.ceil((double) effectiveBatch / candMaxBatch));
                                     double candEst = modelMb * (1 + 3 + actMultiplier * candArea * candMaxBatch);
                                     suggestions.append(String.format(
-                                            "  - %dpx tiles, batch %d x%d accum "
-                                            + "(effective %d, ~%.0f MB)\n",
-                                            candidate, candMaxBatch, candAccum,
-                                            candMaxBatch * candAccum, candEst));
+                                            "  - %dpx tiles, batch %d x%d accum " + "(effective %d, ~%.0f MB)\n",
+                                            candidate, candMaxBatch, candAccum, candMaxBatch * candAccum, candEst));
                                     break; // Show best fitting alternative
                                 }
                             }
@@ -5670,7 +5712,7 @@ public class TrainingDialog {
                             if (maeEncoderTileSize > 0 && tileSize != maeEncoderTileSize) {
                                 suggestions.append(String.format(
                                         "\nNote: MAE encoder was pretrained at %dpx -- "
-                                        + "using the same tile size\ngives best weight transfer.\n",
+                                                + "using the same tile size\ngives best weight transfer.\n",
                                         maeEncoderTileSize));
                             }
 
@@ -5679,10 +5721,9 @@ public class TrainingDialog {
                                     + "Increase downsample to compensate for smaller tiles.\n\n"
                                     + "Go back and adjust settings?");
 
-                            boolean goBack = Dialogs.showConfirmDialog("VRAM Warning",
-                                    suggestions.toString());
+                            boolean goBack = Dialogs.showConfirmDialog("VRAM Warning", suggestions.toString());
                             if (goBack) {
-                                return null;  // Stay in dialog so user can adjust
+                                return null; // Stay in dialog so user can adjust
                             }
                         }
                     }
@@ -5718,25 +5759,26 @@ public class TrainingDialog {
             }
 
             // Warn if ALL selected images are val-only (no training data)
-            if (!valOnlyImages.isEmpty() && trainOnlyImages.size() + (selectedImages.size() - trainOnlyImages.size() - valOnlyImages.size()) == 0) {
+            if (!valOnlyImages.isEmpty()
+                    && trainOnlyImages.size() + (selectedImages.size() - trainOnlyImages.size() - valOnlyImages.size())
+                            == 0) {
                 // Every non-val image is train-only or there are no "Both" images;
                 // but more critically, if ALL are val-only there is nothing to train on.
                 long bothCount = imageSelectionList.getItems().stream()
                         .filter(i -> i.selected.get() && i.splitRole.get() == SplitRole.BOTH)
                         .count();
                 if (bothCount == 0 && trainOnlyImages.isEmpty()) {
-                    Dialogs.showWarningNotification("Split Role Warning",
+                    Dialogs.showWarningNotification(
+                            "Split Role Warning",
                             "All selected images are set to 'Val'. "
-                            + "There will be no training data. "
-                            + "Please set at least one image to 'Train' or 'Both'.");
+                                    + "There will be no training data. "
+                                    + "Please set at least one image to 'Train' or 'Both'.");
                     return null;
                 }
             }
 
             // Collect handler-specific parameters (e.g., MuViT architecture config)
-            Map<String, Object> handlerParams = currentHandlerUI != null
-                    ? currentHandlerUI.getParameters()
-                    : Map.of();
+            Map<String, Object> handlerParams = currentHandlerUI != null ? currentHandlerUI.getParameters() : Map.of();
 
             // Extract class colors from selected class items
             Map<String, Integer> classColors = new LinkedHashMap<>();
@@ -5756,8 +5798,7 @@ public class TrainingDialog {
                     classColors,
                     handlerParams,
                     trainOnlyImages,
-                    valOnlyImages
-            );
+                    valOnlyImages);
         }
 
         private Map<String, Boolean> buildAugmentationConfig() {
@@ -5782,46 +5823,42 @@ public class TrainingDialog {
             double frac = DLClassifierPreferences.getCacheBoundedFraction();
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
             alert.setTitle("Bounded cache mode");
-            alert.setHeaderText("Training will use a SUBSET of your dataset, "
-                    + "not the full data");
+            alert.setHeaderText("Training will use a SUBSET of your dataset, " + "not the full data");
 
-            Label message = new Label(
-                    "You have selected 'bounded' for the in-memory dataset "
-                            + "cache.\n\n"
-                            + "What this does:\n"
-                            + "  - At training start, a stratified random "
-                            + "subset of patches that fits in "
-                            + String.format("%.0f%%", frac * 100)
-                            + " of available RAM is loaded into memory.\n"
-                            + "  - Every epoch trains on the SAME subset. "
-                            + "Patches outside the subset are NOT seen by "
-                            + "the model in this run.\n"
-                            + "  - Each class is guaranteed at least one "
-                            + "patch in the subset (rare-class floor).\n\n"
-                            + "Implications:\n"
-                            + "  - Total gradient steps = epochs x "
-                            + "subset_size, not epochs x full_dataset_size.\n"
-                            + "  - If the subset is small, the model may "
-                            + "overfit it. Validation IoU on the full set "
-                            + "is the correct quality signal.\n"
-                            + "  - This is intended for cases where disk "
-                            + "streaming is too slow and you accept training "
-                            + "on a subset. For full-dataset training, set "
-                            + "the cache mode to 'auto' or 'off'.\n\n"
-                            + "The subset size and coverage will be reported "
-                            + "in the progress monitor once training starts.");
+            Label message = new Label("You have selected 'bounded' for the in-memory dataset "
+                    + "cache.\n\n"
+                    + "What this does:\n"
+                    + "  - At training start, a stratified random "
+                    + "subset of patches that fits in "
+                    + String.format("%.0f%%", frac * 100)
+                    + " of available RAM is loaded into memory.\n"
+                    + "  - Every epoch trains on the SAME subset. "
+                    + "Patches outside the subset are NOT seen by "
+                    + "the model in this run.\n"
+                    + "  - Each class is guaranteed at least one "
+                    + "patch in the subset (rare-class floor).\n\n"
+                    + "Implications:\n"
+                    + "  - Total gradient steps = epochs x "
+                    + "subset_size, not epochs x full_dataset_size.\n"
+                    + "  - If the subset is small, the model may "
+                    + "overfit it. Validation IoU on the full set "
+                    + "is the correct quality signal.\n"
+                    + "  - This is intended for cases where disk "
+                    + "streaming is too slow and you accept training "
+                    + "on a subset. For full-dataset training, set "
+                    + "the cache mode to 'auto' or 'off'.\n\n"
+                    + "The subset size and coverage will be reported "
+                    + "in the progress monitor once training starts.");
             message.setWrapText(true);
             message.setMaxWidth(520);
 
-            CheckBox dontShowAgain = new CheckBox(
-                    "Do not show this notice again on this machine");
+            CheckBox dontShowAgain = new CheckBox("Do not show this notice again on this machine");
 
             VBox content = new VBox(10, message, dontShowAgain);
             content.setPadding(new Insets(10, 0, 0, 0));
             alert.getDialogPane().setContent(content);
             alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
-            ((Button) alert.getDialogPane().lookupButton(ButtonType.OK))
-                    .setText("Proceed with bounded training");
+            ((Button) alert.getDialogPane().lookupButton(ButtonType.OK)).setText("Proceed with bounded training");
 
             var result = alert.showAndWait();
             if (dontShowAgain.isSelected()) {
@@ -5898,10 +5935,10 @@ public class TrainingDialog {
                     Platform.runLater(() -> {
                         mixedPrecisionCheck.setSelected(false);
                         mixedPrecisionCheck.setDisable(true);
-                        TooltipHelper.install(mixedPrecisionCheck,
-                                "Mixed precision requires an NVIDIA CUDA GPU.\n" +
-                                "Current device: " + device +
-                                " -- this setting has no effect.");
+                        TooltipHelper.install(
+                                mixedPrecisionCheck,
+                                "Mixed precision requires an NVIDIA CUDA GPU.\n" + "Current device: " + device
+                                        + " -- this setting has no effect.");
                     });
                 }
             } catch (Exception e) {
@@ -5911,32 +5948,31 @@ public class TrainingDialog {
 
         /**
          * Updates the tile-settings advisory label based on current tile
-         * size and overlap. Warns the user about small tiles (slow/low
-         * edge context), low overlap (seams), high overlap (wasted
-         * compute), and overlap large enough to force stride=0 at
-         * inference. The values are never silently rewritten -- this is
-         * pure advice, mirroring the VRAM estimate directly above.
+         * size and overlap. Uses the training-specific advisory (small
+         * tile, stride=0, high-overlap waste / leakage risk) rather than
+         * the inference advisory -- low / zero overlap is fine at training
+         * time and intentionally does not warn here. The values are never
+         * silently rewritten; this is pure advice, mirroring the VRAM
+         * estimate directly above.
          */
         private void updateTileAdvisory() {
-            if (tileAdvisoryLabel == null || tileSizeSpinner == null
-                    || overlapSpinner == null) return;
+            if (tileAdvisoryLabel == null || tileSizeSpinner == null || overlapSpinner == null) return;
             int tileSize = tileSizeSpinner.getValue();
             int overlapPct = overlapSpinner.getValue();
-            // Spinner is percentage (0-50); checkTileSettings expects pixels
+            // Spinner is percentage (0-50); checkTrainingTileSettings expects pixels
             int overlap = (int) Math.round(tileSize * overlapPct / 100.0);
-            String advisory = qupath.ext.dlclassifier.model.InferenceConfig
-                    .checkTileSettings(tileSize, overlap);
+            String advisory = qupath.ext.dlclassifier.model.TrainingConfig.checkTrainingTileSettings(tileSize, overlap);
             if (advisory == null) {
                 tileAdvisoryLabel.setVisible(false);
                 tileAdvisoryLabel.setManaged(false);
                 tileAdvisoryLabel.setText("");
                 return;
             }
-            String color = overlap >= tileSize / 2 ? "#CC0000"  // red: stride<=0
-                    : "#CC7A00";                                 // orange: suboptimal
+            String color = overlap >= tileSize / 2
+                    ? "#CC0000" // red: stride<=0
+                    : "#CC7A00"; // orange: suboptimal
             tileAdvisoryLabel.setStyle(
-                    "-fx-font-size: 11px; -fx-text-fill: " + color + ";"
-                    + " -fx-font-weight: bold;");
+                    "-fx-font-size: 11px; -fx-text-fill: " + color + ";" + " -fx-font-weight: bold;");
             tileAdvisoryLabel.setText(advisory);
             tileAdvisoryLabel.setVisible(true);
             tileAdvisoryLabel.setManaged(true);
@@ -5951,8 +5987,11 @@ public class TrainingDialog {
             if (vramEstimateLabel == null) return;
 
             // Hide if no GPU info or controls not yet initialized
-            if (gpuTotalMb <= 0 || architectureCombo == null || backboneCombo == null
-                    || tileSizeSpinner == null || batchSizeSpinner == null) {
+            if (gpuTotalMb <= 0
+                    || architectureCombo == null
+                    || backboneCombo == null
+                    || tileSizeSpinner == null
+                    || batchSizeSpinner == null) {
                 vramEstimateLabel.setText("");
                 return;
             }
@@ -5963,8 +6002,7 @@ public class TrainingDialog {
                 int tileSize = tileSizeSpinner.getValue();
                 int batchSize = batchSizeSpinner.getValue();
                 boolean mixedPrec = mixedPrecisionCheck != null && mixedPrecisionCheck.isSelected();
-                int contextScale = contextScaleCombo != null
-                        ? parseContextScale(contextScaleCombo.getValue()) : 1;
+                int contextScale = contextScaleCombo != null ? parseContextScale(contextScaleCombo.getValue()) : 1;
 
                 double modelMb = estimateModelSizeMb(modelType, backbone);
 
@@ -5987,11 +6025,7 @@ public class TrainingDialog {
                     // claude-reports/2026-04-17_input-size-divisibility.md.
                     int base = tinyUnetBase(backbone);
                     double bytesPerElem = mixedPrec ? 2.0 : 4.0;
-                    double actBytes = (double) batchSize
-                            * base
-                            * effectiveTile * effectiveTile
-                            * bytesPerElem
-                            * 100.0;
+                    double actBytes = (double) batchSize * base * effectiveTile * effectiveTile * bytesPerElem * 100.0;
                     // Model + gradients + Adam state: tiny (< 20 MB even for
                     // small-24x4) but include for completeness.
                     estimatedMb = actBytes / (1024.0 * 1024.0) + 5.0 * modelMb;
@@ -6002,25 +6036,22 @@ public class TrainingDialog {
                     double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
                     if (mixedPrec) actMultiplier *= 0.6;
                     if (contextScale > 1) actMultiplier *= 1.1;
-                    double areaScale = (double)(effectiveTile * effectiveTile)
-                            / (256.0 * 256.0);
-                    estimatedMb = modelMb
-                            * (1 + 3 + actMultiplier * areaScale * batchSize);
+                    double areaScale = (double) (effectiveTile * effectiveTile) / (256.0 * 256.0);
+                    estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
                 }
 
                 double budgetMb = gpuTotalMb * 0.85;
 
                 double pct = (estimatedMb / gpuTotalMb) * 100;
 
-                String tileNote = effectiveTile != tileSize
-                        ? String.format(" [%dpx with context padding]", effectiveTile) : "";
-                String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)%s",
-                        estimatedMb, gpuTotalMb, pct, tileNote);
+                String tileNote =
+                        effectiveTile != tileSize ? String.format(" [%dpx with context padding]", effectiveTile) : "";
+                String text = String.format(
+                        "Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)%s", estimatedMb, gpuTotalMb, pct, tileNote);
 
                 if (estimatedMb > budgetMb) {
                     // Exceeds safe budget -- red warning
-                    vramEstimateLabel.setStyle(
-                            "-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
+                    vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
                     // Find max batch that fits by linearly scaling the
                     // activation term.  Both estimators above are linear in
                     // batchSize so divide the "above budget" excess out.
@@ -6028,7 +6059,10 @@ public class TrainingDialog {
                     int maxBatch = 0;
                     for (int b = batchSize; b >= 1; b--) {
                         double est = 5.0 * modelMb + perBatchMb * b;
-                        if (est <= budgetMb) { maxBatch = b; break; }
+                        if (est <= budgetMb) {
+                            maxBatch = b;
+                            break;
+                        }
                     }
                     if (maxBatch > 0) {
                         text += String.format("  --  EXCEEDS GPU! Try batch %d or smaller tiles", maxBatch);
@@ -6037,8 +6071,7 @@ public class TrainingDialog {
                     }
                 } else if (pct > 75) {
                     // Tight -- orange warning
-                    vramEstimateLabel.setStyle(
-                            "-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
+                    vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
                     text += "  --  tight, may OOM with large augmentations";
                 } else {
                     // OK -- normal color
@@ -6065,11 +6098,11 @@ public class TrainingDialog {
         private static int tinyUnetBase(String backbone) {
             if (backbone == null) return 16;
             return switch (backbone) {
-                case "nano-8x3"     -> 8;
+                case "nano-8x3" -> 8;
                 case "compact-16x3" -> 16;
-                case "tiny-16x4"    -> 16;
-                case "small-24x4"   -> 24;
-                default             -> 16;
+                case "tiny-16x4" -> 16;
+                case "small-24x4" -> 24;
+                default -> 16;
             };
         }
 
@@ -6079,11 +6112,11 @@ public class TrainingDialog {
                 // Per-preset parameter footprint (weights + grads + Adam state ~4x).
                 if (backbone == null) return 1.5;
                 return switch (backbone) {
-                    case "nano-8x3"     -> 0.4;
+                    case "nano-8x3" -> 0.4;
                     case "compact-16x3" -> 0.8;
-                    case "tiny-16x4"    -> 1.5;
-                    case "small-24x4"   -> 3.5;
-                    default             -> 1.5;
+                    case "tiny-16x4" -> 1.5;
+                    case "small-24x4" -> 3.5;
+                    default -> 1.5;
                 };
             }
             if (backbone == null) return 30.0;
@@ -6091,35 +6124,35 @@ public class TrainingDialog {
             // Values include both encoder and decoder parameters.
             return switch (backbone.toLowerCase()) {
                 // ResNet family
-                case "resnet18" -> 47.0;   // ~11.7M params
-                case "resnet34" -> 87.0;   // ~21.8M params
-                case "resnet50" -> 100.0;  // ~25.6M params
+                case "resnet18" -> 47.0; // ~11.7M params
+                case "resnet34" -> 87.0; // ~21.8M params
+                case "resnet50" -> 100.0; // ~25.6M params
                 case "resnet101" -> 170.0; // ~44.5M params
                 case "resnet152" -> 230.0; // ~60.2M params
                 // EfficientNet family
-                case "efficientnet-b0" -> 21.0;  // ~5.3M params
-                case "efficientnet-b1" -> 31.0;  // ~7.8M params
-                case "efficientnet-b2" -> 36.0;  // ~9.1M params
-                case "efficientnet-b3" -> 48.0;  // ~12M params
-                case "efficientnet-b4" -> 76.0;  // ~19.3M params
+                case "efficientnet-b0" -> 21.0; // ~5.3M params
+                case "efficientnet-b1" -> 31.0; // ~7.8M params
+                case "efficientnet-b2" -> 36.0; // ~9.1M params
+                case "efficientnet-b3" -> 48.0; // ~12M params
+                case "efficientnet-b4" -> 76.0; // ~19.3M params
                 case "efficientnet-b5" -> 120.0; // ~30.4M params
                 // DenseNet family
-                case "densenet121" -> 32.0;  // ~8M params
-                case "densenet169" -> 56.0;  // ~14.1M params
-                case "densenet201" -> 80.0;  // ~20M params
+                case "densenet121" -> 32.0; // ~8M params
+                case "densenet169" -> 56.0; // ~14.1M params
+                case "densenet201" -> 80.0; // ~20M params
                 // MobileNet
-                case "mobilenet_v2" -> 14.0;       // ~3.5M params
+                case "mobilenet_v2" -> 14.0; // ~3.5M params
                 case "timm-mobilenetv3_large_100" -> 22.0; // ~5.4M params
                 // Histology-pretrained ResNet-50 variants
-                case "resnet50_lunit-swav", "resnet50_lunit-bt",
-                     "resnet50_kather100k", "resnet50_tcga-brca" -> 100.0; // ~25.6M params
+                case "resnet50_lunit-swav", "resnet50_lunit-bt", "resnet50_kather100k", "resnet50_tcga-brca" ->
+                    100.0; // ~25.6M params
                 // Foundation models (large ViT encoders + UNet decoder)
-                case "h-optimus-0", "midnight" -> 4400.0;  // ~1.1B params ViT-G
-                case "virchow" -> 2500.0;                   // ~632M params ViT-H
-                case "hibou-l", "dinov2-large" -> 1200.0;   // ~304M params ViT-L
-                case "hibou-b" -> 350.0;                     // ~86M params ViT-B
+                case "h-optimus-0", "midnight" -> 4400.0; // ~1.1B params ViT-G
+                case "virchow" -> 2500.0; // ~632M params ViT-H
+                case "hibou-l", "dinov2-large" -> 1200.0; // ~304M params ViT-L
+                case "hibou-b" -> 350.0; // ~86M params ViT-B
                 // Other pathology encoders
-                case "uni", "conch", "phikon" -> 350.0;      // ~86M+ params
+                case "uni", "conch", "phikon" -> 350.0; // ~86M+ params
                 // Default for unknown backbones
                 default -> {
                     // Heuristic: if the name contains "50" or "101", assume larger
@@ -6190,8 +6223,7 @@ public class TrainingDialog {
         }
 
         private static boolean isBoundaryLossSelected(String display) {
-            return "Boundary-softened CE".equals(display)
-                    || "Boundary-softened CE + Dice".equals(display);
+            return "Boundary-softened CE".equals(display) || "Boundary-softened CE + Dice".equals(display);
         }
 
         private static String mapEarlyStoppingMetricToDisplay(String value) {
@@ -6240,8 +6272,7 @@ public class TrainingDialog {
                     .collect(Collectors.toList());
 
             String script = ScriptGenerator.generateTrainingScript(
-                    name, descriptionField.getText().trim(),
-                    config, channelConfig, selectedClasses);
+                    name, descriptionField.getText().trim(), config, channelConfig, selectedClasses);
 
             Clipboard clipboard = Clipboard.getSystemClipboard();
             ClipboardContent content = new ClipboardContent();
@@ -6254,7 +6285,8 @@ public class TrainingDialog {
         private void showCopyFeedback(Button button, String message) {
             Tooltip tooltip = new Tooltip(message);
             tooltip.setAutoHide(true);
-            tooltip.show(button,
+            tooltip.show(
+                    button,
                     button.localToScreen(button.getBoundsInLocal()).getMinX(),
                     button.localToScreen(button.getBoundsInLocal()).getMinY() - 30);
             PauseTransition pause = new PauseTransition(Duration.seconds(2));
@@ -6277,40 +6309,44 @@ public class TrainingDialog {
             content.setPadding(new Insets(10));
             content.setPrefWidth(480);
 
-            Label intro = new Label(
-                    "In basic mode, you choose between three model sizes. All three "
+            Label intro = new Label("In basic mode, you choose between three model sizes. All three "
                     + "use the same proven UNet architecture -- they differ only in "
                     + "capacity (how much the model can learn).");
             intro.setWrapText(true);
             content.getChildren().add(intro);
 
-            content.getChildren().add(createModelEntry(
-                    "Small (ResNet-18)",
-                    "Fastest training and inference. Uses the least GPU memory (~2-3 GB). "
-                    + "Good starting point when you have a small dataset (< 50 training "
-                    + "tiles) or want quick iterations to test your annotations. "
-                    + "May underperform on complex tasks with many classes.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Small (ResNet-18)",
+                            "Fastest training and inference. Uses the least GPU memory (~2-3 GB). "
+                                    + "Good starting point when you have a small dataset (< 50 training "
+                                    + "tiles) or want quick iterations to test your annotations. "
+                                    + "May underperform on complex tasks with many classes.",
+                            null,
+                            null));
 
-            content.getChildren().add(createModelEntry(
-                    "Medium (ResNet-34) -- Recommended",
-                    "Best balance of speed and accuracy for most tasks. Moderate GPU "
-                    + "memory (~3-5 GB). This is the default and works well for "
-                    + "most histology segmentation tasks. Start here unless you "
-                    + "have a reason to choose otherwise.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Medium (ResNet-34) -- Recommended",
+                            "Best balance of speed and accuracy for most tasks. Moderate GPU "
+                                    + "memory (~3-5 GB). This is the default and works well for "
+                                    + "most histology segmentation tasks. Start here unless you "
+                                    + "have a reason to choose otherwise.",
+                            null,
+                            null));
 
-            content.getChildren().add(createModelEntry(
-                    "Large (ResNet-50)",
-                    "Most learning capacity. Needs more GPU memory (~5-8 GB) and "
-                    + "benefits from larger datasets (100+ training tiles). "
-                    + "Choose this when Medium is not capturing enough detail, "
-                    + "or for complex tasks with many tissue classes.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Large (ResNet-50)",
+                            "Most learning capacity. Needs more GPU memory (~5-8 GB) and "
+                                    + "benefits from larger datasets (100+ training tiles). "
+                                    + "Choose this when Medium is not capturing enough detail, "
+                                    + "or for complex tasks with many tissue classes.",
+                            null,
+                            null));
 
             content.getChildren().add(createSectionHeader("Tips"));
-            Label tips = new Label(
-                    "- Start with Medium. Only switch if results are unsatisfactory.\n"
+            Label tips = new Label("- Start with Medium. Only switch if results are unsatisfactory.\n"
                     + "- More training data generally matters more than a larger model.\n"
                     + "- If training is very slow, try Small first to verify your "
                     + "annotations are correct, then retrain with Medium.\n"
@@ -6345,159 +6381,176 @@ public class TrainingDialog {
             // --- Architectures ---
             content.getChildren().add(createSectionHeader("Segmentation Architectures"));
 
-            content.getChildren().add(createModelEntry(
-                    "UNet (Recommended Default)",
-                    "Symmetric encoder-decoder with skip connections. The most widely used "
-                    + "architecture for biomedical image segmentation. Works well for most "
-                    + "tasks including H&E gland segmentation, cell detection, and tissue "
-                    + "classification. Choose this unless you have a specific reason not to.",
-                    "Ronneberger et al. 2015",
-                    "https://arxiv.org/abs/1505.04597"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "UNet (Recommended Default)",
+                            "Symmetric encoder-decoder with skip connections. The most widely used "
+                                    + "architecture for biomedical image segmentation. Works well for most "
+                                    + "tasks including H&E gland segmentation, cell detection, and tissue "
+                                    + "classification. Choose this unless you have a specific reason not to.",
+                            "Ronneberger et al. 2015",
+                            "https://arxiv.org/abs/1505.04597"));
 
-            content.getChildren().add(createModelEntry(
-                    "MuViT (Multi-resolution Vision Transformer)",
-                    "Transformer-based architecture with multi-scale feature fusion. "
-                    + "Supports self-supervised MAE pretraining on your own unlabeled data. "
-                    + "May outperform UNet on tasks requiring long-range context, but "
-                    + "requires more VRAM and training time.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "MuViT (Multi-resolution Vision Transformer)",
+                            "Transformer-based architecture with multi-scale feature fusion. "
+                                    + "Supports self-supervised MAE pretraining on your own unlabeled data. "
+                                    + "May outperform UNet on tasks requiring long-range context, but "
+                                    + "requires more VRAM and training time.",
+                            null,
+                            null));
 
-            content.getChildren().add(createModelEntry(
-                    "Tiny UNet (Lightweight, No Pretrained Weights)",
-                    "A minimal UNet variant with configurable depth and width. "
-                    + "Trains from scratch (no pretrained encoder) so it works with any "
-                    + "number of input channels. Four size presets: Nano (~10K params, "
-                    + "for simple 2-class tasks), Tiny (~138K, default), Compact (~36K), "
-                    + "and Small (~305K). Good for quick experiments or when standard "
-                    + "encoders are too large for your GPU.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Tiny UNet (Lightweight, No Pretrained Weights)",
+                            "A minimal UNet variant with configurable depth and width. "
+                                    + "Trains from scratch (no pretrained encoder) so it works with any "
+                                    + "number of input channels. Four size presets: Nano (~10K params, "
+                                    + "for simple 2-class tasks), Tiny (~138K, default), Compact (~36K), "
+                                    + "and Small (~305K). Good for quick experiments or when standard "
+                                    + "encoders are too large for your GPU.",
+                            null,
+                            null));
 
-            content.getChildren().add(createModelEntry(
-                    "Fast Pretrained (Small RGB Models)",
-                    "Lightweight UNet with mobile-optimized ImageNet encoders. "
-                    + "Designed for fast training and inference with small GPU memory "
-                    + "footprint. Two encoder options: EfficientNet-Lite0 (~4.2M params, "
-                    + "recommended) and MobileNetV3-Small (~2.0M params, fastest). "
-                    + "Good middle ground between Tiny UNet (no pretraining) and full "
-                    + "UNet (heavier encoders).",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Fast Pretrained (Small RGB Models)",
+                            "Lightweight UNet with mobile-optimized ImageNet encoders. "
+                                    + "Designed for fast training and inference with small GPU memory "
+                                    + "footprint. Two encoder options: EfficientNet-Lite0 (~4.2M params, "
+                                    + "recommended) and MobileNetV3-Small (~2.0M params, fastest). "
+                                    + "Good middle ground between Tiny UNet (no pretraining) and full "
+                                    + "UNet (heavier encoders).",
+                            null,
+                            null));
 
             // --- Standard Encoders ---
             content.getChildren().add(createSectionHeader("Standard Encoders (ImageNet-pretrained)"));
 
-            content.getChildren().add(createModelEntry(
-                    "ResNet-34 (Recommended Default)",
-                    "Good balance of speed, accuracy, and memory usage. The best starting "
-                    + "point for most tasks. 21.8M parameters.",
-                    "He et al. 2016",
-                    "https://arxiv.org/abs/1512.03385"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "ResNet-34 (Recommended Default)",
+                            "Good balance of speed, accuracy, and memory usage. The best starting "
+                                    + "point for most tasks. 21.8M parameters.",
+                            "He et al. 2016",
+                            "https://arxiv.org/abs/1512.03385"));
 
-            content.getChildren().add(createModelEntry(
-                    "ResNet-50 / ResNet-101",
-                    "More capacity than ResNet-34. Use for larger datasets or complex "
-                    + "tasks where ResNet-34 plateaus. 25.6M / 44.5M parameters.",
-                    "He et al. 2016",
-                    "https://arxiv.org/abs/1512.03385"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "ResNet-50 / ResNet-101",
+                            "More capacity than ResNet-34. Use for larger datasets or complex "
+                                    + "tasks where ResNet-34 plateaus. 25.6M / 44.5M parameters.",
+                            "He et al. 2016",
+                            "https://arxiv.org/abs/1512.03385"));
 
-            content.getChildren().add(createModelEntry(
-                    "EfficientNet-B0 / B1 / B2",
-                    "Compound-scaled networks, lighter than ResNets. Good for "
-                    + "low-VRAM GPUs or when inference speed is critical. B0 is the "
-                    + "smallest (5.3M params), B2 the largest (9.2M params).",
-                    "Tan & Le 2019",
-                    "https://arxiv.org/abs/1905.11946"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "EfficientNet-B0 / B1 / B2",
+                            "Compound-scaled networks, lighter than ResNets. Good for "
+                                    + "low-VRAM GPUs or when inference speed is critical. B0 is the "
+                                    + "smallest (5.3M params), B2 the largest (9.2M params).",
+                            "Tan & Le 2019",
+                            "https://arxiv.org/abs/1905.11946"));
 
-            content.getChildren().add(createModelEntry(
-                    "MobileNet-V2",
-                    "Very lightweight encoder designed for mobile/edge deployment. "
-                    + "Fastest inference of the standard encoders (~3.5M params). "
-                    + "Good when inference speed is the top priority.",
-                    "Sandler et al. 2018",
-                    "https://arxiv.org/abs/1801.04381"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "MobileNet-V2",
+                            "Very lightweight encoder designed for mobile/edge deployment. "
+                                    + "Fastest inference of the standard encoders (~3.5M params). "
+                                    + "Good when inference speed is the top priority.",
+                            "Sandler et al. 2018",
+                            "https://arxiv.org/abs/1801.04381"));
 
             // --- Histology Encoders ---
-            content.getChildren().add(createSectionHeader(
-                    "Histology-Pretrained Encoders (Best for H&E)"));
+            content.getChildren().add(createSectionHeader("Histology-Pretrained Encoders (Best for H&E)"));
 
-            content.getChildren().add(new Label(
-                    "These ResNet-50 encoders were self-supervised on millions of H&E "
-                    + "tissue patches at 20x magnification. They already understand tissue "
-                    + "morphology, which gives a significant head start over ImageNet weights "
-                    + "for histopathology tasks."));
+            content.getChildren()
+                    .add(new Label("These ResNet-50 encoders were self-supervised on millions of H&E "
+                            + "tissue patches at 20x magnification. They already understand tissue "
+                            + "morphology, which gives a significant head start over ImageNet weights "
+                            + "for histopathology tasks."));
 
-            content.getChildren().add(createModelEntry(
-                    "Lunit SwAV / Lunit Barlow Twins",
-                    "Trained on 30M+ H&E patches from TCGA using SwAV or Barlow Twins "
-                    + "self-supervised learning. Among the best-performing histology encoders "
-                    + "for downstream tasks. Non-commercial license.",
-                    "Kang et al. 2023",
-                    "https://doi.org/10.1038/s41591-023-02512-1"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Lunit SwAV / Lunit Barlow Twins",
+                            "Trained on 30M+ H&E patches from TCGA using SwAV or Barlow Twins "
+                                    + "self-supervised learning. Among the best-performing histology encoders "
+                                    + "for downstream tasks. Non-commercial license.",
+                            "Kang et al. 2023",
+                            "https://doi.org/10.1038/s41591-023-02512-1"));
 
-            content.getChildren().add(createModelEntry(
-                    "Kather100K",
-                    "Trained on 100K H&E patches across 9 tissue types from the NCT-CRC "
-                    + "colorectal cancer dataset. Good for colorectal tissue analysis.",
-                    "Kather et al. 2019",
-                    "https://doi.org/10.1038/s41591-019-0462-y"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Kather100K",
+                            "Trained on 100K H&E patches across 9 tissue types from the NCT-CRC "
+                                    + "colorectal cancer dataset. Good for colorectal tissue analysis.",
+                            "Kather et al. 2019",
+                            "https://doi.org/10.1038/s41591-019-0462-y"));
 
-            content.getChildren().add(createModelEntry(
-                    "TCGA-BRCA",
-                    "SimCLR self-supervised training on TCGA breast cancer slides. "
-                    + "Specifically tuned for breast tissue morphology.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "TCGA-BRCA",
+                            "SimCLR self-supervised training on TCGA breast cancer slides. "
+                                    + "Specifically tuned for breast tissue morphology.",
+                            null,
+                            null));
 
             // --- Foundation Models ---
-            content.getChildren().add(createSectionHeader(
-                    "Foundation Models (Large-Scale, Downloaded On-Demand)"));
+            content.getChildren().add(createSectionHeader("Foundation Models (Large-Scale, Downloaded On-Demand)"));
 
-            content.getChildren().add(new Label(
-                    "Large vision transformers (86M-1.1B parameters) trained on millions "
-                    + "of pathology or natural images. Powerful but require more VRAM and "
-                    + "download 200MB-2GB on first use. Best when you have limited labeled data."));
+            content.getChildren()
+                    .add(new Label("Large vision transformers (86M-1.1B parameters) trained on millions "
+                            + "of pathology or natural images. Powerful but require more VRAM and "
+                            + "download 200MB-2GB on first use. Best when you have limited labeled data."));
 
-            content.getChildren().add(createModelEntry(
-                    "H-optimus-0 (Bioptimus) -- GATED",
-                    "ViT-G pathology foundation model trained on 500K+ whole slide images. "
-                    + "1.1B parameters, 1536-dim features. Apache 2.0 license. "
-                    + "Requires HuggingFace token (see below).",
-                    "Filiot et al. 2024",
-                    "https://arxiv.org/abs/2309.07778"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "H-optimus-0 (Bioptimus) -- GATED",
+                            "ViT-G pathology foundation model trained on 500K+ whole slide images. "
+                                    + "1.1B parameters, 1536-dim features. Apache 2.0 license. "
+                                    + "Requires HuggingFace token (see below).",
+                            "Filiot et al. 2024",
+                            "https://arxiv.org/abs/2309.07778"));
 
-            content.getChildren().add(createModelEntry(
-                    "Virchow (Paige AI) -- GATED",
-                    "ViT-H pathology foundation model trained on 1.5M slides from "
-                    + "diverse tissue types. 632M parameters. Apache 2.0 license. "
-                    + "Requires HuggingFace token (see below).",
-                    "Vorontsov et al. 2024",
-                    "https://arxiv.org/abs/2309.07778"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Virchow (Paige AI) -- GATED",
+                            "ViT-H pathology foundation model trained on 1.5M slides from "
+                                    + "diverse tissue types. 632M parameters. Apache 2.0 license. "
+                                    + "Requires HuggingFace token (see below).",
+                            "Vorontsov et al. 2024",
+                            "https://arxiv.org/abs/2309.07778"));
 
-            content.getChildren().add(createModelEntry(
-                    "Hibou-B / Hibou-L (HistAI) -- GATED",
-                    "DINOv2-based pathology models. Hibou-B (86M params) is lighter, "
-                    + "Hibou-L (304M params) is more powerful. Apache 2.0 license. "
-                    + "Requires HuggingFace token (see below).",
-                    "Nechaev et al. 2024",
-                    "https://arxiv.org/abs/2406.09414"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Hibou-B / Hibou-L (HistAI) -- GATED",
+                            "DINOv2-based pathology models. Hibou-B (86M params) is lighter, "
+                                    + "Hibou-L (304M params) is more powerful. Apache 2.0 license. "
+                                    + "Requires HuggingFace token (see below).",
+                            "Nechaev et al. 2024",
+                            "https://arxiv.org/abs/2406.09414"));
 
-            content.getChildren().add(createModelEntry(
-                    "Midnight (Kaiko AI) -- ungated",
-                    "ViT-G trained on TCGA data only. 1.1B parameters. "
-                    + "MIT license. No authentication required.",
-                    null, null));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Midnight (Kaiko AI) -- ungated",
+                            "ViT-G trained on TCGA data only. 1.1B parameters. "
+                                    + "MIT license. No authentication required.",
+                            null,
+                            null));
 
-            content.getChildren().add(createModelEntry(
-                    "DINOv2-Large (Meta) -- ungated",
-                    "General-purpose vision transformer, not histology-specific. "
-                    + "Can work for non-H&E or unusual staining. 304M parameters. "
-                    + "Apache 2.0 license. No authentication required.",
-                    "Oquab et al. 2024",
-                    "https://arxiv.org/abs/2304.07193"));
+            content.getChildren()
+                    .add(createModelEntry(
+                            "DINOv2-Large (Meta) -- ungated",
+                            "General-purpose vision transformer, not histology-specific. "
+                                    + "Can work for non-H&E or unusual staining. 304M parameters. "
+                                    + "Apache 2.0 license. No authentication required.",
+                            "Oquab et al. 2024",
+                            "https://arxiv.org/abs/2304.07193"));
 
             // --- Gated Model Access ---
-            content.getChildren().add(createSectionHeader(
-                    "Accessing Gated Models (HuggingFace Token)"));
-            Label gatedExplain = new Label(
-                    "Some foundation models (marked GATED above) require you to accept "
+            content.getChildren().add(createSectionHeader("Accessing Gated Models (HuggingFace Token)"));
+            Label gatedExplain = new Label("Some foundation models (marked GATED above) require you to accept "
                     + "a license agreement on HuggingFace before downloading. To use them:\n\n"
                     + "1. Create a free account at huggingface.co\n"
                     + "2. Visit the model's page (e.g. bioptimus/H-optimus-0) and click\n"
@@ -6527,8 +6580,7 @@ public class TrainingDialog {
             Hyperlink hfTokenLink = new Hyperlink("HuggingFace: Create Access Token");
             hfTokenLink.setOnAction(e -> {
                 try {
-                    java.awt.Desktop.getDesktop().browse(
-                            java.net.URI.create("https://huggingface.co/settings/tokens"));
+                    java.awt.Desktop.getDesktop().browse(java.net.URI.create("https://huggingface.co/settings/tokens"));
                 } catch (Exception ex) {
                     logger.debug("Could not open HuggingFace URL: {}", ex.getMessage());
                 }
@@ -6537,8 +6589,7 @@ public class TrainingDialog {
 
             // --- Recommendation ---
             content.getChildren().add(createSectionHeader("Quick Recommendation"));
-            Label recommendation = new Label(
-                    "For most tasks: UNet + ResNet-34 (start here).\n"
+            Label recommendation = new Label("For most tasks: UNet + ResNet-34 (start here).\n"
                     + "For H&E histology: UNet + Lunit SwAV or Kather100K encoder.\n"
                     + "For fluorescence/multi-channel: UNet + ResNet-34.\n"
                     + "For limited labeled data: UNet + foundation model (H-optimus-0).\n"
@@ -6559,13 +6610,11 @@ public class TrainingDialog {
 
         private Label createSectionHeader(String text) {
             Label header = new Label(text);
-            header.setStyle("-fx-font-weight: bold; -fx-font-size: 13; "
-                    + "-fx-padding: 8 0 2 0;");
+            header.setStyle("-fx-font-weight: bold; -fx-font-size: 13; " + "-fx-padding: 8 0 2 0;");
             return header;
         }
 
-        private VBox createModelEntry(String name, String description,
-                                       String paperRef, String paperUrl) {
+        private VBox createModelEntry(String name, String description, String paperRef, String paperUrl) {
             VBox entry = new VBox(2);
             entry.setPadding(new Insets(0, 0, 0, 10));
 
@@ -6581,8 +6630,7 @@ public class TrainingDialog {
                 Hyperlink link = new Hyperlink("Paper: " + paperRef);
                 link.setOnAction(e -> {
                     try {
-                        java.awt.Desktop.getDesktop().browse(
-                                java.net.URI.create(paperUrl));
+                        java.awt.Desktop.getDesktop().browse(java.net.URI.create(paperUrl));
                     } catch (Exception ex) {
                         logger.debug("Could not open URL: {}", ex.getMessage());
                     }
@@ -6600,8 +6648,7 @@ public class TrainingDialog {
      */
     private static class ModelPickerDialog {
 
-        static Optional<ClassifierMetadata> show(Window owner,
-                                                   List<ClassifierMetadata> classifiers) {
+        static Optional<ClassifierMetadata> show(Window owner, List<ClassifierMetadata> classifiers) {
             return show(owner, classifiers, null);
         }
 
@@ -6614,9 +6661,8 @@ public class TrainingDialog {
          * hidden rows by their architecture so the user can see what was
          * filtered and change the combo if they want a different one.
          */
-        static Optional<ClassifierMetadata> show(Window owner,
-                                                   List<ClassifierMetadata> classifiers,
-                                                   String currentArchitecture) {
+        static Optional<ClassifierMetadata> show(
+                Window owner, List<ClassifierMetadata> classifiers, String currentArchitecture) {
             Dialog<ClassifierMetadata> dialog = new Dialog<>();
             dialog.initOwner(owner);
             dialog.setTitle("Select Model");
@@ -6656,23 +6702,19 @@ public class TrainingDialog {
             nameCol.setPrefWidth(180);
 
             TableColumn<ClassifierMetadata, String> archCol = new TableColumn<>("Architecture");
-            archCol.setCellValueFactory(cd ->
-                    new javafx.beans.property.SimpleStringProperty(
-                            cd.getValue().getModelType() + " / " + cd.getValue().getBackbone()));
+            archCol.setCellValueFactory(cd -> new javafx.beans.property.SimpleStringProperty(
+                    cd.getValue().getModelType() + " / " + cd.getValue().getBackbone()));
             archCol.setPrefWidth(160);
 
             TableColumn<ClassifierMetadata, String> classesCol = new TableColumn<>("Classes");
-            classesCol.setCellValueFactory(cd ->
-                    new javafx.beans.property.SimpleStringProperty(
-                            String.join(", ", cd.getValue().getClassNames())));
+            classesCol.setCellValueFactory(cd -> new javafx.beans.property.SimpleStringProperty(
+                    String.join(", ", cd.getValue().getClassNames())));
             classesCol.setPrefWidth(150);
 
             TableColumn<ClassifierMetadata, String> dateCol = new TableColumn<>("Date");
             dateCol.setCellValueFactory(cd -> {
                 var dt = cd.getValue().getCreatedAt();
-                String text = dt != null
-                        ? dt.toLocalDate().toString()
-                        : "";
+                String text = dt != null ? dt.toLocalDate().toString() : "";
                 return new javafx.beans.property.SimpleStringProperty(text);
             });
             dateCol.setPrefWidth(90);
@@ -6695,8 +6737,8 @@ public class TrainingDialog {
 
             // Disable OK until a row is selected
             Button okButton = (Button) dialog.getDialogPane().lookupButton(okType);
-            okButton.disableProperty().bind(
-                    table.getSelectionModel().selectedItemProperty().isNull());
+            okButton.disableProperty()
+                    .bind(table.getSelectionModel().selectedItemProperty().isNull());
 
             // Double-click to confirm
             table.setOnMouseClicked(event -> {
@@ -6707,7 +6749,9 @@ public class TrainingDialog {
 
             VBox root = new VBox(6, table);
             if (!hiddenByArch.isEmpty()) {
-                long hiddenTotal = hiddenByArch.values().stream().mapToLong(Long::longValue).sum();
+                long hiddenTotal = hiddenByArch.values().stream()
+                        .mapToLong(Long::longValue)
+                        .sum();
                 String breakdown = hiddenByArch.entrySet().stream()
                         .map(en -> en.getValue() + " " + en.getKey())
                         .collect(Collectors.joining(", "));
@@ -6740,12 +6784,16 @@ public class TrainingDialog {
     /**
      * Represents a class item in the list.
      */
-    private record ClassItem(String name, Integer color,
-                              javafx.beans.property.BooleanProperty selected,
-                              javafx.beans.property.DoubleProperty weightMultiplier,
-                              double annotationArea) {
+    private record ClassItem(
+            String name,
+            Integer color,
+            javafx.beans.property.BooleanProperty selected,
+            javafx.beans.property.DoubleProperty weightMultiplier,
+            double annotationArea) {
         public ClassItem(String name, Integer color, boolean selected, double annotationArea) {
-            this(name, color,
+            this(
+                    name,
+                    color,
                     new javafx.beans.property.SimpleBooleanProperty(selected),
                     new javafx.beans.property.SimpleDoubleProperty(1.0),
                     annotationArea);
@@ -6783,12 +6831,11 @@ public class TrainingDialog {
             weightSpinner = new Spinner<>(0.1, 10.0, 1.0, 0.1);
             weightSpinner.setPrefWidth(80);
             weightSpinner.setEditable(true);
-            weightSpinner.setTooltip(TooltipHelper.create(
-                    "Multiplier applied to auto-computed class weight.\n" +
-                    "1.0 = no change. >1.0 emphasizes this class.\n" +
-                    "Use to boost underperforming or rare classes.\n\n" +
-                    "Example: Set to 2.0 for a class with few annotations\n" +
-                    "to give it more influence during training."));
+            weightSpinner.setTooltip(TooltipHelper.create("Multiplier applied to auto-computed class weight.\n"
+                    + "1.0 = no change. >1.0 emphasizes this class.\n"
+                    + "Use to boost underperforming or rare classes.\n\n"
+                    + "Example: Set to 2.0 for a class with few annotations\n"
+                    + "to give it more influence during training."));
 
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -6907,8 +6954,8 @@ public class TrainingDialog {
         final javafx.beans.property.BooleanProperty selected;
         final javafx.beans.property.ObjectProperty<SplitRole> splitRole;
 
-        ImageSelectionItem(ProjectImageEntry<BufferedImage> entry, long annotationCount,
-                           int imageWidth, int imageHeight) {
+        ImageSelectionItem(
+                ProjectImageEntry<BufferedImage> entry, long annotationCount, int imageWidth, int imageHeight) {
             this.entry = entry;
             this.imageName = entry.getImageName() + " (" + annotationCount + " annotations)";
             this.annotationCount = annotationCount;
@@ -6930,8 +6977,8 @@ public class TrainingDialog {
 
         private final javafx.beans.property.BooleanProperty advancedMode;
         private final CheckBox checkBox = new CheckBox();
-        private final ComboBox<SplitRole> roleCombo = new ComboBox<>(
-                FXCollections.observableArrayList(SplitRole.values()));
+        private final ComboBox<SplitRole> roleCombo =
+                new ComboBox<>(FXCollections.observableArrayList(SplitRole.values()));
         private final HBox content = new HBox(6);
 
         private javafx.beans.property.BooleanProperty boundSelectedProperty;
@@ -7010,8 +7057,9 @@ public class TrainingDialog {
         private javafx.beans.property.BooleanProperty boundSelectedProperty;
         private javafx.beans.value.ChangeListener<Boolean> itemToCheckboxListener;
 
-        CheckBoxListCell(java.util.function.Function<T, javafx.beans.property.BooleanProperty> selectedExtractor,
-                         java.util.function.Function<T, String> textExtractor) {
+        CheckBoxListCell(
+                java.util.function.Function<T, javafx.beans.property.BooleanProperty> selectedExtractor,
+                java.util.function.Function<T, String> textExtractor) {
             this.selectedExtractor = selectedExtractor;
             this.textExtractor = textExtractor;
         }

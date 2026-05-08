@@ -1,11 +1,10 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.util.Arrays;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ChannelConfiguration.NormalizationStrategy;
-
-import java.util.Arrays;
 
 /**
  * Normalizes image channel data for deep learning input.
@@ -62,8 +61,12 @@ public class ChannelNormalizer {
      * @param fixedMin        minimum value (for FIXED_RANGE strategy)
      * @param fixedMax        maximum value (for FIXED_RANGE strategy)
      */
-    public ChannelNormalizer(NormalizationStrategy strategy, boolean perChannel,
-                             double clipPercentile, double fixedMin, double fixedMax) {
+    public ChannelNormalizer(
+            NormalizationStrategy strategy,
+            boolean perChannel,
+            double clipPercentile,
+            double fixedMin,
+            double fixedMax) {
         this.strategy = strategy;
         this.perChannel = perChannel;
         this.clipPercentile = clipPercentile;
@@ -268,8 +271,8 @@ public class ChannelNormalizer {
                     if (range < 1e-8) range = 1;
 
                     // Clip to percentile range
-                    float clipped = Math.max((float) channelMins[channelIdx],
-                            Math.min((float) channelMaxs[channelIdx], data[y][x][c]));
+                    float clipped = Math.max(
+                            (float) channelMins[channelIdx], Math.min((float) channelMaxs[channelIdx], data[y][x][c]));
                     float normalized = (float) ((clipped - channelMins[channelIdx]) / range);
                     output[y][x][c] = Math.max(0, Math.min(1, normalized));
                 }
@@ -288,8 +291,7 @@ public class ChannelNormalizer {
             for (int x = 0; x < width; x++) {
                 for (int c = 0; c < numChannels; c++) {
                     int channelIdx = perChannel ? c : 0;
-                    float normalized = (float) ((data[y][x][c] - channelMeans[channelIdx])
-                            / channelStds[channelIdx]);
+                    float normalized = (float) ((data[y][x][c] - channelMeans[channelIdx]) / channelStds[channelIdx]);
                     // Z-score output is unbounded, clamp to reasonable range
                     output[y][x][c] = Math.max(-5, Math.min(5, normalized));
                 }
@@ -300,8 +302,7 @@ public class ChannelNormalizer {
     /**
      * Fixed range normalization based on bit depth.
      */
-    private void normalizeFixedRange(float[][][] data, float[][][] output,
-                                     int numChannels, int bitDepth) {
+    private void normalizeFixedRange(float[][][] data, float[][][] output, int numChannels, int bitDepth) {
         int height = data.length;
         int width = data[0].length;
 

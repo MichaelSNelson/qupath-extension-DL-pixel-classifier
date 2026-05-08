@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.service;
 
+import java.awt.image.BufferedImage;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -14,8 +15,6 @@ import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.gui.viewer.overlays.PixelClassificationOverlay;
 import qupath.lib.images.ImageData;
-
-import java.awt.image.BufferedImage;
 
 /**
  * Service for managing DL pixel classification overlays in QuPath viewers.
@@ -45,11 +44,13 @@ public class OverlayService {
 
     /** Stored construction parameters for overlay re-creation with new settings. */
     private ClassifierMetadata currentMetadata;
+
     private ChannelConfiguration currentChannelConfig;
     private ImageData<BufferedImage> currentImageData;
 
     /** User's model selection -- persists even when overlay is removed so toggle can re-create. */
     private ClassifierMetadata selectedMetadata;
+
     private ChannelConfiguration selectedChannelConfig;
 
     /** Observable property tracking whether live prediction is active. */
@@ -85,8 +86,7 @@ public class OverlayService {
      * @param imageData  the image data to overlay
      * @param classifier the pixel classifier (DLPixelClassifier or PrecomputedPixelClassifier)
      */
-    public void applyClassifierOverlay(ImageData<BufferedImage> imageData,
-                                        PixelClassifier classifier) {
+    public void applyClassifierOverlay(ImageData<BufferedImage> imageData, PixelClassifier classifier) {
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) {
             logger.warn("QuPath GUI not available - cannot apply overlay");
@@ -98,9 +98,7 @@ public class OverlayService {
 
         // Create the overlay using QuPath's native system
         var overlay = PixelClassificationOverlay.create(
-                qupath.getOverlayOptions(),
-                classifier,
-                Runtime.getRuntime().availableProcessors());
+                qupath.getOverlayOptions(), classifier, Runtime.getRuntime().availableProcessors());
 
         // Enable live prediction so tiles are classified as the user navigates
         overlay.setLivePrediction(true);
@@ -132,10 +130,11 @@ public class OverlayService {
      * @param metadata      classifier metadata (stored for re-creation)
      * @param channelConfig channel configuration (stored for re-creation)
      */
-    public void applyClassifierOverlay(ImageData<BufferedImage> imageData,
-                                        PixelClassifier classifier,
-                                        ClassifierMetadata metadata,
-                                        ChannelConfiguration channelConfig) {
+    public void applyClassifierOverlay(
+            ImageData<BufferedImage> imageData,
+            PixelClassifier classifier,
+            ClassifierMetadata metadata,
+            ChannelConfiguration channelConfig) {
         // Call 2-arg first (which calls removeOverlay, clearing old params),
         // then store the new params. Previous order stored THEN cleared them.
         applyClassifierOverlay(imageData, classifier);
@@ -204,10 +203,9 @@ public class OverlayService {
 
         showInferenceInteractionWarnings(config, selectedMetadata);
 
-        DLPixelClassifier pixelClassifier = new DLPixelClassifier(
-                selectedMetadata, selectedChannelConfig, config, imageData);
-        applyClassifierOverlay(imageData, pixelClassifier,
-                selectedMetadata, selectedChannelConfig);
+        DLPixelClassifier pixelClassifier =
+                new DLPixelClassifier(selectedMetadata, selectedChannelConfig, config, imageData);
+        applyClassifierOverlay(imageData, pixelClassifier, selectedMetadata, selectedChannelConfig);
         return true;
     }
 
@@ -219,16 +217,13 @@ public class OverlayService {
      * proceeds. Suppressed watchers are silent.
      */
     private void showInferenceInteractionWarnings(
-            InferenceConfig config,
-            qupath.ext.dlclassifier.model.ClassifierMetadata metadata) {
+            InferenceConfig config, qupath.ext.dlclassifier.model.ClassifierMetadata metadata) {
         try {
-            var warnings = qupath.ext.dlclassifier.service.warnings
-                    .InteractionWarningService.evaluate(config, metadata);
-            var visible = qupath.ext.dlclassifier.service.warnings
-                    .InteractionWarningService.filterVisible(warnings);
+            var warnings =
+                    qupath.ext.dlclassifier.service.warnings.InteractionWarningService.evaluate(config, metadata);
+            var visible = qupath.ext.dlclassifier.service.warnings.InteractionWarningService.filterVisible(warnings);
             if (!visible.isEmpty()) {
-                qupath.ext.dlclassifier.service.warnings
-                        .InteractionWarningService.showIfAny(visible, null);
+                qupath.ext.dlclassifier.service.warnings.InteractionWarningService.showIfAny(visible, null);
             }
         } catch (RuntimeException ex) {
             // A buggy watcher must never prevent overlay creation.
@@ -267,10 +262,9 @@ public class OverlayService {
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 
-        DLPixelClassifier pixelClassifier = new DLPixelClassifier(
-                currentMetadata, currentChannelConfig, newConfig, currentImageData);
-        applyClassifierOverlay(currentImageData, pixelClassifier,
-                currentMetadata, currentChannelConfig);
+        DLPixelClassifier pixelClassifier =
+                new DLPixelClassifier(currentMetadata, currentChannelConfig, newConfig, currentImageData);
+        applyClassifierOverlay(currentImageData, pixelClassifier, currentMetadata, currentChannelConfig);
         return true;
     }
 
@@ -334,14 +328,16 @@ public class OverlayService {
             DLPixelClassifier classifierToCleanup = currentClassifier;
             currentClassifier = null;
             if (classifierToCleanup != null) {
-                Thread cleanupThread = new Thread(() -> {
-                    try {
-                        Thread.sleep(2000);
-                    } catch (InterruptedException ignored) {
-                        Thread.currentThread().interrupt();
-                    }
-                    classifierToCleanup.cleanup();
-                }, "dl-classifier-cleanup");
+                Thread cleanupThread = new Thread(
+                        () -> {
+                            try {
+                                Thread.sleep(2000);
+                            } catch (InterruptedException ignored) {
+                                Thread.currentThread().interrupt();
+                            }
+                            classifierToCleanup.cleanup();
+                        },
+                        "dl-classifier-cleanup");
                 cleanupThread.setDaemon(true);
                 cleanupThread.start();
             }

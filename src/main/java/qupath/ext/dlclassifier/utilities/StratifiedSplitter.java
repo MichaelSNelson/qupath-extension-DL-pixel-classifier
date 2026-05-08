@@ -1,8 +1,5 @@
 package qupath.ext.dlclassifier.utilities;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -12,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Computes stratified train/validation splits for patch-based training data.
@@ -51,9 +50,8 @@ public final class StratifiedSplitter {
      * @param numClasses        total number of classes
      * @return boolean array where true = validation patch
      */
-    public static boolean[] computeStratifiedSplit(List<Set<Integer>> classPresenceSets,
-                                                    double validationSplit,
-                                                    int numClasses) {
+    public static boolean[] computeStratifiedSplit(
+            List<Set<Integer>> classPresenceSets, double validationSplit, int numClasses) {
         int total = classPresenceSets.size();
         boolean[] isValidation = new boolean[total];
 
@@ -62,21 +60,22 @@ public final class StratifiedSplitter {
         }
 
         // Ensure at least 1 patch remains for training
-        int targetValCount = Math.min(
-                Math.max(1, (int) Math.round(total * validationSplit)),
-                total - 1);
+        int targetValCount = Math.min(Math.max(1, (int) Math.round(total * validationSplit)), total - 1);
 
         // Build inverted index: classIndex -> list of patch indices containing that class
         Map<Integer, List<Integer>> classToPatchIndices = new HashMap<>();
         for (int i = 0; i < total; i++) {
             for (int classIdx : classPresenceSets.get(i)) {
-                classToPatchIndices.computeIfAbsent(classIdx, k -> new ArrayList<>()).add(i);
+                classToPatchIndices
+                        .computeIfAbsent(classIdx, k -> new ArrayList<>())
+                        .add(i);
             }
         }
 
         // Sort classes by ascending frequency (rarest first)
         List<Integer> classesByFrequency = new ArrayList<>(classToPatchIndices.keySet());
-        classesByFrequency.sort(Comparator.comparingInt(c -> classToPatchIndices.get(c).size()));
+        classesByFrequency.sort(
+                Comparator.comparingInt(c -> classToPatchIndices.get(c).size()));
 
         // Guarantee phase: ensure every class has at least one validation patch
         Set<Integer> coveredClasses = new HashSet<>();
@@ -87,8 +86,7 @@ public final class StratifiedSplitter {
 
             // Stop if assigning another validation patch would leave zero for training
             if (valAssigned >= total - 1) {
-                logger.warn("Cannot guarantee class {} in validation: "
-                        + "would leave 0 training patches", classIdx);
+                logger.warn("Cannot guarantee class {} in validation: " + "would leave 0 training patches", classIdx);
                 break;
             }
 
@@ -141,9 +139,8 @@ public final class StratifiedSplitter {
      * @param isValidation      boolean array from computeStratifiedSplit
      * @param classNames        ordered list of class names
      */
-    public static void logSplitStatistics(List<Set<Integer>> classPresenceSets,
-                                           boolean[] isValidation,
-                                           List<String> classNames) {
+    public static void logSplitStatistics(
+            List<Set<Integer>> classPresenceSets, boolean[] isValidation, List<String> classNames) {
         int numClasses = classNames.size();
         int[] trainCounts = new int[numClasses];
         int[] valCounts = new int[numClasses];
@@ -165,15 +162,18 @@ public final class StratifiedSplitter {
 
         logger.info("Stratified split: {} train, {} validation patches", totalTrain, totalVal);
         for (int i = 0; i < numClasses; i++) {
-            logger.info("  Class '{}': {} train patches, {} val patches",
-                    classNames.get(i), trainCounts[i], valCounts[i]);
+            logger.info(
+                    "  Class '{}': {} train patches, {} val patches", classNames.get(i), trainCounts[i], valCounts[i]);
             if (valCounts[i] == 0) {
-                logger.warn("  WARNING: Class '{}' has ZERO validation patches - "
-                        + "validation metrics for this class will be unreliable", classNames.get(i));
+                logger.warn(
+                        "  WARNING: Class '{}' has ZERO validation patches - "
+                                + "validation metrics for this class will be unreliable",
+                        classNames.get(i));
             }
             if (trainCounts[i] == 0) {
-                logger.warn("  WARNING: Class '{}' has ZERO training patches - "
-                        + "model cannot learn this class", classNames.get(i));
+                logger.warn(
+                        "  WARNING: Class '{}' has ZERO training patches - " + "model cannot learn this class",
+                        classNames.get(i));
             }
         }
     }

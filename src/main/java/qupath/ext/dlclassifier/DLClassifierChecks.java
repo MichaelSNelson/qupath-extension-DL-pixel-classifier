@@ -121,16 +121,15 @@ public final class DLClassifierChecks {
      * (health check returns false), so the user must rebuild to proceed.
      */
     private static void showVersionWarningOnce() {
-        if (versionWarningShown)
-            return;
+        if (versionWarningShown) return;
         String warning = ApposeClassifierBackend.getVersionWarning();
         if (warning != null && !warning.isEmpty()) {
             versionWarningShown = true;
-            Platform.runLater(() ->
-                    Dialogs.showErrorNotification("DL Pixel Classifier - Update Required",
-                            "Python environment is out of date.\n" +
-                            "Go to DL Pixel Classifier > Rebuild Python Environment to update.\n" +
-                            "Training and inference are disabled until the environment is rebuilt."));
+            Platform.runLater(() -> Dialogs.showErrorNotification(
+                    "DL Pixel Classifier - Update Required",
+                    "Python environment is out of date.\n"
+                            + "Go to DL Pixel Classifier > Rebuild Python Environment to update.\n"
+                            + "Training and inference are disabled until the environment is rebuilt."));
         }
     }
 }

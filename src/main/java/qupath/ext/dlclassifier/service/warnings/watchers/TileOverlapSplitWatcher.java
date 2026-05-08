@@ -1,7 +1,6 @@
 package qupath.ext.dlclassifier.service.warnings.watchers;
 
 import qupath.ext.dlclassifier.model.TrainingConfig;
-import qupath.ext.dlclassifier.service.warnings.InteractionWarning;
 import qupath.ext.dlclassifier.service.warnings.TrainingWarning;
 
 /**
@@ -28,8 +27,7 @@ public final class TileOverlapSplitWatcher implements TrainingWarning {
 
     @Override
     public String getTitle() {
-        return "Tile overlap + auto split would leak pixels "
-                + "across train/val";
+        return "Tile overlap + auto split would leak pixels " + "across train/val";
     }
 
     @Override
@@ -58,7 +56,6 @@ public final class TileOverlapSplitWatcher implements TrainingWarning {
     @Override
     public boolean check(TrainingConfig config) {
         if (config == null) return false;
-        return config.getOverlap() > 0
-                && !config.isHasPerImageSplitRoles();
+        return config.getOverlap() > 0 && !config.isHasPerImageSplitRoles();
     }
 }
