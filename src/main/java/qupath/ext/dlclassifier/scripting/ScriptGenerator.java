@@ -632,6 +632,17 @@ public class ScriptGenerator {
             skip(stats, "lineStrokeWidth");
         }
 
+        emit(
+                sb,
+                stats,
+                "minAnnotationCoverage",
+                builderCall("minAnnotationCoverage", formatDouble(config.getMinAnnotationCoverage())));
+        emit(
+                sb,
+                stats,
+                "minTileLabelFraction",
+                builderCall("minTileLabelFraction", formatDouble(config.getMinTileLabelFraction())));
+
         Map<String, Double> classWeights = config.getClassWeightMultipliers();
         if (classWeights != null && !classWeights.isEmpty()) {
             emit(

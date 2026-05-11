@@ -63,6 +63,19 @@ public class TrainingConfig {
     // Annotation rendering
     private final int lineStrokeWidth;
 
+    // Sliver-tile filter: a tile is dropped only when BOTH of its coverage
+    // metrics fall below their thresholds (hybrid OR). Either threshold at 0
+    // disables that side of the rule, and both at 0 disables the filter.
+    // - minAnnotationCoverage: the largest fraction of any source annotation
+    //   that must lie inside the tile. Default 0.05 (5%). Catches "corner
+    //   sliver" tiles where only a tiny piece of an annotation falls inside.
+    // - minTileLabelFraction: the fraction of the tile's pixels that must be
+    //   labelled. Default 0.005 (0.5%). Provides an OR escape so tiles that
+    //   sit fully inside huge annotations (whole-tissue polygons) survive
+    //   even though their per-annotation coverage is naturally small.
+    private final double minAnnotationCoverage;
+    private final double minTileLabelFraction;
+
     // Class weight multipliers (user-supplied multipliers on auto-computed inverse-frequency weights)
     private final Map<String, Double> classWeightMultipliers;
 
@@ -159,6 +172,8 @@ public class TrainingConfig {
         this.freezeEncoderLayers = builder.freezeEncoderLayers;
         this.frozenLayers = Collections.unmodifiableList(new ArrayList<>(builder.frozenLayers));
         this.lineStrokeWidth = builder.lineStrokeWidth;
+        this.minAnnotationCoverage = builder.minAnnotationCoverage;
+        this.minTileLabelFraction = builder.minTileLabelFraction;
         this.classWeightMultipliers = Collections.unmodifiableMap(new LinkedHashMap<>(builder.classWeightMultipliers));
         this.contextScale = builder.contextScale;
         this.schedulerType = builder.schedulerType;
@@ -321,6 +336,26 @@ public class TrainingConfig {
      */
     public int getLineStrokeWidth() {
         return lineStrokeWidth;
+    }
+
+    /**
+     * Minimum fraction of any source annotation that must lie inside a tile
+     * for it to be kept (with the tile-label-fraction OR clause).
+     *
+     * @return fraction in [0, 1]; 0 disables the per-annotation side of the rule
+     */
+    public double getMinAnnotationCoverage() {
+        return minAnnotationCoverage;
+    }
+
+    /**
+     * Minimum fraction of a tile that must be labelled for it to be kept
+     * even when its per-annotation coverage is below the threshold above.
+     *
+     * @return fraction in [0, 1]; 0 disables the per-tile side of the rule
+     */
+    public double getMinTileLabelFraction() {
+        return minTileLabelFraction;
     }
 
     /**
@@ -767,6 +802,8 @@ public class TrainingConfig {
                 && usePretrainedWeights == that.usePretrainedWeights
                 && freezeEncoderLayers == that.freezeEncoderLayers
                 && lineStrokeWidth == that.lineStrokeWidth
+                && Double.compare(that.minAnnotationCoverage, minAnnotationCoverage) == 0
+                && Double.compare(that.minTileLabelFraction, minTileLabelFraction) == 0
                 && contextScale == that.contextScale
                 && earlyStoppingPatience == that.earlyStoppingPatience
                 && mixedPrecision == that.mixedPrecision
@@ -818,6 +855,8 @@ public class TrainingConfig {
                 freezeEncoderLayers,
                 frozenLayers,
                 lineStrokeWidth,
+                minAnnotationCoverage,
+                minTileLabelFraction,
                 classWeightMultipliers,
                 contextScale,
                 schedulerType,
@@ -961,6 +1000,8 @@ public class TrainingConfig {
         private int freezeEncoderLayers = 0;
         private List<String> frozenLayers = new ArrayList<>();
         private int lineStrokeWidth = 5;
+        private double minAnnotationCoverage = 0.05;
+        private double minTileLabelFraction = 0.005;
         private Map<String, Double> classWeightMultipliers = new LinkedHashMap<>();
         private int contextScale = 1;
         private String schedulerType = "onecycle";
@@ -1026,6 +1067,8 @@ public class TrainingConfig {
             this.freezeEncoderLayers = config.freezeEncoderLayers;
             this.frozenLayers = new ArrayList<>(config.frozenLayers);
             this.lineStrokeWidth = config.lineStrokeWidth;
+            this.minAnnotationCoverage = config.minAnnotationCoverage;
+            this.minTileLabelFraction = config.minTileLabelFraction;
             this.classWeightMultipliers = new LinkedHashMap<>(config.classWeightMultipliers);
             this.contextScale = config.contextScale;
             this.schedulerType = config.schedulerType;
@@ -1232,6 +1275,32 @@ public class TrainingConfig {
          */
         public Builder lineStrokeWidth(int lineStrokeWidth) {
             this.lineStrokeWidth = lineStrokeWidth;
+            return this;
+        }
+
+        /**
+         * Sets the per-annotation coverage threshold for the sliver-tile filter.
+         * A tile is dropped only when both this threshold and the tile-label
+         * fraction threshold fail. Set to 0 to disable the per-annotation
+         * side of the filter.
+         *
+         * @param fraction coverage fraction in [0, 1] (default 0.05)
+         */
+        public Builder minAnnotationCoverage(double fraction) {
+            this.minAnnotationCoverage = fraction;
+            return this;
+        }
+
+        /**
+         * Sets the per-tile labelled-fraction threshold for the sliver-tile
+         * filter. A tile is dropped only when both this threshold and the
+         * per-annotation coverage threshold fail. Set to 0 to disable the
+         * per-tile side of the filter.
+         *
+         * @param fraction labelled-fraction-of-tile in [0, 1] (default 0.005)
+         */
+        public Builder minTileLabelFraction(double fraction) {
+            this.minTileLabelFraction = fraction;
             return this;
         }
 

@@ -204,6 +204,11 @@ public class TrainingDialog {
         private ComboBox<String> contextScaleCombo;
         private Spinner<Integer> lineStrokeWidthSpinner;
         private Label lineStrokeLabel;
+        // Sliver-tile filter (advanced-only). Both spinners are percentages
+        // shown to the user; converted to fractions before being passed to
+        // TrainingConfig.
+        private Spinner<Double> minAnnotationCoveragePctSpinner;
+        private Spinner<Double> minTileLabelFractionPctSpinner;
 
         // Channel selection
         private ChannelSelectionPanel channelPanel;
@@ -1639,6 +1644,16 @@ public class TrainingDialog {
                             .setValue(((Number) ts.get("line_stroke_width")).intValue());
                 }
 
+                // Sliver-tile filter thresholds (stored as fractions, displayed as %)
+                if (ts.containsKey("min_annotation_coverage") && minAnnotationCoveragePctSpinner != null) {
+                    double frac = ((Number) ts.get("min_annotation_coverage")).doubleValue();
+                    minAnnotationCoveragePctSpinner.getValueFactory().setValue(frac * 100.0);
+                }
+                if (ts.containsKey("min_tile_label_fraction") && minTileLabelFractionPctSpinner != null) {
+                    double frac = ((Number) ts.get("min_tile_label_fraction")).doubleValue();
+                    minTileLabelFractionPctSpinner.getValueFactory().setValue(frac * 100.0);
+                }
+
                 // Pretrained weights -> weight init radio
                 if (ts.containsKey("use_pretrained_weights") && Boolean.TRUE.equals(ts.get("use_pretrained_weights"))) {
                     selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
@@ -2559,6 +2574,8 @@ public class TrainingDialog {
                     .usePretrainedWeights(usePretrained)
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
+                    .minAnnotationCoverage(minAnnotationCoveragePctSpinner.getValue() / 100.0)
+                    .minTileLabelFraction(minTileLabelFractionPctSpinner.getValue() / 100.0)
                     .classWeightMultipliers(getClassWeightMultipliers())
                     .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
                     .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
@@ -3558,6 +3575,57 @@ public class TrainingDialog {
 
             grid.add(lineStrokeLabel, 0, row);
             grid.add(lineStrokeWidthSpinner, 1, row);
+            row++;
+
+            // Sliver-tile filter (advanced only). Two thresholds connected
+            // by an OR: a tile is dropped only when BOTH per-annotation
+            // coverage and per-tile labelled fraction fall below their
+            // values. Spinner values are percentages -- converted to
+            // fractions before being applied to TrainingConfig.
+            minAnnotationCoveragePctSpinner = new Spinner<>(0.0, 25.0, 5.0, 0.5);
+            minAnnotationCoveragePctSpinner.setEditable(true);
+            minAnnotationCoveragePctSpinner.setPrefWidth(100);
+            Label minAnnCovLabel = new Label("Min Annotation Coverage (%):");
+            TooltipHelper.install(
+                    "Drops 'corner sliver' tiles where only a tiny fraction of any\n"
+                            + "source annotation lies inside the tile.\n\n"
+                            + "Default 5%. Raise this if the disagreement heatmap still shows\n"
+                            + "tiles that catch only a few pixels of an annotation; lower it\n"
+                            + "(or set to 0) if the filter is rejecting too many tiles.\n\n"
+                            + "A tile is dropped only when BOTH this threshold AND the\n"
+                            + "Min Tile Label Fraction threshold fail, so tiles deep inside\n"
+                            + "huge polygons (low per-annotation coverage but full of label)\n"
+                            + "are kept.",
+                    minAnnCovLabel, minAnnotationCoveragePctSpinner);
+            minAnnCovLabel.visibleProperty().bind(advancedMode);
+            minAnnCovLabel.managedProperty().bind(advancedMode);
+            minAnnotationCoveragePctSpinner.visibleProperty().bind(advancedMode);
+            minAnnotationCoveragePctSpinner.managedProperty().bind(advancedMode);
+            grid.add(minAnnCovLabel, 0, row);
+            grid.add(minAnnotationCoveragePctSpinner, 1, row);
+            row++;
+
+            minTileLabelFractionPctSpinner = new Spinner<>(0.0, 10.0, 0.5, 0.1);
+            minTileLabelFractionPctSpinner.setEditable(true);
+            minTileLabelFractionPctSpinner.setPrefWidth(100);
+            Label minTileLabelFracLabel = new Label("Min Tile Label Fraction (%):");
+            TooltipHelper.install(
+                    "OR escape for the sliver-tile filter: tiles whose labelled pixels\n"
+                            + "cover at least this fraction of the tile are always kept,\n"
+                            + "even if their per-annotation coverage is below the threshold\n"
+                            + "above.\n\n"
+                            + "Default 0.5%. For a 512px tile that is 0.5% * 512 * 512 = 1310\n"
+                            + "labelled pixels -- enough to be informative.\n\n"
+                            + "Set to 0 to disable this side of the rule and rely purely on\n"
+                            + "Min Annotation Coverage (stricter; risks over-filtering tiles\n"
+                            + "deep inside huge annotations).",
+                    minTileLabelFracLabel, minTileLabelFractionPctSpinner);
+            minTileLabelFracLabel.visibleProperty().bind(advancedMode);
+            minTileLabelFracLabel.managedProperty().bind(advancedMode);
+            minTileLabelFractionPctSpinner.visibleProperty().bind(advancedMode);
+            minTileLabelFractionPctSpinner.managedProperty().bind(advancedMode);
+            grid.add(minTileLabelFracLabel, 0, row);
+            grid.add(minTileLabelFractionPctSpinner, 1, row);
 
             TitledPane pane = new TitledPane("TILES & RESOLUTION", grid);
             pane.setExpanded(true);

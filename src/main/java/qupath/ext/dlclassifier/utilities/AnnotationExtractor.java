@@ -84,6 +84,11 @@ public class AnnotationExtractor {
     private final int contextScale;
     private final int contextPadding; // pixels of real-data border around each tile (0 = disabled)
 
+    // Sliver-tile filter thresholds. Both 0 disables the filter (legacy behavior).
+    // See TrainingConfig.minAnnotationCoverage / minTileLabelFraction.
+    private double minAnnotationCoverage = 0.0;
+    private double minTileLabelFraction = 0.0;
+
     /**
      * Creates a new annotation extractor.
      *
@@ -181,6 +186,71 @@ public class AnnotationExtractor {
     }
 
     /**
+     * Configure the sliver-tile filter thresholds. A tile is dropped only when
+     * BOTH thresholds fail (hybrid OR rule), so leaving either at 0 keeps
+     * tiles that would have been kept under the other side of the rule.
+     * Setting both to 0 disables the filter entirely (legacy behavior:
+     * accept any tile with at least one labelled pixel).
+     *
+     * @param minAnnotationCoverage min fraction of any source annotation in
+     *                              this tile, in [0, 1]
+     * @param minTileLabelFraction  min fraction of the tile that is labelled,
+     *                              in [0, 1]
+     */
+    public void setSliverFilter(double minAnnotationCoverage, double minTileLabelFraction) {
+        this.minAnnotationCoverage = Math.max(0.0, minAnnotationCoverage);
+        this.minTileLabelFraction = Math.max(0.0, minTileLabelFraction);
+    }
+
+    /**
+     * Hybrid sliver-tile filter: returns true when the tile should be
+     * dropped. A tile is dropped only when both the per-annotation coverage
+     * AND the per-tile labeled-fraction are below their thresholds. With
+     * either threshold at 0 the corresponding side of the rule never fires
+     * and the OR clause keeps the tile, so {@code minAnnotationCoverage = 0}
+     * AND {@code minTileLabelFraction = 0} disables the filter.
+     */
+    private boolean isSliverTile(MaskResult maskResult) {
+        if (minAnnotationCoverage <= 0.0 && minTileLabelFraction <= 0.0) return false;
+        if (maskResult.labeledPixelCount() == 0) return false; // already filtered separately
+        double tilePx = (double) patchSize * patchSize;
+        double labelFrac = tilePx > 0 ? maskResult.labeledPixelCount() / tilePx : 0.0;
+        boolean coverageFails = maskResult.maxAnnotationCoverage() < minAnnotationCoverage;
+        boolean labelFracFails = labelFrac < minTileLabelFraction;
+        return coverageFails && labelFracFails;
+    }
+
+    /**
+     * Closed-form estimate of the rasterized pixel count for an annotation
+     * if it were rendered at the export downsample over its full extent.
+     *
+     * <ul>
+     *   <li>Area ROI: {@code roi.getArea() / downsample^2}.</li>
+     *   <li>Line ROI: {@code roi.getLength() * lineStrokeWidth / downsample}
+     *       (length scales with 1/downsample; the configured stroke is
+     *       {@code lineStrokeWidth} pixels at output resolution).</li>
+     * </ul>
+     *
+     * <p>Returns 0 for degenerate ROIs; callers should treat 0 as "always
+     * counts as 100% coverage" so the filter never accidentally divides by
+     * zero or rejects a legitimate one-pixel annotation.
+     */
+    private static double estimateTotalRasterizedPixels(
+            ROI roi, boolean isSparse, int lineStrokeWidth, double downsample) {
+        if (roi == null) return 0.0;
+        double scaleSq = 1.0 / (downsample * downsample);
+        if (isSparse || roi.isLine()) {
+            // QuPath lines have getArea() == 0; use length * stroke instead.
+            double len = roi.getLength();
+            if (!Double.isFinite(len) || len <= 0) return 0.0;
+            return (len * lineStrokeWidth) / downsample;
+        }
+        double area = roi.getArea();
+        if (!Double.isFinite(area) || area <= 0) return 0.0;
+        return area * scaleSq;
+    }
+
+    /**
      * Exports training data from annotations.
      *
      * @param outputDir      output directory
@@ -247,11 +317,10 @@ public class AnnotationExtractor {
             if (annotation.getPathClass() == null) continue;
             String className = annotation.getPathClass().getName();
             if (classIndex.containsKey(className)) {
-                allAnnotations.add(new AnnotationInfo(
-                        annotation,
-                        annotation.getROI(),
-                        classIndex.get(className),
-                        PatchSampler.isSparseROI(annotation.getROI())));
+                ROI annRoi = annotation.getROI();
+                boolean sparse = PatchSampler.isSparseROI(annRoi);
+                double total = estimateTotalRasterizedPixels(annRoi, sparse, lineStrokeWidth, downsample);
+                allAnnotations.add(new AnnotationInfo(annotation, annRoi, classIndex.get(className), sparse, total));
                 // Extract color from PathClass (first annotation of each class wins)
                 if (!classColorMap.containsKey(className)) {
                     int color = annotation.getPathClass().getColor();
@@ -307,9 +376,18 @@ public class AnnotationExtractor {
 
         // Phase 1: Collect all masks and determine class presence per patch
         List<PendingPatch> pendingPatches = new ArrayList<>();
+        int rejectedEmpty = 0;
+        int rejectedSliver = 0;
         for (PatchSampler.PatchLocation loc : patchLocations) {
             MaskResult maskResult = createCombinedMask(loc.x(), loc.y(), allAnnotations, classIndex.size());
-            if (maskResult.labeledPixelCount == 0) continue;
+            if (maskResult.labeledPixelCount == 0) {
+                rejectedEmpty++;
+                continue;
+            }
+            if (isSliverTile(maskResult)) {
+                rejectedSliver++;
+                continue;
+            }
 
             Set<Integer> presentClasses = new HashSet<>();
             for (int i = 0; i < classNames.size(); i++) {
@@ -317,6 +395,14 @@ public class AnnotationExtractor {
             }
             pendingPatches.add(new PendingPatch(loc, maskResult, presentClasses));
         }
+        logger.info(
+                "Tile filter: kept {}, rejected {} empty, rejected {} sliver "
+                        + "(coverage<{} AND labeled-fraction<{})",
+                pendingPatches.size(),
+                rejectedEmpty,
+                rejectedSliver,
+                minAnnotationCoverage,
+                minTileLabelFraction);
 
         // Phase 2: Compute stratified train/validation split
         List<Set<Integer>> classPresenceSets =
@@ -488,11 +574,10 @@ public class AnnotationExtractor {
             if (annotation.getPathClass() == null) continue;
             String className = annotation.getPathClass().getName();
             if (classIndex.containsKey(className)) {
-                allAnnotations.add(new AnnotationInfo(
-                        annotation,
-                        annotation.getROI(),
-                        classIndex.get(className),
-                        PatchSampler.isSparseROI(annotation.getROI())));
+                ROI annRoi = annotation.getROI();
+                boolean sparse = PatchSampler.isSparseROI(annRoi);
+                double total = estimateTotalRasterizedPixels(annRoi, sparse, lineStrokeWidth, downsample);
+                allAnnotations.add(new AnnotationInfo(annotation, annRoi, classIndex.get(className), sparse, total));
             }
         }
 
@@ -525,9 +610,18 @@ public class AnnotationExtractor {
 
         // Phase 1: Collect all masks and determine class presence per patch
         List<PendingPatch> pendingPatches = new ArrayList<>();
+        int rejectedEmpty = 0;
+        int rejectedSliver = 0;
         for (PatchSampler.PatchLocation loc : patchLocations) {
             MaskResult maskResult = createCombinedMask(loc.x(), loc.y(), allAnnotations, classIndex.size());
-            if (maskResult.labeledPixelCount == 0) continue;
+            if (maskResult.labeledPixelCount == 0) {
+                rejectedEmpty++;
+                continue;
+            }
+            if (isSliverTile(maskResult)) {
+                rejectedSliver++;
+                continue;
+            }
 
             Set<Integer> presentClasses = new HashSet<>();
             for (int i = 0; i < classNames.size(); i++) {
@@ -535,6 +629,14 @@ public class AnnotationExtractor {
             }
             pendingPatches.add(new PendingPatch(loc, maskResult, presentClasses));
         }
+        logger.info(
+                "Tile filter: kept {}, rejected {} empty, rejected {} sliver "
+                        + "(coverage<{} AND labeled-fraction<{})",
+                pendingPatches.size(),
+                rejectedEmpty,
+                rejectedSliver,
+                minAnnotationCoverage,
+                minTileLabelFraction);
 
         // Phase 2: Compute stratified train/validation split
         List<Set<Integer>> classPresenceSets =
@@ -895,6 +997,50 @@ public class AnnotationExtractor {
             Set<String> trainOnlyImages,
             Set<String> valOnlyImages)
             throws IOException {
+        return exportFromProject(
+                entries,
+                patchSize,
+                channelConfig,
+                classNames,
+                outputDir,
+                validationSplit,
+                lineStrokeWidth,
+                classWeightMultipliers,
+                downsample,
+                contextScale,
+                contextPadding,
+                trainOnlyImages,
+                valOnlyImages,
+                0.0,
+                0.0);
+    }
+
+    /**
+     * Exports training data from multiple project images, with image-level
+     * split roles and the sliver-tile filter active.
+     *
+     * @param minAnnotationCoverage min fraction of any source annotation
+     *                              that must lie inside a tile (0 = disabled)
+     * @param minTileLabelFraction  min fraction of the tile that must be
+     *                              labelled (0 = disabled)
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth,
+            Map<String, Double> classWeightMultipliers,
+            double downsample,
+            int contextScale,
+            int contextPadding,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages,
+            double minAnnotationCoverage,
+            double minTileLabelFraction)
+            throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
         if (!trainOnlyImages.isEmpty() || !valOnlyImages.isEmpty()) {
@@ -964,6 +1110,7 @@ public class AnnotationExtractor {
                 ImageData<BufferedImage> imageData = entry.readImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(
                         imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale, contextPadding);
+                extractor.setSliverFilter(minAnnotationCoverage, minTileLabelFraction);
 
                 // Per-image annotation diagnostics, collected before export so
                 // that a zero-patch failure can report the full picture.
@@ -1524,81 +1671,95 @@ public class AnnotationExtractor {
      * Labeled pixels are set to their class index (0, 1, 2, ...).
      */
     private MaskResult createCombinedMask(int offsetX, int offsetY, List<AnnotationInfo> annotations, int numClasses) {
-        // The mask is always patchSize x patchSize (output resolution)
+        // The combined mask is always patchSize x patchSize (output resolution).
         BufferedImage mask = new BufferedImage(patchSize, patchSize, BufferedImage.TYPE_BYTE_GRAY);
-        Graphics2D g2d = mask.createGraphics();
+        byte[] combinedBytes = ((java.awt.image.DataBufferByte) mask.getRaster().getDataBuffer()).getData();
+        // Initialise the combined mask to UNLABELED everywhere; per-annotation
+        // renders below stamp class indices over only the pixels that hit.
+        java.util.Arrays.fill(combinedBytes, (byte) UNLABELED_INDEX);
 
-        // Fill with unlabeled value (255)
-        g2d.setColor(new Color(UNLABELED_INDEX, UNLABELED_INDEX, UNLABELED_INDEX));
-        g2d.fillRect(0, 0, patchSize, patchSize);
-
-        // Set rendering hints for smooth lines
+        // Per-annotation rendering buffer reused across annotations: 1-channel
+        // byte mask where 0 = unlabeled-for-this-annotation, 1 = labeled.
+        // Counting is a single pass per annotation; we then OR-stamp the
+        // labeled positions into the combined mask using the annotation's
+        // class index. This per-annotation accounting is what enables the
+        // sliver-tile filter (max coverage across all annotations touching
+        // the tile).
+        BufferedImage perAnn = new BufferedImage(patchSize, patchSize, BufferedImage.TYPE_BYTE_GRAY);
+        byte[] perAnnBytes = ((java.awt.image.DataBufferByte) perAnn.getRaster().getDataBuffer()).getData();
+        Graphics2D g2d = perAnn.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-
-        // Translate to patch coordinates
         AffineTransform originalTransform = g2d.getTransform();
 
-        // Patch bounds in full-res coordinates
+        // Patch bounds in full-res coordinates.
         int coverage = (int) (patchSize * downsample);
         Rectangle patchBounds = new Rectangle(offsetX, offsetY, coverage, coverage);
+
+        double maxCoverage = 0.0;
 
         for (AnnotationInfo ann : annotations) {
             ROI roi = ann.roi;
 
             // Quick check: does this annotation's bounding box overlap the patch?
-            // Use scaled stroke width for bounding box expansion
             int expandedStroke = (int) Math.ceil(lineStrokeWidth * downsample);
             Rectangle annBounds = new Rectangle(
                     (int) roi.getBoundsX(),
                     (int) roi.getBoundsY(),
                     (int) roi.getBoundsWidth() + expandedStroke,
                     (int) roi.getBoundsHeight() + expandedStroke);
-
             if (!patchBounds.intersects(annBounds)) continue;
 
-            // Set class color
-            int classIdx = ann.classIndex;
-            g2d.setColor(new Color(classIdx, classIdx, classIdx));
-
-            // Transform from full-res coords to mask pixel coords:
-            // 1. Translate to patch origin in full-res space
-            // 2. Scale down by downsample factor to get mask pixels
+            // Reset per-annotation buffer to all-zero, then render this single
+            // annotation in colour 1 over it.
+            java.util.Arrays.fill(perAnnBytes, (byte) 0);
+            g2d.setColor(new Color(1, 1, 1));
             g2d.setTransform(originalTransform);
             g2d.scale(1.0 / downsample, 1.0 / downsample);
             g2d.translate(-offsetX, -offsetY);
 
             Shape shape = roi.getShape();
-
             if (ann.isSparse || roi.isLine()) {
-                // For sparse/line annotations: DRAW with stroke width
-                // Scale stroke to maintain consistent visual width in mask space
                 g2d.setStroke(new BasicStroke(
                         (float) (lineStrokeWidth * downsample), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 g2d.draw(shape);
             } else {
-                // For area annotations: FILL the shape
                 g2d.fill(shape);
+            }
+
+            // Count and stamp in one pass.
+            byte classByte = (byte) ann.classIndex;
+            long inTilePixels = 0;
+            for (int i = 0; i < perAnnBytes.length; i++) {
+                if (perAnnBytes[i] != 0) {
+                    inTilePixels++;
+                    combinedBytes[i] = classByte;
+                }
+            }
+
+            if (inTilePixels > 0) {
+                double total = ann.totalRasterizedPixels;
+                // Degenerate / unknown total -> treat any contact as full coverage
+                // so a legitimate tiny annotation never trips the sliver filter.
+                double cov = (total > 0.0) ? Math.min(1.0, inTilePixels / total) : 1.0;
+                if (cov > maxCoverage) maxCoverage = cov;
             }
         }
 
         g2d.dispose();
 
-        // Count pixels per class
+        // Final pass: per-class pixel counts on the combined mask.
         long[] classPixelCounts = new long[numClasses];
         long labeledPixelCount = 0;
-
-        int[] pixels = new int[patchSize * patchSize];
-        mask.getRaster().getPixels(0, 0, patchSize, patchSize, pixels);
-
-        for (int pixel : pixels) {
-            if (pixel != UNLABELED_INDEX && pixel < numClasses) {
-                classPixelCounts[pixel]++;
+        for (byte b : combinedBytes) {
+            int v = b & 0xFF;
+            if (v != UNLABELED_INDEX && v < numClasses) {
+                classPixelCounts[v]++;
                 labeledPixelCount++;
             }
         }
 
-        return new MaskResult(mask, classPixelCounts, labeledPixelCount);
+        return new MaskResult(mask, classPixelCounts, labeledPixelCount, maxCoverage);
     }
 
     /**
@@ -1834,8 +1995,17 @@ public class AnnotationExtractor {
 
     /**
      * Information about an annotation for processing.
+     *
+     * <p>{@code totalRasterizedPixels} is the closed-form estimate of how many
+     * pixels this annotation would contribute to the saved label mask if its
+     * full extent were rendered at the export downsample. It is used by the
+     * sliver-tile filter to compute "fraction of source annotation in this
+     * tile" without re-rendering the entire annotation per tile. {@code <= 1}
+     * means the annotation is degenerate and the filter should treat any
+     * in-tile contact as 100% coverage.
      */
-    private record AnnotationInfo(PathObject annotation, ROI roi, int classIndex, boolean isSparse) {}
+    private record AnnotationInfo(
+            PathObject annotation, ROI roi, int classIndex, boolean isSparse, double totalRasterizedPixels) {}
 
     /**
      * Per-tile spatial metadata for post-training evaluation.
@@ -1847,8 +2017,15 @@ public class AnnotationExtractor {
 
     /**
      * Result of creating a combined mask.
+     *
+     * <p>{@code maxAnnotationCoverage} is the largest per-annotation coverage
+     * fraction observed across all annotations that intersected the tile,
+     * where coverage = (in-tile pixels of this annotation) /
+     * (total rasterized pixels of this annotation). Used by the sliver-tile
+     * filter; 0.0 when no annotation intersected the tile.
      */
-    private record MaskResult(BufferedImage mask, long[] classPixelCounts, long labeledPixelCount) {}
+    private record MaskResult(
+            BufferedImage mask, long[] classPixelCounts, long labeledPixelCount, double maxAnnotationCoverage) {}
 
     /**
      * A patch awaiting train/val assignment during the collection phase.

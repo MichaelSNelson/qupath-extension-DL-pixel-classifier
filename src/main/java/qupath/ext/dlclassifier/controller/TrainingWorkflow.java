@@ -1271,7 +1271,9 @@ public class TrainingWorkflow {
                         trainingConfig.getContextScale(),
                         contextPadding,
                         trainOnlyImages,
-                        valOnlyImages);
+                        valOnlyImages,
+                        trainingConfig.getMinAnnotationCoverage(),
+                        trainingConfig.getMinTileLabelFraction());
                 patchCount = exportResult.totalPatches();
             } else {
                 // Single-image export
@@ -1283,6 +1285,8 @@ public class TrainingWorkflow {
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
                         contextPadding);
+                extractor.setSliverFilter(
+                        trainingConfig.getMinAnnotationCoverage(), trainingConfig.getMinTileLabelFraction());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -1844,7 +1848,11 @@ public class TrainingWorkflow {
                         resumeMultipliers,
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
-                        contextPadding);
+                        contextPadding,
+                        java.util.Collections.<String>emptySet(),
+                        java.util.Collections.<String>emptySet(),
+                        trainingConfig.getMinAnnotationCoverage(),
+                        trainingConfig.getMinTileLabelFraction());
                 patchCount = exportResult.totalPatches();
             } else {
                 ImageData<BufferedImage> imageData = qupath.getImageData();
@@ -1856,6 +1864,8 @@ public class TrainingWorkflow {
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
                         contextPadding);
+                extractor.setSliverFilter(
+                        trainingConfig.getMinAnnotationCoverage(), trainingConfig.getMinTileLabelFraction());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -2410,6 +2420,8 @@ public class TrainingWorkflow {
         settings.put("validation_split", config.getValidationSplit());
         settings.put("overlap", config.getOverlap());
         settings.put("line_stroke_width", config.getLineStrokeWidth());
+        settings.put("min_annotation_coverage", config.getMinAnnotationCoverage());
+        settings.put("min_tile_label_fraction", config.getMinTileLabelFraction());
         settings.put("use_pretrained_weights", config.isUsePretrainedWeights());
         settings.put("freeze_encoder_layers", config.getFreezeEncoderLayers());
         settings.put("frozen_layers", config.getFrozenLayers());

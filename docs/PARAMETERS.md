@@ -4,7 +4,7 @@ Complete reference for every parameter in the training and inference dialogs. Th
 
 ## Training Parameters
 
-The training dialog is accessed via **Extensions > DL Pixel Classifier > Train Classifier...**
+The training dialog is accessed via **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 
 Dialog sections appear in this order:
 
@@ -91,6 +91,8 @@ When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** a
 | **Context Scale** | 4x (Recommended) | None, 2x, 4x, 8x, 16x | Provides additional surrounding context at a lower resolution alongside the main tile. Helps the model understand broader tissue architecture. Hidden for MuViT (which handles multi-scale internally via level_scales). |
 | **Tile Overlap** | 0% | 0-50% | Overlap between training tiles. 10-25% generates more patches from limited annotations. |
 | **Line Stroke Width** | QuPath's stroke | 1-50 | Pixel width for polyline annotation masks. Default is QuPath's annotation stroke thickness (typically 5). Increase for sparse lines. |
+| **Min Annotation Coverage** | 5% | 0-25% | Filters "corner sliver" tiles where only a tiny fraction of any source annotation lies inside the tile. A tile is dropped only when this **and** Min Tile Label Fraction both fail (hybrid OR rule), so tiles deep inside huge polygons are still kept. Set to 0 to disable this side of the rule; raise it if the disagreement heatmap still shows sliver tiles after training. |
+| **Min Tile Label Fraction** | 0.5% | 0-10% | OR escape for the sliver filter: tiles whose labelled pixels cover at least this fraction of the tile are always kept, even when their per-annotation coverage is small. Prevents over-rejecting tiles that sit fully inside large annotations. Set to 0 to disable this side of the rule and rely purely on Min Annotation Coverage (stricter). |
 
 ### Training Strategy
 
@@ -218,7 +220,7 @@ These parameters are available in the **SSL Pretrain Encoder** dialog (**Extensi
 
 ## Inference Parameters
 
-The inference dialog is accessed via **Extensions > DL Pixel Classifier > Apply Classifier...**
+The inference dialog is accessed via **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**
 
 ### Classifier Selection
 
