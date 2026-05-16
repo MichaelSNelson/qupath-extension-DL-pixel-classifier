@@ -239,6 +239,19 @@ public final class TrainingIssuesSessionStore {
             t.addProperty("confAsset", confAsset);
             t.addProperty("gtAsset", gtAsset);
 
+            JsonArray confusions = new JsonArray();
+            if (r.topConfusions() != null) {
+                for (ClassifierClient.ConfusionPair cp : r.topConfusions()) {
+                    JsonObject p = new JsonObject();
+                    p.addProperty("gt", cp.gt());
+                    p.addProperty("pred", cp.pred());
+                    p.addProperty("pixels", cp.pixels());
+                    p.addProperty("gtTotal", cp.gtTotal());
+                    confusions.add(p);
+                }
+            }
+            t.add("topConfusions", confusions);
+
             tiles.add(t);
         }
         manifest.add("tiles", tiles);
@@ -320,6 +333,20 @@ public final class TrainingIssuesSessionStore {
                     iouMap.put(entry.getKey(), entry.getValue().getAsDouble());
                 }
             }
+            List<ClassifierClient.ConfusionPair> topConfusions = new ArrayList<>();
+            if (t.has("topConfusions") && t.get("topConfusions").isJsonArray()) {
+                JsonArray arr = t.getAsJsonArray("topConfusions");
+                for (JsonElement pe : arr) {
+                    if (pe == null || pe.isJsonNull()) continue;
+                    JsonObject pp = pe.getAsJsonObject();
+                    topConfusions.add(new ClassifierClient.ConfusionPair(
+                            getString(pp, "gt", ""),
+                            getString(pp, "pred", ""),
+                            pp.has("pixels") ? pp.get("pixels").getAsLong() : 0L,
+                            pp.has("gtTotal") ? pp.get("gtTotal").getAsLong() : 0L));
+                }
+            }
+
             results.add(new ClassifierClient.TileEvaluationResult(
                     getString(t, "filename", ""),
                     getString(t, "split", ""),
@@ -336,7 +363,8 @@ public final class TrainingIssuesSessionStore {
                     resolveAsset(sessionDir, t, "tileAsset"),
                     resolveAsset(sessionDir, t, "predAsset"),
                     resolveAsset(sessionDir, t, "confAsset"),
-                    resolveAsset(sessionDir, t, "gtAsset")));
+                    resolveAsset(sessionDir, t, "gtAsset"),
+                    topConfusions));
         }
 
         SessionInfo info = new SessionInfo(

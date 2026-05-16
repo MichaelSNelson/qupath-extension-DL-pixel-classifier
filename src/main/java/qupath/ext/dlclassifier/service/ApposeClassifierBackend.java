@@ -1580,6 +1580,30 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             if (lossHeatmapPath == null) missingLoss++;
             if (tileImagePath == null) missingTile++;
 
+            List<ClassifierClient.ConfusionPair> topConfusions = new ArrayList<>();
+            if (obj.has("top_confusions") && !obj.get("top_confusions").isJsonNull()) {
+                var arr = obj.getAsJsonArray("top_confusions");
+                for (var el : arr) {
+                    if (el == null || el.isJsonNull()) continue;
+                    var pairObj = el.getAsJsonObject();
+                    String gt = pairObj.has("gt") && !pairObj.get("gt").isJsonNull()
+                            ? pairObj.get("gt").getAsString()
+                            : "";
+                    String pred = pairObj.has("pred") && !pairObj.get("pred").isJsonNull()
+                            ? pairObj.get("pred").getAsString()
+                            : "";
+                    long pixels =
+                            pairObj.has("pixels") && !pairObj.get("pixels").isJsonNull()
+                                    ? pairObj.get("pixels").getAsLong()
+                                    : 0L;
+                    long gtTotal =
+                            pairObj.has("gt_total") && !pairObj.get("gt_total").isJsonNull()
+                                    ? pairObj.get("gt_total").getAsLong()
+                                    : 0L;
+                    topConfusions.add(new ClassifierClient.ConfusionPair(gt, pred, pixels, gtTotal));
+                }
+            }
+
             results.add(new ClassifierClient.TileEvaluationResult(
                     obj.has("filename") ? obj.get("filename").getAsString() : "",
                     obj.has("split") ? obj.get("split").getAsString() : "",
@@ -1596,7 +1620,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     tileImagePath,
                     predictionMapPath,
                     confidenceMapPath,
-                    groundTruthMaskPath));
+                    groundTruthMaskPath,
+                    topConfusions));
         }
 
         int total = results.size();

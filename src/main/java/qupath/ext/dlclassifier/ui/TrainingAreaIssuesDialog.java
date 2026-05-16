@@ -278,9 +278,33 @@ public class TrainingAreaIssuesDialog {
         iouCol.setPrefWidth(65);
         iouCol.setCellFactory(col -> new FormattedDoubleCell<>("%.3f"));
 
-        TableColumn<TileRow, String> worstClassCol = new TableColumn<>("Worst Class");
+        TableColumn<TileRow, String> worstClassCol = new TableColumn<>("Worst Confusion");
         worstClassCol.setCellValueFactory(new PropertyValueFactory<>("worstClass"));
-        worstClassCol.setPrefWidth(130);
+        worstClassCol.setPrefWidth(220);
+        // Per-cell tooltip lists every recorded GT->Pred pair for the row, so
+        // tiles with multiple classes leaking into different predictions are
+        // still inspectable without adding a separate column per pair.
+        worstClassCol.setCellFactory(col -> new TableCell<TileRow, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTooltip(null);
+                    return;
+                }
+                setText(item);
+                TileRow row = (TileRow) getTableRow().getItem();
+                if (row != null) {
+                    String tipText = row.getWorstConfusionTooltip();
+                    if (tipText != null && !tipText.isEmpty()) {
+                        setTooltip(TooltipHelper.create(tipText));
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
 
         // Add column tooltips via graphic labels
         setColumnTooltip(imageCol, "Source image this tile was extracted from.");
@@ -296,7 +320,11 @@ public class TrainingAreaIssuesDialog {
                 iouCol, "Mean Intersection-over-Union across all\nclasses present in this tile (higher is better).");
         setColumnTooltip(
                 worstClassCol,
-                "Class with the lowest IoU in this tile.\nShows which class the model is struggling with\nand how poorly it performed (IoU score).");
+                "Dominant GT-class -> Predicted-class confusion for this tile.\n"
+                        + "Shown as 'GroundTruth -> Predicted (k% of GT)'.\n"
+                        + "Hover a cell to see the full list of confusion pairs.\n"
+                        + "Falls back to worst-IoU class for tiles without\n"
+                        + "recorded confusions (older saved sessions).");
 
         table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol, iouCol, worstClassCol));
         table.getSortOrder().add(lossCol);
@@ -1383,6 +1411,7 @@ public class TrainingAreaIssuesDialog {
         private final DoubleProperty disagreementPct;
         private final DoubleProperty meanIoU;
         private final StringProperty worstClass;
+        private final StringProperty worstConfusionTooltip;
         private final IntegerProperty x;
         private final IntegerProperty y;
         private final StringProperty filename;
@@ -1394,6 +1423,7 @@ public class TrainingAreaIssuesDialog {
         private final StringProperty groundTruthMaskPath;
         // Preserved for session round-trips; not bound to the TableView.
         private final Map<String, Double> perClassIoU;
+        private final List<ClassifierClient.ConfusionPair> topConfusions;
 
         public TileRow(ClassifierClient.TileEvaluationResult result) {
             this.sourceImage = new SimpleStringProperty(result.sourceImage());
@@ -1413,23 +1443,48 @@ public class TrainingAreaIssuesDialog {
             this.predictionMapPath = new SimpleStringProperty(result.predictionMapPath());
             this.confidenceMapPath = new SimpleStringProperty(result.confidenceMapPath());
             this.groundTruthMaskPath = new SimpleStringProperty(result.groundTruthMaskPath());
+            this.topConfusions = result.topConfusions() != null ? List.copyOf(result.topConfusions()) : List.of();
 
-            // Compute worst class: lowest IoU among classes actually present in the tile.
-            // Null IoU values indicate the class has no ground truth pixels in this tile
-            // and are excluded. Only consider classes with real IoU measurements.
-            String worst = "";
-            double worstIoU = Double.MAX_VALUE;
-            if (result.perClassIoU() != null) {
-                for (Map.Entry<String, Double> entry : result.perClassIoU().entrySet()) {
-                    Double iou = entry.getValue();
-                    if (iou != null && iou < worstIoU) {
-                        worstIoU = iou;
-                        worst = entry.getKey();
+            // Display the dominant GT->Pred confusion pair when we have one.
+            // Phrasing is "GT -> Pred (k% of GT)" so the user immediately knows
+            // which ground-truth class is being misread and where it's leaking.
+            // Falls back to the legacy "ClassName (IoU 0.xxx)" label when the
+            // tile has no confusion data (older saved sessions, or tiles with
+            // no misclassifications -- in which case there's no GT->Pred pair
+            // to report).
+            String displayText;
+            String tooltipText;
+            if (!this.topConfusions.isEmpty()) {
+                ClassifierClient.ConfusionPair top = this.topConfusions.get(0);
+                double pct = top.gtTotal() > 0 ? (100.0 * top.pixels() / top.gtTotal()) : 0.0;
+                displayText = String.format("%s -> %s (%.0f%% of GT)", top.gt(), top.pred(), pct);
+                StringBuilder tip = new StringBuilder();
+                tip.append("Top GT-class -> Predicted-class confusions in this tile:\n");
+                for (ClassifierClient.ConfusionPair cp : this.topConfusions) {
+                    double p = cp.gtTotal() > 0 ? (100.0 * cp.pixels() / cp.gtTotal()) : 0.0;
+                    tip.append(String.format(
+                            "  %s -> %s : %d px (%.1f%% of %s)\n", cp.gt(), cp.pred(), cp.pixels(), p, cp.gt()));
+                }
+                tooltipText = tip.toString().stripTrailing();
+            } else {
+                String worst = "";
+                double worstIoU = Double.MAX_VALUE;
+                if (result.perClassIoU() != null) {
+                    for (Map.Entry<String, Double> entry : result.perClassIoU().entrySet()) {
+                        Double iou = entry.getValue();
+                        if (iou != null && iou < worstIoU) {
+                            worstIoU = iou;
+                            worst = entry.getKey();
+                        }
                     }
                 }
+                displayText = worst.isEmpty() ? "" : String.format("%s (IoU %.3f)", worst, worstIoU);
+                tooltipText = displayText.isEmpty()
+                        ? "No per-class confusion data for this tile."
+                        : "Worst IoU class (no confusion-pair data available --\nlikely a tile saved before per-tile confusions\nwere recorded).";
             }
-            this.worstClass =
-                    new SimpleStringProperty(worst.isEmpty() ? "" : String.format("%s (IoU %.3f)", worst, worstIoU));
+            this.worstClass = new SimpleStringProperty(displayText);
+            this.worstConfusionTooltip = new SimpleStringProperty(tooltipText);
         }
 
         public String getSourceImage() {
@@ -1482,6 +1537,14 @@ public class TrainingAreaIssuesDialog {
 
         public StringProperty worstClassProperty() {
             return worstClass;
+        }
+
+        public String getWorstConfusionTooltip() {
+            return worstConfusionTooltip.get();
+        }
+
+        public List<ClassifierClient.ConfusionPair> getTopConfusions() {
+            return topConfusions;
         }
 
         public int getX() {
@@ -1553,7 +1616,8 @@ public class TrainingAreaIssuesDialog {
                     getTileImagePath(),
                     getPredictionMapPath(),
                     getConfidenceMapPath(),
-                    getGroundTruthMaskPath());
+                    getGroundTruthMaskPath(),
+                    topConfusions);
         }
 
         // TileRowData (for TrainingIssuesOverlayController)

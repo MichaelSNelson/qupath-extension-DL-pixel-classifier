@@ -337,6 +337,15 @@ public class ClassifierClient {
             String description) {}
 
     /**
+     * One GT-class -> Predicted-class confusion bucket for a tile.
+     * {@code pixels} is the number of labeled pixels where the model predicted
+     * {@code pred} but the ground truth was {@code gt}; {@code gtTotal} is the
+     * total count of {@code gt} pixels in that tile (so the dialog can show
+     * "k% of gt-class was misread as pred-class").
+     */
+    public record ConfusionPair(String gt, String pred, long pixels, long gtTotal) {}
+
+    /**
      * Per-tile evaluation result from post-training analysis.
      * Tiles with higher loss are more likely to represent annotation errors
      * or hard cases.
@@ -357,7 +366,16 @@ public class ClassifierClient {
             String tileImagePath,
             String predictionMapPath,
             String confidenceMapPath,
-            String groundTruthMaskPath) {
+            String groundTruthMaskPath,
+            List<ConfusionPair> topConfusions) {
+        /**
+         * Normalize {@code topConfusions} to an empty list (never null) so
+         * downstream code never has to null-check.
+         */
+        public TileEvaluationResult {
+            topConfusions = topConfusions == null ? List.of() : List.copyOf(topConfusions);
+        }
+
         /**
          * Backward-compatible constructor for results without prediction/confidence/gt maps
          * (e.g. sessions saved before annotation adjustment was added).
@@ -392,7 +410,49 @@ public class ClassifierClient {
                     tileImagePath,
                     null,
                     null,
-                    null);
+                    null,
+                    List.of());
+        }
+
+        /**
+         * Backward-compatible constructor for sessions saved before
+         * top-confusion pairs were added (defaults to empty list).
+         */
+        public TileEvaluationResult(
+                String filename,
+                String split,
+                double loss,
+                double disagreementPct,
+                Map<String, Double> perClassIoU,
+                double meanIoU,
+                int x,
+                int y,
+                String sourceImage,
+                String sourceImageId,
+                String disagreementImagePath,
+                String lossHeatmapPath,
+                String tileImagePath,
+                String predictionMapPath,
+                String confidenceMapPath,
+                String groundTruthMaskPath) {
+            this(
+                    filename,
+                    split,
+                    loss,
+                    disagreementPct,
+                    perClassIoU,
+                    meanIoU,
+                    x,
+                    y,
+                    sourceImage,
+                    sourceImageId,
+                    disagreementImagePath,
+                    lossHeatmapPath,
+                    tileImagePath,
+                    predictionMapPath,
+                    confidenceMapPath,
+                    groundTruthMaskPath,
+                    List.of());
         }
     }
 

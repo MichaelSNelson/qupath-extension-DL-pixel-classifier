@@ -417,6 +417,42 @@ try:
                               if not (v != v)]  # filter NaN
                 mean_iou = sum(valid_ious) / len(valid_ious) if valid_ious else 0.0
 
+                # Top GT->Pred confusion pairs, computed over labeled pixels only.
+                # Built from a NxN counts matrix (rows=GT, cols=Pred) via a single
+                # bincount on (gt*num_classes + pred); off-diagonal entries are
+                # the misclassifications. Reported with the source GT class's
+                # total pixel count so the dialog can show "k% of GT_class".
+                top_confusions = []
+                try:
+                    num_classes = len(classes)
+                    gt_lab = mask_i[labeled_mask].long()
+                    pr_lab = pred_i[labeled_mask].long()
+                    combined = gt_lab * num_classes + pr_lab
+                    conf_counts = torch.bincount(
+                        combined, minlength=num_classes * num_classes
+                    ).view(num_classes, num_classes)
+                    gt_totals = conf_counts.sum(dim=1)
+                    pairs = []
+                    for gt_idx in range(num_classes):
+                        for pred_idx in range(num_classes):
+                            if gt_idx == pred_idx:
+                                continue
+                            pixels = int(conf_counts[gt_idx, pred_idx].item())
+                            if pixels == 0:
+                                continue
+                            pairs.append({
+                                "gt": classes[gt_idx],
+                                "pred": classes[pred_idx],
+                                "pixels": pixels,
+                                "gt_total": int(gt_totals[gt_idx].item()),
+                            })
+                    pairs.sort(key=lambda p: p["pixels"], reverse=True)
+                    top_confusions = pairs[:3]
+                except Exception as conf_err:
+                    logger.warning(
+                        "confusion-pair computation failed for [%s] %s: %s",
+                        split_name, stem, conf_err)
+
                 # Save disagreement map, loss heatmap, and tile image.
                 # Each save is wrapped independently so a failure in one step
                 # does not null out the others (e.g. a bad .raw header should
@@ -524,6 +560,7 @@ try:
                     "prediction_map": prediction_map_path,
                     "confidence_map": confidence_map_path,
                     "ground_truth_mask": gt_mask_path,
+                    "top_confusions": top_confusions,
                 })
 
             tile_idx += batch_size
