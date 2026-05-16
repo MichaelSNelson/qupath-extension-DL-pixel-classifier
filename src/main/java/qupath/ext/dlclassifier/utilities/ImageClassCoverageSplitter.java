@@ -229,12 +229,30 @@ public final class ImageClassCoverageSplitter {
         //   4. Sanity check on overall train/val count.
         List<String> warnings = new ArrayList<>();
         if (!coverableClasses.isEmpty() && targetVal < coverableClasses.size()) {
-            int minSplitPct = (int) Math.ceil(100.0 * coverableClasses.size() / n);
-            warnings.add(String.format(
-                    "Validation set holds %d image(s) but %d classes need coverage there. "
-                            + "Raise the validation split to at least %d%% (or annotate more classes "
-                            + "into each image) to guarantee every class appears in val.",
-                    targetVal, coverableClasses.size(), minSplitPct));
+            // We always keep at least 1 image for train, so val can hold at
+            // most n-1 images. If there are more coverable classes than n-1,
+            // even valFraction=1.0 cannot guarantee every class appears in val
+            // -- the limit is structural to the dataset, not the spinner.
+            int maxAchievableValImages = Math.max(1, n - 1);
+            if (coverableClasses.size() > maxAchievableValImages) {
+                warnings.add(String.format(
+                        "Validation set holds %d image(s) but %d classes need coverage there. "
+                                + "Even at the maximum validation split this dataset cannot fit every "
+                                + "class in val (val keeps at most %d image(s) so at least one image "
+                                + "must train). Annotate more classes into each image, or accept that "
+                                + "some classes will only be measured in training.",
+                        targetVal, coverableClasses.size(), maxAchievableValImages));
+            } else {
+                // Upper-bound estimate: assumes worst case (each val image
+                // carries one unique class). Real datasets with class overlap
+                // often need a smaller split, but this is a safe minimum.
+                int minSplitPct = Math.min(99, Math.max(1, (int) Math.ceil(100.0 * coverableClasses.size() / n)));
+                warnings.add(String.format(
+                        "Validation set holds %d image(s) but %d classes need coverage there. "
+                                + "Raise the validation split to at least %d%% (or annotate more classes "
+                                + "into each image) to guarantee every class appears in val.",
+                        targetVal, coverableClasses.size(), minSplitPct));
+            }
         }
         for (ClassCoverage cc : coverage.values()) {
             if (cc.imagesContaining() == 0) continue;

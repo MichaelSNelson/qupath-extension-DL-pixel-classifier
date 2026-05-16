@@ -70,6 +70,26 @@ public class ImageClassCoverageSplitterTest {
     }
 
     @Test
+    public void warnsWhenStructurallyImpossibleToFitAllClassesInVal() {
+        // 4 images, 5 coverable classes -- val keeps at most 3 images (n-1)
+        // so even valFraction=1.0 cannot fit all 5 classes. Warning should
+        // acknowledge the structural limit, NOT suggest a >100% split.
+        List<ImageInput<String>> inputs = List.of(
+                img("a", "A", 100.0, "B", 100.0),
+                img("b", "C", 100.0, "D", 100.0),
+                img("c", "E", 100.0, "A", 100.0),
+                img("d", "B", 100.0, "C", 100.0, "D", 100.0, "E", 100.0));
+        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 1L);
+        // Must NOT suggest impossible split percentages.
+        for (String w : result.warnings()) {
+            assertTrue(!w.matches(".*\\b1\\d\\d%.*"), "Warning suggested >100% split: " + w);
+        }
+        assertTrue(
+                result.warnings().stream().anyMatch(w -> w.contains("cannot fit every class")),
+                "Expected structural-impossibility warning, got: " + result.warnings());
+    }
+
+    @Test
     public void warnsWhenValFractionTooSmallToFitAllClasses() {
         // 7 coverable classes but only 2 val slots -- no permutation can fit
         // them all on the val side. Splitter must surface this as a warning

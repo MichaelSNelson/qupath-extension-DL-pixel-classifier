@@ -2065,6 +2065,13 @@ public class TrainingWorkflow {
                             .build();
                     ModelManager rManager = new ModelManager();
                     rManager.saveClassifier(rMeta, Path.of(savedPath), true, false);
+                    // Populate the model-path holder so the Review Training
+                    // Areas button (enabled by progress.complete(true,...))
+                    // can find the model. Without this, Review reports
+                    // "Cannot review: training data or model path not available."
+                    if (modelPathHolder != null && modelPathHolder.length > 0) {
+                        modelPathHolder[0] = savedPath;
+                    }
                     progress.complete(true, "Saved model as " + rId);
                 } else {
                     progress.complete(false, "Training cancelled by user");
@@ -2108,6 +2115,15 @@ public class TrainingWorkflow {
 
                 // Update jobId so "Continue Training" can find the new checkpoint
                 currentJobId[0] = serverResult.jobId();
+
+                // Populate the model-path holder so the Review Training Areas
+                // button (enabled by progress.complete(true,...) below) can
+                // find the resumed-and-completed model. The initial trainCore
+                // call set this for the not-resumed path; handleResume must
+                // set it again here for the resumed-and-completed path.
+                if (modelPathHolder != null && modelPathHolder.length > 0) {
+                    modelPathHolder[0] = serverResult.modelPath();
+                }
 
                 progress.complete(
                         true,
