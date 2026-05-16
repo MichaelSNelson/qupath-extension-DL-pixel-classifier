@@ -44,6 +44,17 @@ public final class ImageClassCoverageSplitter {
     /** Default number of random-restart attempts. Cheap; sized for headroom. */
     public static final int DEFAULT_ATTEMPTS = 500;
 
+    /**
+     * A class is "rare" when it appears in fewer than this many images.
+     * Rare classes still get the structural guarantee (>=1 image per split
+     * when there are >=2 total), but per-class val IoU is computed on so
+     * few slides that the number swings wildly between epochs and the
+     * post-training "never learned" hint fires false positives. We warn so
+     * the user can either annotate the class onto more slides or read the
+     * noisy signal with the right expectation.
+     */
+    public static final int RARE_CLASS_THRESHOLD = 4;
+
     private ImageClassCoverageSplitter() {
         // Static utility class
     }
@@ -219,40 +230,30 @@ public final class ImageClassCoverageSplitter {
 
         Map<String, ClassCoverage> coverage = buildCoverage(images, assignments);
 
-        // Warnings the caller will surface to the user. Four categories:
-        //   1. Val fraction is too small to fit one image per coverable class
-        //      (geometrically impossible regardless of permutation).
-        //   2. Class exists in only one selected image (can't balance).
-        //   3. Class with >=2 images still ended up on only one side
-        //      (algorithm could not improve further -- usually means a
-        //      conflict between two rare classes; rare in practice).
-        //   4. Sanity check on overall train/val count.
+        // Warnings reflect what the splitter ACTUALLY couldn't achieve, not
+        // worst-case theoretical bounds. The earlier version triggered on
+        // (targetVal < coverableClasses) and suggested raising val to a
+        // computed minimum percentage. That was based on the worst case --
+        // each val image holds exactly one unique class -- and produced
+        // nonsense like "raise to 113%" when classes outnumber images. In
+        // real datasets classes overlap (one slide often has 4-6 classes),
+        // so the actual minimum val count is far lower. Trust the split
+        // outcome instead:
+        //   - For each coverable class still missing from train or val,
+        //     the per-class loop below emits an actionable warning.
+        //   - If ANY classes ended up uncovered, add one summary line so
+        //     the user knows the val set was too small to fit them; the
+        //     remediation is to either raise the val % or manually assign
+        //     a slide carrying the missing class to val. We deliberately
+        //     do NOT suggest a specific %.
         List<String> warnings = new ArrayList<>();
-        if (!coverableClasses.isEmpty() && targetVal < coverableClasses.size()) {
-            // We always keep at least 1 image for train, so val can hold at
-            // most n-1 images. If there are more coverable classes than n-1,
-            // even valFraction=1.0 cannot guarantee every class appears in val
-            // -- the limit is structural to the dataset, not the spinner.
-            int maxAchievableValImages = Math.max(1, n - 1);
-            if (coverableClasses.size() > maxAchievableValImages) {
-                warnings.add(String.format(
-                        "Validation set holds %d image(s) but %d classes need coverage there. "
-                                + "Even at the maximum validation split this dataset cannot fit every "
-                                + "class in val (val keeps at most %d image(s) so at least one image "
-                                + "must train). Annotate more classes into each image, or accept that "
-                                + "some classes will only be measured in training.",
-                        targetVal, coverableClasses.size(), maxAchievableValImages));
-            } else {
-                // Upper-bound estimate: assumes worst case (each val image
-                // carries one unique class). Real datasets with class overlap
-                // often need a smaller split, but this is a safe minimum.
-                int minSplitPct = Math.min(99, Math.max(1, (int) Math.ceil(100.0 * coverableClasses.size() / n)));
-                warnings.add(String.format(
-                        "Validation set holds %d image(s) but %d classes need coverage there. "
-                                + "Raise the validation split to at least %d%% (or annotate more classes "
-                                + "into each image) to guarantee every class appears in val.",
-                        targetVal, coverableClasses.size(), minSplitPct));
-            }
+        int uncoveredCount = coverableClasses.size() - bestCovered;
+        if (uncoveredCount > 0) {
+            warnings.add(String.format(
+                    "Validation set holds %d image(s) and could not fit %d of %d coverable class(es). "
+                            + "Raise the validation split, or use the per-image Train/Val dropdowns to "
+                            + "send a slide containing each missing class to val.",
+                    targetVal, uncoveredCount, coverableClasses.size()));
         }
         for (ClassCoverage cc : coverage.values()) {
             if (cc.imagesContaining() == 0) continue;
@@ -272,6 +273,17 @@ public final class ImageClassCoverageSplitter {
                         "Class '%s' could not be placed in train (in %d images, all on val side). "
                                 + "Move one of its images to train manually.",
                         cc.className(), cc.imagesContaining()));
+            } else if (cc.imagesContaining() < RARE_CLASS_THRESHOLD) {
+                // Structurally covered but statistically thin: val IoU is
+                // computed on 1-2 slides so the per-epoch number is noisy
+                // and the post-training "never learned" hint can fire even
+                // when the model is fine.
+                warnings.add(String.format(
+                        "Class '%s' is rare (in %d image(s); %d train / %d val). Validation IoU "
+                                + "for it will be noisy between epochs -- treat single-epoch dips "
+                                + "as noise, not failure. Adding this class to more slides will "
+                                + "give a more reliable signal.",
+                        cc.className(), cc.imagesContaining(), cc.inTrain(), cc.inVal()));
             }
         }
 

@@ -70,50 +70,78 @@ public class ImageClassCoverageSplitterTest {
     }
 
     @Test
-    public void warnsWhenStructurallyImpossibleToFitAllClassesInVal() {
-        // 4 images, 5 coverable classes -- val keeps at most 3 images (n-1)
-        // so even valFraction=1.0 cannot fit all 5 classes. Warning should
-        // acknowledge the structural limit, NOT suggest a >100% split.
+    public void doesNotSuggestImpossibleSplitPercentage() {
+        // 4 images, 5 coverable classes. Earlier versions of the splitter
+        // emitted "raise to 125%" because the formula was coverable/n. The
+        // warning must never suggest a >100% (or 3-digit) split.
         List<ImageInput<String>> inputs = List.of(
                 img("a", "A", 100.0, "B", 100.0),
                 img("b", "C", 100.0, "D", 100.0),
                 img("c", "E", 100.0, "A", 100.0),
                 img("d", "B", 100.0, "C", 100.0, "D", 100.0, "E", 100.0));
         SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 1L);
-        // Must NOT suggest impossible split percentages.
         for (String w : result.warnings()) {
-            assertTrue(!w.matches(".*\\b1\\d\\d%.*"), "Warning suggested >100% split: " + w);
+            assertTrue(!w.matches(".*\\b1\\d\\d%.*"), "Warning suggested >=100% split: " + w);
         }
-        assertTrue(
-                result.warnings().stream().anyMatch(w -> w.contains("cannot fit every class")),
-                "Expected structural-impossibility warning, got: " + result.warnings());
     }
 
     @Test
-    public void warnsWhenValFractionTooSmallToFitAllClasses() {
-        // 7 coverable classes but only 2 val slots -- no permutation can fit
-        // them all on the val side. Splitter must surface this as a warning
-        // so the user knows to raise the val fraction.
+    public void doesNotWarnWhenSplitActuallyCoversEveryClass() {
+        // Classes co-occur heavily, so even a small val set can cover all of
+        // them. Earlier versions warned eagerly based on targetVal vs class
+        // count regardless of actual coverage -- this test guards against
+        // that regression.
+        List<ImageInput<String>> inputs = List.of(
+                img("img1", "tumor", 100.0, "mucosa", 100.0, "muscle", 100.0, "fat", 100.0),
+                img("img2", "tumor", 100.0, "mucosa", 100.0, "muscle", 100.0, "fat", 100.0),
+                img("img3", "tumor", 100.0, "mucosa", 100.0, "muscle", 100.0, "fat", 100.0),
+                img("img4", "tumor", 100.0, "mucosa", 100.0, "muscle", 100.0, "fat", 100.0),
+                img("img5", "tumor", 100.0, "mucosa", 100.0, "muscle", 100.0, "fat", 100.0));
+        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.2, 0L);
+        // 4 classes, val=1 image, every image carries all classes -> full coverage.
+        assertTrue(
+                result.warnings().stream().noneMatch(w -> w.contains("could not fit")),
+                "Should not warn about uncovered classes when split is fully covering: " + result.warnings());
+    }
+
+    @Test
+    public void warnsWhenClassIsRare() {
+        // 'adipose' is in only 2 of 8 images -- splitter still puts one in
+        // each split (1 train, 1 val), but val IoU on a single slide is too
+        // noisy to be reliable. The warning makes that explicit so the user
+        // doesn't misread per-epoch dips as 'class never learned'.
+        List<ImageInput<String>> inputs = List.of(
+                img("img1", "mucosa", 100.0, "muscle", 100.0),
+                img("img2", "mucosa", 100.0, "muscle", 100.0),
+                img("img3", "mucosa", 100.0, "muscle", 100.0),
+                img("img4", "mucosa", 100.0, "muscle", 100.0),
+                img("img5", "mucosa", 100.0, "muscle", 100.0),
+                img("img6", "mucosa", 100.0, "muscle", 100.0),
+                img("img7", "adipose", 100.0, "mucosa", 100.0),
+                img("img8", "adipose", 100.0, "muscle", 100.0));
+        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 0L);
+        assertTrue(
+                result.warnings().stream().anyMatch(w -> w.contains("adipose") && w.contains("rare")),
+                "Expected a rare-class warning for 'adipose', got: " + result.warnings());
+    }
+
+    @Test
+    public void warnsWhenSplitFailsToCoverEveryClass() {
+        // 4 images, 2 val slots, but the val side cannot fit one image with
+        // class C and one with class D simultaneously -- val=2 includes at
+        // most 2 distinct class pairs. Classes B and D are in disjoint
+        // images, so a 2-image val can cover only some of {A,B,C,D}.
         List<ImageInput<String>> inputs = List.of(
                 img("img1", "A", 100.0, "B", 100.0),
                 img("img2", "A", 100.0, "B", 100.0),
                 img("img3", "C", 100.0, "D", 100.0),
-                img("img4", "C", 100.0, "D", 100.0),
-                img("img5", "E", 100.0, "F", 100.0),
-                img("img6", "E", 100.0, "F", 100.0),
-                img("img7", "G", 100.0),
-                img("img8", "G", 100.0),
-                img("img9", "A", 100.0, "C", 100.0),
-                img("img10", "B", 100.0, "D", 100.0),
-                img("img11", "E", 100.0, "G", 100.0));
-
-        // 20% of 11 = 2 val slots, but there are 7 coverable classes.
-        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.2, 42L);
-
-        // Splitter still produces a split (best-effort), but warns the user.
+                img("img4", "C", 100.0, "D", 100.0));
+        // valFraction=0.25 -> targetVal=1, which can hold only one of {AB,CD},
+        // so coverage will fail for two of the four classes.
+        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 7L);
         assertTrue(
-                result.warnings().stream().anyMatch(w -> w.contains("Raise the validation split")),
-                "Expected a warning suggesting a higher val fraction, got: " + result.warnings());
+                result.warnings().stream().anyMatch(w -> w.contains("could not fit")),
+                "Expected an 'uncovered classes' warning, got: " + result.warnings());
     }
 
     @Test
