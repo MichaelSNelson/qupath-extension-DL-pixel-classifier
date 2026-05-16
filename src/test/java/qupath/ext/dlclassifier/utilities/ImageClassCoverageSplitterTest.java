@@ -105,11 +105,28 @@ public class ImageClassCoverageSplitterTest {
     }
 
     @Test
-    public void warnsWhenClassIsRare() {
-        // 'adipose' is in only 2 of 8 images -- splitter still puts one in
-        // each split (1 train, 1 val), but val IoU on a single slide is too
-        // noisy to be reliable. The warning makes that explicit so the user
-        // doesn't misread per-epoch dips as 'class never learned'.
+    public void warnsWhenClassIsRareByProjectPercentage() {
+        // 'adipose' is in 2 of 14 images (14%) -- under the 15% threshold,
+        // so the rare-class warning should fire. The splitter still puts
+        // one in each split structurally, but val IoU on a single slide is
+        // too thin to be a reliable signal.
+        List<ImageInput<String>> inputs = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            inputs.add(img("img" + i, "mucosa", 100.0, "muscle", 100.0));
+        }
+        inputs.add(img("imgA", "adipose", 100.0, "mucosa", 100.0));
+        inputs.add(img("imgB", "adipose", 100.0, "muscle", 100.0));
+        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 0L);
+        assertTrue(
+                result.warnings().stream().anyMatch(w -> w.contains("adipose") && w.contains("rare")),
+                "Expected a rare-class warning for 'adipose', got: " + result.warnings());
+    }
+
+    @Test
+    public void doesNotWarnRareWhenSmallProjectKeepsPercentageHigh() {
+        // 'adipose' is in 2 of 8 images (25%) -- above the 15% threshold,
+        // so no rare-class warning should fire. In a small project, two
+        // slides is a reasonable fraction.
         List<ImageInput<String>> inputs = List.of(
                 img("img1", "mucosa", 100.0, "muscle", 100.0),
                 img("img2", "mucosa", 100.0, "muscle", 100.0),
@@ -121,8 +138,8 @@ public class ImageClassCoverageSplitterTest {
                 img("img8", "adipose", 100.0, "muscle", 100.0));
         SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 0L);
         assertTrue(
-                result.warnings().stream().anyMatch(w -> w.contains("adipose") && w.contains("rare")),
-                "Expected a rare-class warning for 'adipose', got: " + result.warnings());
+                result.warnings().stream().noneMatch(w -> w.contains("adipose") && w.contains("rare")),
+                "Should not warn about adipose at 25% project share, got: " + result.warnings());
     }
 
     @Test

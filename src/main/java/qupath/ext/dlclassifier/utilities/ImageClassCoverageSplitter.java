@@ -45,15 +45,19 @@ public final class ImageClassCoverageSplitter {
     public static final int DEFAULT_ATTEMPTS = 500;
 
     /**
-     * A class is "rare" when it appears in fewer than this many images.
-     * Rare classes still get the structural guarantee (>=1 image per split
-     * when there are >=2 total), but per-class val IoU is computed on so
-     * few slides that the number swings wildly between epochs and the
-     * post-training "never learned" hint fires false positives. We warn so
-     * the user can either annotate the class onto more slides or read the
-     * noisy signal with the right expectation.
+     * A class is "rare" when it appears in fewer than this fraction of the
+     * selected images. Rare classes still get the structural guarantee
+     * (>=1 image per split when there are >=2 total), but per-class val
+     * IoU is computed on so few slides that the number swings wildly
+     * between epochs and the post-training "never learned" hint fires
+     * false positives. We warn so the user can either annotate the class
+     * onto more slides or read the noisy signal with the right expectation.
+     * <p>
+     * Percentage-based rather than absolute because the right threshold
+     * scales with project size: 2-of-10 (20%) is fine; 2-of-50 (4%) is
+     * thin enough that the val signal will not be reliable.
      */
-    public static final int RARE_CLASS_THRESHOLD = 4;
+    public static final double RARE_CLASS_FRACTION = 0.15;
 
     private ImageClassCoverageSplitter() {
         // Static utility class
@@ -273,17 +277,22 @@ public final class ImageClassCoverageSplitter {
                         "Class '%s' could not be placed in train (in %d images, all on val side). "
                                 + "Move one of its images to train manually.",
                         cc.className(), cc.imagesContaining()));
-            } else if (cc.imagesContaining() < RARE_CLASS_THRESHOLD) {
+            } else if ((double) cc.imagesContaining() / n < RARE_CLASS_FRACTION) {
                 // Structurally covered but statistically thin: val IoU is
-                // computed on 1-2 slides so the per-epoch number is noisy
-                // and the post-training "never learned" hint can fire even
-                // when the model is fine.
+                // computed on so few slides that the per-epoch number is
+                // noisy and the post-training "never learned" hint can fire
+                // even when the model is fine.
                 warnings.add(String.format(
-                        "Class '%s' is rare (in %d image(s); %d train / %d val). Validation IoU "
-                                + "for it will be noisy between epochs -- treat single-epoch dips "
-                                + "as noise, not failure. Adding this class to more slides will "
-                                + "give a more reliable signal.",
-                        cc.className(), cc.imagesContaining(), cc.inTrain(), cc.inVal()));
+                        "Class '%s' is rare (in %d of %d images, %.0f%%; %d train / %d val). "
+                                + "Validation IoU for it will be noisy between epochs -- treat "
+                                + "single-epoch dips as noise, not failure. Adding this class to "
+                                + "more slides will give a more reliable signal.",
+                        cc.className(),
+                        cc.imagesContaining(),
+                        n,
+                        100.0 * cc.imagesContaining() / n,
+                        cc.inTrain(),
+                        cc.inVal()));
             }
         }
 
