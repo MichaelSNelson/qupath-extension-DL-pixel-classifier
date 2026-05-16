@@ -1562,6 +1562,14 @@ public class TrainingWorkflow {
                 boolean filesInPlace = modelOutputDir != null;
                 ModelManager modelManager = new ModelManager();
                 modelManager.saveClassifier(cancelMetadata, Path.of(savedModelPath), true, filesInPlace);
+                // The cancel-with-save path returns success=true, which enables
+                // the Review Training Areas button -- but Review needs the model
+                // path holder populated. Without this assignment the button is
+                // enabled yet immediately reports "Cannot review: training data
+                // or model path not available."
+                if (modelPathHolder != null && modelPathHolder.length > 0) {
+                    modelPathHolder[0] = savedModelPath;
+                }
                 String msg = "Saved " + epochLabel + " model as " + effectiveId;
                 logger.info(msg);
                 if (progress != null) progress.log(msg);
