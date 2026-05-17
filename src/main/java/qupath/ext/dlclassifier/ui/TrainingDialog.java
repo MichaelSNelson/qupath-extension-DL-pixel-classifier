@@ -3281,11 +3281,24 @@ public class TrainingDialog {
                 earlyStoppingPatienceSpinner.setDisable(disabled);
                 esPatienceLabel.setDisable(disabled);
             };
+            // Reactive preference save: change to the combo immediately
+            // persists, instead of waiting for a Train click. Without this,
+            // a session where the user picks Disabled but never clicks Train
+            // (cancel, close, crash) loses the setting and the next dialog
+            // open shows whatever was last persisted -- typically "Mean IoU".
             earlyStoppingMetricCombo.valueProperty().addListener((obs, o, n) -> {
                 updateEarlyStoppingStatusLabel();
                 applyEarlyStoppingDisableState.run();
+                if (n != null) {
+                    DLClassifierPreferences.setDefaultEarlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(n));
+                }
             });
-            earlyStoppingPatienceSpinner.valueProperty().addListener((obs, o, n) -> updateEarlyStoppingStatusLabel());
+            earlyStoppingPatienceSpinner.valueProperty().addListener((obs, o, n) -> {
+                updateEarlyStoppingStatusLabel();
+                if (n != null) {
+                    DLClassifierPreferences.setDefaultEarlyStoppingPatience(n);
+                }
+            });
             applyEarlyStoppingDisableState.run();
 
             TitledPane pane = new TitledPane("DURATION & STOPPING", grid);

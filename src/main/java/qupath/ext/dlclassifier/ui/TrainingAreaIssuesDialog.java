@@ -669,19 +669,15 @@ public class TrainingAreaIssuesDialog {
             boolean needsSwitch = !targetImageName.equals(currentImageName);
 
             if (needsSwitch) {
-                for (var entry : project.getImageList()) {
+                @SuppressWarnings("unchecked")
+                var imageList = (java.util.List<qupath.lib.projects.ProjectImageEntry<java.awt.image.BufferedImage>>)
+                        project.getImageList();
+                for (qupath.lib.projects.ProjectImageEntry<java.awt.image.BufferedImage> entry : imageList) {
                     boolean match = targetImageId != null && !targetImageId.isEmpty()
                             ? targetImageId.equals(entry.getID())
                             : targetImageName.equals(entry.getImageName());
                     if (match) {
-                        Platform.runLater(() -> {
-                            try {
-                                qupath.openImageEntry(entry);
-                                Platform.runLater(() -> centerViewerOnTile(qupath, row));
-                            } catch (Exception e) {
-                                logger.warn("Failed to open image: {}", e.getMessage());
-                            }
-                        });
+                        Platform.runLater(() -> openAndCenter(qupath, entry, row, targetImageName));
                         return;
                     }
                 }
@@ -690,6 +686,85 @@ public class TrainingAreaIssuesDialog {
         }
 
         Platform.runLater(() -> centerViewerOnTile(qupath, row));
+    }
+
+    /**
+     * Switches the viewer to {@code entry} and centers on the tile once the
+     * new image data is actually installed. Without the wait, the first click
+     * on a row that lives on a different slide centers using the previous
+     * slide's coordinates -- openImageEntry installs the new ImageData
+     * asynchronously, so a plain runLater() races the install. We attach a
+     * one-shot listener on viewer.imageDataProperty and only call
+     * centerViewerOnTile when the listener fires for the target image.
+     */
+    private void openAndCenter(
+            QuPathGUI qupath,
+            qupath.lib.projects.ProjectImageEntry<java.awt.image.BufferedImage> entry,
+            TileRow row,
+            String targetImageName) {
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer == null) {
+            try {
+                qupath.openImageEntry(entry);
+            } catch (Exception e) {
+                logger.warn("Failed to open image: {}", e.getMessage());
+            }
+            return;
+        }
+
+        var imageDataProp = viewer.imageDataProperty();
+        java.util.concurrent.atomic.AtomicReference<
+                        ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>>>
+                listenerRef = new java.util.concurrent.atomic.AtomicReference<>();
+
+        ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>> listener = (obs, oldVal, newVal) -> {
+            if (newVal == null) return;
+            // Confirm this fired for OUR target -- otherwise a stale switch
+            // from elsewhere would steal the centering action.
+            String loadedName = newVal.getServer() != null && newVal.getServer().getMetadata() != null
+                    ? newVal.getServer().getMetadata().getName()
+                    : null;
+            if (targetImageName != null && loadedName != null && !targetImageName.equals(loadedName)) {
+                return;
+            }
+            var current = listenerRef.getAndSet(null);
+            if (current != null) {
+                imageDataProp.removeListener(current);
+            }
+            // runLater so the viewer finishes installing the image before
+            // we set the center pixel location (centerPixelLocation depends
+            // on server width/height being live).
+            Platform.runLater(() -> centerViewerOnTile(qupath, row));
+        };
+        listenerRef.set(listener);
+        imageDataProp.addListener(listener);
+
+        try {
+            qupath.openImageEntry(entry);
+        } catch (Exception e) {
+            // Open failed synchronously; remove listener and report.
+            var current = listenerRef.getAndSet(null);
+            if (current != null) {
+                imageDataProp.removeListener(current);
+            }
+            logger.warn("Failed to open image: {}", e.getMessage());
+            return;
+        }
+
+        // Two-second fallback: if the install never fires (failed open, no
+        // viewer event), still center using whatever is loaded so the click
+        // does something rather than appearing to be a no-op.
+        javafx.animation.PauseTransition fallback =
+                new javafx.animation.PauseTransition(javafx.util.Duration.seconds(2));
+        fallback.setOnFinished(e -> {
+            var current = listenerRef.getAndSet(null);
+            if (current != null) {
+                imageDataProp.removeListener(current);
+                logger.debug("Image-switch wait timed out; centering with whatever is loaded");
+                centerViewerOnTile(qupath, row);
+            }
+        });
+        fallback.play();
     }
 
     private void centerViewerOnTile(QuPathGUI qupath, TileRow row) {
