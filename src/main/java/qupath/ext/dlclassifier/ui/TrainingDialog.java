@@ -297,6 +297,10 @@ public class TrainingDialog {
         private String pretrainedModelPtPath;
         private String pretrainedModelArchitecture;
         private String pretrainedModelBackbone;
+        // Class-weight multipliers parsed from the loaded model's training
+        // settings. Buffered here so they can apply whether classes are
+        // loaded before or after the model. Cleared once applied.
+        private final Map<String, Double> pendingClassWeightMultipliers = new LinkedHashMap<>();
 
         // Spatial info labels
         private Label resolutionInfoLabel;
@@ -1753,6 +1757,24 @@ public class TrainingDialog {
                             .setValue(((Number) ts.get("focus_class_min_iou")).doubleValue());
                 }
 
+                // Class weight multipliers. Parse into pendingClassWeightMultipliers
+                // and apply now if classes are already loaded; otherwise the
+                // Load Classes flow re-applies them after building the list,
+                // since populating the list rebuilds ClassItems from scratch
+                // (default multiplier 1.0) and would clobber a now-set value.
+                if (ts.containsKey("class_weight_multipliers")) {
+                    Object raw = ts.get("class_weight_multipliers");
+                    if (raw instanceof Map<?, ?> map) {
+                        pendingClassWeightMultipliers.clear();
+                        for (var e : map.entrySet()) {
+                            if (e.getKey() instanceof String name && e.getValue() instanceof Number n) {
+                                pendingClassWeightMultipliers.put(name, n.doubleValue());
+                            }
+                        }
+                        applyPendingClassWeightMultipliers();
+                    }
+                }
+
                 // Augmentation config
                 if (ts.containsKey("augmentation_config")) {
                     Object augObj = ts.get("augmentation_config");
@@ -2815,6 +2837,33 @@ public class TrainingDialog {
         /**
          * Extracts class weight multipliers from the class list view.
          */
+        /**
+         * Apply any pending class-weight multipliers (parsed from a loaded
+         * model's training settings) to the current class list. No-ops if
+         * the class list is empty -- the Load Classes flow re-calls this
+         * after populating ClassItems. Clears the buffer when applied so a
+         * later Load Classes click doesn't silently re-stamp old values.
+         */
+        private void applyPendingClassWeightMultipliers() {
+            if (classListView == null || pendingClassWeightMultipliers.isEmpty()) return;
+            if (classListView.getItems().isEmpty()) return;
+            int applied = 0;
+            for (ClassItem item : classListView.getItems()) {
+                Double m = pendingClassWeightMultipliers.get(item.name());
+                if (m != null) {
+                    item.weightMultiplier().set(m);
+                    applied++;
+                }
+            }
+            if (applied > 0) {
+                logger.info(
+                        "Restored {} class-weight multiplier(s) from loaded model: {}",
+                        applied,
+                        pendingClassWeightMultipliers);
+            }
+            pendingClassWeightMultipliers.clear();
+        }
+
         private Map<String, Double> getClassWeightMultipliers() {
             Map<String, Double> multipliers = new LinkedHashMap<>();
             for (ClassItem item : classListView.getItems()) {
@@ -4865,6 +4914,11 @@ public class TrainingDialog {
                     if (rebalanceByDefaultCheck.isSelected()) {
                         rebalanceClassWeights();
                     }
+
+                    // Restore user-saved class-weight multipliers from a loaded
+                    // model AFTER any auto-rebalance, so explicit user choices
+                    // take precedence over the rebalance heuristic.
+                    applyPendingClassWeightMultipliers();
 
                     // Enable gated sections
                     classesLoaded = true;
