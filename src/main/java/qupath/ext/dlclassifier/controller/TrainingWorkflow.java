@@ -2573,8 +2573,10 @@ public class TrainingWorkflow {
                     areas.merge(pc.getName(), presence, Double::sum);
                 }
             } catch (Exception e) {
-                logger.debug("Limited-data scan: could not read hierarchy for '{}': {}",
-                        entry.getImageName(), e.getMessage());
+                logger.debug(
+                        "Limited-data scan: could not read hierarchy for '{}': {}",
+                        entry.getImageName(),
+                        e.getMessage());
             }
             inputs.add(new ImageClassCoverageSplitter.ImageInput<>(entry, areas));
         }

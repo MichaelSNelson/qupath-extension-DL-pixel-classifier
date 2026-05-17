@@ -345,11 +345,7 @@ public final class ImageClassCoverageSplitter {
                                 + "single-slide noise and is EXCLUDED from best-epoch / "
                                 + "early-stopping selection. Per-epoch numbers in this column "
                                 + "are informational only.",
-                        cc.className(),
-                        cc.imagesContaining(),
-                        cc.inTrain(),
-                        cc.inVal(),
-                        LIMITED_DATA_SLIDE_FLOOR));
+                        cc.className(), cc.imagesContaining(), cc.inTrain(), cc.inVal(), LIMITED_DATA_SLIDE_FLOOR));
             } else if ((double) cc.imagesContaining() / n < RARE_CLASS_FRACTION) {
                 // Structurally covered AND above the limited-data floor, but
                 // statistically thin: val IoU is computed on enough slides

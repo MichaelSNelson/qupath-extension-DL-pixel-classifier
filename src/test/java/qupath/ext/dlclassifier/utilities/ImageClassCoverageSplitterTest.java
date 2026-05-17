@@ -123,8 +123,9 @@ public class ImageClassCoverageSplitterTest {
                 result.warnings().stream().anyMatch(w -> w.contains("adipose") && w.contains("rare")),
                 "Expected a rare-class warning for 'adipose', got: " + result.warnings());
         assertTrue(
-                result.warnings().stream().noneMatch(w -> w.contains("adipose") && w.contains("limited-data")
-                        || (w.contains("adipose") && w.contains("only") && w.contains("source slides"))),
+                result.warnings().stream()
+                        .noneMatch(w -> w.contains("adipose") && w.contains("limited-data")
+                                || (w.contains("adipose") && w.contains("only") && w.contains("source slides"))),
                 "Should NOT also flag adipose as limited-data at 4 slides, got: " + result.warnings());
         assertTrue(
                 !result.limitedDataClasses().contains("adipose"),
@@ -170,11 +171,14 @@ public class ImageClassCoverageSplitterTest {
                 img("img7", "mucosa", 100.0, "enough4", 100.0),
                 img("img8", "mucosa", 100.0));
         SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 0L);
-        assertTrue(result.limitedDataClasses().contains("rare3"),
+        assertTrue(
+                result.limitedDataClasses().contains("rare3"),
                 "rare3 (3 slides) should be limited-data: " + result.limitedDataClasses());
-        assertTrue(!result.limitedDataClasses().contains("enough4"),
+        assertTrue(
+                !result.limitedDataClasses().contains("enough4"),
                 "enough4 (4 slides) should NOT be limited-data: " + result.limitedDataClasses());
-        assertTrue(!result.limitedDataClasses().contains("mucosa"),
+        assertTrue(
+                !result.limitedDataClasses().contains("mucosa"),
                 "mucosa (8 slides) should NOT be limited-data: " + result.limitedDataClasses());
     }
 
