@@ -2055,6 +2055,27 @@ public class TrainingDialog {
             // from the start matches the active state the user will see.
             applyAutoDistributeHighlight(true);
 
+            // "All Both" button: assign every selected image to BOTH so the
+            // model trains on every patch and validation runs on every patch.
+            // Useful when the project is small enough that splitting train/val
+            // strands rare classes -- the user accepts the overfitting risk
+            // in exchange for using all available data. Most often paired
+            // with the limited-data warning from Auto-Distribute.
+            Button allBothBtn = new Button("All Both");
+            TooltipHelper.install(
+                    allBothBtn,
+                    "Set every selected image to Both (used for both training\n"
+                            + "and validation).\n\n"
+                            + "Use this when the project is too small to split train/val\n"
+                            + "without stranding rare classes. The model will see every\n"
+                            + "patch, and validation IoU will reflect training-set\n"
+                            + "performance -- read it as a smoke test, not as a\n"
+                            + "generalization signal. Use the per-image dropdowns to\n"
+                            + "carve out a real holdout for selected slides.");
+            allBothBtn.setOnAction(e -> assignAllSelectedToBoth());
+            allBothBtn.visibleProperty().bind(advancedMode);
+            allBothBtn.managedProperty().bind(advancedMode);
+
             // Load Classes button
             loadClassesButton = new Button("Load Classes from Selected Images");
             loadClassesButton.setStyle("-fx-font-weight: bold;");
@@ -2066,7 +2087,7 @@ public class TrainingDialog {
                             + "Also initializes channel configuration from the first image.");
             loadClassesButton.setOnAction(e -> loadClassesFromSelectedImages());
 
-            HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn, autoDistributeBtn);
+            HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn, autoDistributeBtn, allBothBtn);
 
             tileEstimateLabel = new Label();
             tileEstimateLabel.setWrapText(true);
@@ -2131,6 +2152,38 @@ public class TrainingDialog {
          * touched. If any selected item already has a non-BOTH role, a
          * confirmation dialog is shown before anything is overwritten.
          */
+        /**
+         * Set every selected image's split role to BOTH. Sibling of
+         * {@link #autoDistributeSelectedImages} -- clears the auto-distribute
+         * highlight so the user knows the split was overridden manually.
+         */
+        private void assignAllSelectedToBoth() {
+            List<ImageSelectionItem> selected = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get())
+                    .collect(Collectors.toList());
+            if (selected.isEmpty()) {
+                Dialogs.showInfoNotification("All Both", "Select at least one image first.");
+                return;
+            }
+            inAutoDistribute = true;
+            try {
+                for (ImageSelectionItem item : selected) {
+                    item.splitRole.set(SplitRole.BOTH);
+                }
+            } finally {
+                inAutoDistribute = false;
+            }
+            applyAutoDistributeHighlight(false);
+            logger.info("All {} selected images assigned to Both", selected.size());
+            Dialogs.showInfoNotification(
+                    "All Both",
+                    String.format(
+                            "%d image(s) set to Both. The model will train on every patch and "
+                                    + "validation will run on every patch. Val IoU reflects training-set "
+                                    + "performance -- use it as a smoke test, not a generalization signal.",
+                            selected.size()));
+        }
+
         private void autoDistributeSelectedImages() {
             List<ImageSelectionItem> selected = imageSelectionList.getItems().stream()
                     .filter(item -> item.selected.get())
@@ -2178,25 +2231,58 @@ public class TrainingDialog {
                     ImageClassCoverageSplitter.SplitResult<ImageSelectionItem> result =
                             ImageClassCoverageSplitter.split(inputs, valFraction, seed);
 
+                    // Slides carrying a "limited-data" class (fewer than
+                    // LIMITED_DATA_SLIDE_FLOOR source slides in the whole
+                    // project) are defaulted to BOTH instead of being
+                    // routed exclusively to train or val. With only 2-3
+                    // source slides, a clean train/val split sacrifices
+                    // ~1/3 of the available data for that class to val,
+                    // and the val signal is a single-slide noise reading
+                    // anyway. BOTH lets the model see every patch and
+                    // makes the user aware of the data ceiling. Val IoU
+                    // for limited-data classes then reflects train-set
+                    // performance -- optimistic, but more useful as a
+                    // smoke test than the single-slide noise it was.
+                    Set<String> limitedClasses = result.limitedDataClasses();
+                    Set<ImageSelectionItem> bothSlides = new HashSet<>();
+                    if (!limitedClasses.isEmpty()) {
+                        for (ImageClassCoverageSplitter.ImageInput<ImageSelectionItem> input : inputs) {
+                            Map<String, Double> areas = input.classAreas();
+                            if (areas == null) continue;
+                            for (String cls : areas.keySet()) {
+                                if (limitedClasses.contains(cls)) {
+                                    bothSlides.add(input.handle());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     int nTrain = 0;
                     int nVal = 0;
+                    int nBoth = 0;
                     for (ImageClassCoverageSplitter.ImageAssignment<ImageSelectionItem> a : result.assignments()) {
-                        if (a.role() == ImageClassCoverageSplitter.Role.VAL) {
-                            a.handle().splitRole.set(SplitRole.VAL_ONLY);
+                        ImageSelectionItem item = a.handle();
+                        if (bothSlides.contains(item)) {
+                            item.splitRole.set(SplitRole.BOTH);
+                            nBoth++;
+                        } else if (a.role() == ImageClassCoverageSplitter.Role.VAL) {
+                            item.splitRole.set(SplitRole.VAL_ONLY);
                             nVal++;
                         } else {
-                            a.handle().splitRole.set(SplitRole.TRAIN_ONLY);
+                            item.splitRole.set(SplitRole.TRAIN_ONLY);
                             nTrain++;
                         }
                     }
 
                     logger.info(
-                            "Auto-distribute (class-aware, seed={}): {} train / {} val from {} images",
+                            "Auto-distribute (class-aware, seed={}): {} train / {} val / {} both from {} images",
                             seed,
                             nTrain,
                             nVal,
+                            nBoth,
                             selected.size());
-                    surfaceCoverageWarnings(result);
+                    surfaceCoverageWarnings(result, nBoth);
                 } else {
                     logger.info(
                             "Auto-distribute (seed={}): no class data available, " + "falling back to random split",
@@ -2253,8 +2339,9 @@ public class TrainingDialog {
          * the splitter -- typically classes that exist in only one image and
          * therefore can't appear in both train and val.
          */
-        private void surfaceCoverageWarnings(ImageClassCoverageSplitter.SplitResult<ImageSelectionItem> result) {
-            if (result.warnings().isEmpty()) {
+        private void surfaceCoverageWarnings(
+                ImageClassCoverageSplitter.SplitResult<ImageSelectionItem> result, int nBoth) {
+            if (result.warnings().isEmpty() && nBoth == 0) {
                 int coverable = (int) result.coverage().values().stream()
                         .filter(cc -> cc.imagesContaining() >= 2)
                         .count();
@@ -2266,17 +2353,30 @@ public class TrainingDialog {
                 return;
             }
             StringBuilder msg = new StringBuilder();
-            msg.append("Class coverage warnings (split applied anyway):\n");
-            int shown = 0;
-            for (String w : result.warnings()) {
-                if (shown >= 6) {
-                    msg.append("... and ")
-                            .append(result.warnings().size() - shown)
-                            .append(" more (see log)\n");
-                    break;
+            if (nBoth > 0) {
+                Set<String> limited = result.limitedDataClasses();
+                msg.append(String.format(
+                                "%d slide(s) defaulted to Both because they carry class(es) with too few "
+                                        + "source slides (%s). The model trains on every patch from these slides, "
+                                        + "but validation IoU for those classes will be optimistic (it sees the "
+                                        + "training data). Use it as a smoke test, not a generalization signal. "
+                                        + "Change a slide's role manually if you want a different split.",
+                                nBoth, String.join(", ", limited)))
+                        .append("\n\n");
+            }
+            if (!result.warnings().isEmpty()) {
+                msg.append("Class coverage warnings:\n");
+                int shown = 0;
+                for (String w : result.warnings()) {
+                    if (shown >= 6) {
+                        msg.append("... and ")
+                                .append(result.warnings().size() - shown)
+                                .append(" more (see log)\n");
+                        break;
+                    }
+                    msg.append("  - ").append(w).append('\n');
+                    shown++;
                 }
-                msg.append("  - ").append(w).append('\n');
-                shown++;
             }
             Dialogs.showMessageDialog("Auto-Distribute - Coverage Warnings", msg.toString());
         }
