@@ -667,6 +667,41 @@ public class TrainingWorkflow {
                         "Limited-data classes (excluded from best-epoch selection): {}",
                         String.join(", ", limitedClasses));
             }
+
+            // Focus-class conflict check: the focus class drives best-epoch
+            // selection by its own per-class val IoU. If that class is also
+            // limited-data, the signal is either single-slide noise (when
+            // the carrier slide sits in val) or training-set IoU (when
+            // Auto-Distribute moved it to Both). Either way, best-epoch
+            // selection is unreliable. We ask before proceeding rather
+            // than silently demoting the user's stated priority.
+            String focus = trainingConfig.getFocusClass();
+            if (focus != null && limitedClasses.contains(focus)) {
+                boolean proceed = Dialogs.showConfirmDialog(
+                        "Focus Class Has Limited Data",
+                        String.format(
+                                "Focus class '%s' is also a limited-data class (fewer than 4 source "
+                                        + "slides in this project).%n%n"
+                                        + "Best-epoch selection uses its per-class validation IoU. With so few "
+                                        + "source slides, that IoU is either single-slide noise (when the carrier "
+                                        + "slide is in val) or optimistic (when Auto-Distribute moved the carrier "
+                                        + "to Both), so best-epoch will be unreliable.%n%n"
+                                        + "Options:%n"
+                                        + "  - Cancel, then pick a different focus class.%n"
+                                        + "  - Cancel, then add this class to more slides.%n"
+                                        + "  - Continue anyway (the model will train and the per-class IoU is "
+                                        + "still reported, but best-epoch selection will follow a noisy signal).",
+                                focus));
+                if (!proceed) {
+                    releaseTrainingLock();
+                    logger.info("Training cancelled by user: focus class '{}' is limited-data", focus);
+                    return;
+                }
+                logger.warn(
+                        "Training proceeding with focus class '{}' on limited data -- "
+                                + "best-epoch selection will be unreliable",
+                        focus);
+            }
         } catch (Exception e) {
             logger.debug("Limited-data class detection skipped: {}", e.getMessage());
         }
