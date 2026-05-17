@@ -3719,7 +3719,25 @@ class TrainingService:
                     early_stopping.counter = 0
 
                 if early_stopping(epoch + 1, es_value, model):
-                    logger.info(f"Early stopping triggered at epoch {epoch+1}")
+                    # Banner-format so the line stands out in the (very long)
+                    # training log. Java-side completion message also surfaces
+                    # this via lastEpoch < totalEpochs so a user who only
+                    # reads the popup still knows training ended early.
+                    logger.info("=" * 70)
+                    logger.info(
+                        "EARLY STOPPING TRIGGERED at epoch %d (best: epoch %d, "
+                        "score %.4f). No improvement for %d epochs (patience).",
+                        epoch + 1,
+                        early_stopping.best_epoch,
+                        early_stopping.best_score,
+                        early_stopping.patience,
+                    )
+                    logger.info(
+                        "To run the full %d epochs, raise Early Stopping patience "
+                        "or set it to Disabled in the training dialog.",
+                        epochs,
+                    )
+                    logger.info("=" * 70)
                     break
 
             # Check for pause request

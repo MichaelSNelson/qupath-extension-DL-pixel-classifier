@@ -939,6 +939,19 @@ public class TrainingWorkflow {
                                 result.finalLoss(),
                                 result.finalAccuracy() * 100,
                                 result.bestMeanIoU()));
+                        // Surface early-stopping termination in the popup. The
+                        // Python log already emits a banner-format line, but
+                        // users typically only read the completion message --
+                        // make it obvious that training did not run all epochs.
+                        int configuredEpochs = trainingConfig.getEpochs();
+                        if (result.epochsCompleted() > 0
+                                && configuredEpochs > 0
+                                && result.epochsCompleted() < configuredEpochs) {
+                            sb.append(String.format(
+                                    "%nStopped early at epoch %d of %d (early stopping triggered -- "
+                                            + "raise patience or disable in dialog to run all epochs).",
+                                    result.epochsCompleted(), configuredEpochs));
+                        }
                         if (result.focusClassName() != null) {
                             sb.append(String.format(
                                     "\nFocus class '%s' IoU: %.4f", result.focusClassName(), result.focusClassIoU()));
@@ -2182,15 +2195,22 @@ public class TrainingWorkflow {
                     modelPathHolder[0] = serverResult.modelPath();
                 }
 
-                progress.complete(
-                        true,
-                        String.format(
-                                "Classifier trained successfully!\nBest model: epoch %d\n"
-                                        + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
-                                serverResult.bestEpoch(),
-                                serverResult.finalLoss(),
-                                serverResult.finalAccuracy() * 100,
-                                serverResult.bestMeanIoU()));
+                StringBuilder resumeMsg = new StringBuilder(String.format(
+                        "Classifier trained successfully!\nBest model: epoch %d\n"
+                                + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                        serverResult.bestEpoch(),
+                        serverResult.finalLoss(),
+                        serverResult.finalAccuracy() * 100,
+                        serverResult.bestMeanIoU()));
+                if (serverResult.lastEpoch() > 0
+                        && serverResult.totalEpochs() > 0
+                        && serverResult.lastEpoch() < serverResult.totalEpochs()) {
+                    resumeMsg.append(String.format(
+                            "%nStopped early at epoch %d of %d (early stopping triggered -- "
+                                    + "raise patience or disable in dialog to run all epochs).",
+                            serverResult.lastEpoch(), serverResult.totalEpochs()));
+                }
+                progress.complete(true, resumeMsg.toString());
             }
 
         } catch (Exception e) {
