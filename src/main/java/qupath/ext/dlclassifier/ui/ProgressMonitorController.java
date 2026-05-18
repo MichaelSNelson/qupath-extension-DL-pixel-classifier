@@ -193,6 +193,11 @@ public class ProgressMonitorController {
         reviewButton.setManaged(false);
         reviewButton.setOnAction(e -> {
             if (onReviewTrainingAreasCallback != null) {
+                // Disable to prevent a second click while the async evaluation
+                // is running -- two clicks duplicate every log line and waste
+                // GPU time. Re-enabled by setReviewButtonRunning(false) once
+                // the workflow finishes (or errors).
+                setReviewButtonRunning(true);
                 onReviewTrainingAreasCallback.accept(null);
             }
         });
@@ -587,6 +592,18 @@ public class ProgressMonitorController {
      */
     public void setOnReviewTrainingAreas(Consumer<Void> callback) {
         this.onReviewTrainingAreasCallback = callback;
+    }
+
+    /**
+     * Toggles the Review Training Areas button between running (disabled, shows
+     * "Reviewing...") and idle. Called by the training workflow once an async
+     * review finishes or errors out so the user can re-run it if needed.
+     */
+    public void setReviewButtonRunning(boolean running) {
+        Platform.runLater(() -> {
+            reviewButton.setDisable(running);
+            reviewButton.setText(running ? "Reviewing..." : "Review Training Areas...");
+        });
     }
 
     /**

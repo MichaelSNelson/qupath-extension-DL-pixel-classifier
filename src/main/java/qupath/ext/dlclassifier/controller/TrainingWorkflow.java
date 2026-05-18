@@ -813,11 +813,13 @@ public class TrainingWorkflow {
                                 trainingConfig.getTileSize(),
                                 classColors);
                         dialog.show();
+                        progress.setReviewButtonRunning(false);
                     });
                 } catch (Exception e) {
                     logger.error("Tile evaluation failed", e);
                     progress.log("ERROR: Evaluation failed: " + e.getMessage());
                     progress.setStatus("Complete");
+                    progress.setReviewButtonRunning(false);
                 }
             });
         });
