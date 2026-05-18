@@ -273,6 +273,23 @@ public class TrainingAreaIssuesDialog {
         disagreeCol.setPrefWidth(80);
         disagreeCol.setCellFactory(col -> new FormattedDoubleCell<>("%5.1f%%", 100.0));
 
+        // Disagree pixel count at the current confidence threshold. The
+        // backing column property is recomputed from the per-tile confidence
+        // histogram each time the user moves the confidence slider. Falls
+        // back to the raw total for legacy sessions that lack a histogram.
+        TableColumn<TileRow, Number> disagreePxCol = new TableColumn<>("Disagree px");
+        disagreePxCol.setCellValueFactory(cell -> cell.getValue().disagreementPixelsAtThresholdProperty());
+        disagreePxCol.setPrefWidth(95);
+        disagreePxCol.setSortType(TableColumn.SortType.DESCENDING);
+        disagreePxCol.setCellFactory(col -> new TableCell<TileRow, Number>() {
+            @Override
+            protected void updateItem(Number item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : String.format("%,d", item.longValue()));
+                setStyle("-fx-alignment: CENTER-RIGHT;");
+            }
+        });
+
         TableColumn<TileRow, Double> iouCol = new TableColumn<>("mIoU");
         iouCol.setCellValueFactory(new PropertyValueFactory<>("meanIoU"));
         iouCol.setPrefWidth(65);
@@ -326,7 +343,8 @@ public class TrainingAreaIssuesDialog {
                         + "Falls back to worst-IoU class for tiles without\n"
                         + "recorded confusions (older saved sessions).");
 
-        table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol, iouCol, worstClassCol));
+        table.getColumns()
+                .addAll(List.of(imageCol, splitCol, lossCol, disagreeCol, disagreePxCol, iouCol, worstClassCol));
         table.getSortOrder().add(lossCol);
 
         // Single-click navigates to tile, updates the inner preview pane, and
@@ -653,6 +671,18 @@ public class TrainingAreaIssuesDialog {
         }
     }
 
+    /**
+     * Recompute every row's "Disagree px @ conf >= T" count from its
+     * histogram. Cheap (~20 ints summed per row, ~5000 rows max) so we
+     * just iterate -- no batching needed.
+     */
+    private void recomputeAllDisagreementCounts(double threshold) {
+        if (allRows == null) return;
+        for (TileRow row : allRows) {
+            row.recomputeDisagreementAtThreshold(threshold);
+        }
+    }
+
     private void navigateToTile(TileRow row) {
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) return;
@@ -851,6 +881,9 @@ public class TrainingAreaIssuesDialog {
         allRows.clear();
         for (ClassifierClient.TileEvaluationResult r : loaded.results()) {
             allRows.add(new TileRow(r));
+        }
+        if (confidenceSlider != null) {
+            recomputeAllDisagreementCounts(confidenceSlider.getValue());
         }
         // Per-session exclusions: a fresh reload restores everything so the
         // user can review the complete set again.
@@ -1177,7 +1210,13 @@ public class TrainingAreaIssuesDialog {
         confidenceSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             confLabel.setText(String.format("Confidence: %.0f%%", newVal.doubleValue() * 100));
             cancelPendingPreview();
+            recomputeAllDisagreementCounts(newVal.doubleValue());
         });
+        // Apply the initial slider value to any rows already loaded -- without
+        // this, opening the dialog shows the raw total (slider default = 0.80
+        // implied by the spinner but stored separately) until the user wiggles
+        // the slider.
+        recomputeAllDisagreementCounts(confidenceSlider.getValue());
 
         // Preview checkbox
         previewCheckBox = new CheckBox("Preview changes before applying");
@@ -1499,6 +1538,14 @@ public class TrainingAreaIssuesDialog {
         // Preserved for session round-trips; not bound to the TableView.
         private final Map<String, Double> perClassIoU;
         private final List<ClassifierClient.ConfusionPair> topConfusions;
+        // Raw total of mispredicted labeled pixels (no confidence filter).
+        private final long disagreementPixelsTotal;
+        // 20-bin confidence histogram of disagree pixels (0.05 bins covering
+        // [0.0, 1.0]). Drives the "Disagree px @ conf >= T" column, which
+        // recomputes whenever the user moves the confidence slider.
+        private final List<Integer> disagreementConfHistogram;
+        // Bound to the table column; recomputed from the histogram + slider.
+        private final javafx.beans.property.LongProperty disagreementPixelsAtThreshold;
 
         public TileRow(ClassifierClient.TileEvaluationResult result) {
             this.sourceImage = new SimpleStringProperty(result.sourceImage());
@@ -1519,6 +1566,12 @@ public class TrainingAreaIssuesDialog {
             this.confidenceMapPath = new SimpleStringProperty(result.confidenceMapPath());
             this.groundTruthMaskPath = new SimpleStringProperty(result.groundTruthMaskPath());
             this.topConfusions = result.topConfusions() != null ? List.copyOf(result.topConfusions()) : List.of();
+            this.disagreementPixelsTotal = result.disagreementPixels();
+            this.disagreementConfHistogram = result.disagreementConfHistogram() != null
+                    ? List.copyOf(result.disagreementConfHistogram())
+                    : List.of();
+            this.disagreementPixelsAtThreshold =
+                    new javafx.beans.property.SimpleLongProperty(result.disagreementPixels());
 
             // Display the dominant GT->Pred confusion pair when we have one.
             // Phrasing is "GT -> Pred (k% of GT)" so the user immediately knows
@@ -1622,6 +1675,47 @@ public class TrainingAreaIssuesDialog {
             return topConfusions;
         }
 
+        public long getDisagreementPixels() {
+            return disagreementPixelsTotal;
+        }
+
+        public List<Integer> getDisagreementConfHistogram() {
+            return disagreementConfHistogram;
+        }
+
+        public long getDisagreementPixelsAtThreshold() {
+            return disagreementPixelsAtThreshold.get();
+        }
+
+        public javafx.beans.property.LongProperty disagreementPixelsAtThresholdProperty() {
+            return disagreementPixelsAtThreshold;
+        }
+
+        /**
+         * Recompute the at-threshold disagree-pixel count from the histogram.
+         * Sums all histogram bins whose lower edge is at or above {@code threshold}.
+         * Bin i covers [i*0.05, (i+1)*0.05); we include bin i when
+         * (i+1)*0.05 > threshold (i.e. any part of that bin clears it). With
+         * threshold=0.0, returns the raw total. If no histogram is present
+         * (legacy session), falls back to the raw total.
+         */
+        public void recomputeDisagreementAtThreshold(double threshold) {
+            if (disagreementConfHistogram.isEmpty()) {
+                disagreementPixelsAtThreshold.set(disagreementPixelsTotal);
+                return;
+            }
+            // First bin to include: smallest i such that (i+1)*0.05 > threshold.
+            // Equivalent to ceil(threshold * 20) but clamped to [0, 20].
+            int firstBin = (int) Math.ceil(threshold * 20.0);
+            firstBin = Math.max(0, Math.min(disagreementConfHistogram.size(), firstBin));
+            long sum = 0;
+            for (int i = firstBin; i < disagreementConfHistogram.size(); i++) {
+                Integer v = disagreementConfHistogram.get(i);
+                if (v != null) sum += v;
+            }
+            disagreementPixelsAtThreshold.set(sum);
+        }
+
         public int getX() {
             return x.get();
         }
@@ -1692,7 +1786,9 @@ public class TrainingAreaIssuesDialog {
                     getPredictionMapPath(),
                     getConfidenceMapPath(),
                     getGroundTruthMaskPath(),
-                    topConfusions);
+                    topConfusions,
+                    disagreementPixelsTotal,
+                    disagreementConfHistogram);
         }
 
         // TileRowData (for TrainingIssuesOverlayController)

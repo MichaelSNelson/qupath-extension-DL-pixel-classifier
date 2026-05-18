@@ -252,6 +252,15 @@ public final class TrainingIssuesSessionStore {
             }
             t.add("topConfusions", confusions);
 
+            t.addProperty("disagreementPixels", r.disagreementPixels());
+            JsonArray hist = new JsonArray();
+            if (r.disagreementConfHistogram() != null) {
+                for (Integer bin : r.disagreementConfHistogram()) {
+                    hist.add(bin == null ? 0 : bin);
+                }
+            }
+            t.add("disagreementConfHistogram", hist);
+
             tiles.add(t);
         }
         manifest.add("tiles", tiles);
@@ -347,6 +356,17 @@ public final class TrainingIssuesSessionStore {
                 }
             }
 
+            long disagreementPixels =
+                    t.has("disagreementPixels") ? t.get("disagreementPixels").getAsLong() : 0L;
+            List<Integer> disagreementHist = new ArrayList<>();
+            if (t.has("disagreementConfHistogram")
+                    && t.get("disagreementConfHistogram").isJsonArray()) {
+                JsonArray hist = t.getAsJsonArray("disagreementConfHistogram");
+                for (JsonElement be : hist) {
+                    disagreementHist.add(be == null || be.isJsonNull() ? 0 : be.getAsInt());
+                }
+            }
+
             results.add(new ClassifierClient.TileEvaluationResult(
                     getString(t, "filename", ""),
                     getString(t, "split", ""),
@@ -364,7 +384,9 @@ public final class TrainingIssuesSessionStore {
                     resolveAsset(sessionDir, t, "predAsset"),
                     resolveAsset(sessionDir, t, "confAsset"),
                     resolveAsset(sessionDir, t, "gtAsset"),
-                    topConfusions));
+                    topConfusions,
+                    disagreementPixels,
+                    disagreementHist));
         }
 
         SessionInfo info = new SessionInfo(

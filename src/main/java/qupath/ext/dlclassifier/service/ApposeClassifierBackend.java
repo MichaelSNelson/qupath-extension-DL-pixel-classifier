@@ -1615,6 +1615,23 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 }
             }
 
+            long disagreementPixels = obj.has("disagreement_pixels")
+                            && !obj.get("disagreement_pixels").isJsonNull()
+                    ? obj.get("disagreement_pixels").getAsLong()
+                    : 0L;
+            List<Integer> disagreementHist = new ArrayList<>();
+            if (obj.has("disagreement_conf_histogram")
+                    && !obj.get("disagreement_conf_histogram").isJsonNull()) {
+                var arr = obj.getAsJsonArray("disagreement_conf_histogram");
+                for (var el : arr) {
+                    if (el == null || el.isJsonNull()) {
+                        disagreementHist.add(0);
+                    } else {
+                        disagreementHist.add(el.getAsInt());
+                    }
+                }
+            }
+
             results.add(new ClassifierClient.TileEvaluationResult(
                     obj.has("filename") ? obj.get("filename").getAsString() : "",
                     obj.has("split") ? obj.get("split").getAsString() : "",
@@ -1632,7 +1649,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     predictionMapPath,
                     confidenceMapPath,
                     groundTruthMaskPath,
-                    topConfusions));
+                    topConfusions,
+                    disagreementPixels,
+                    disagreementHist));
         }
 
         int total = results.size();

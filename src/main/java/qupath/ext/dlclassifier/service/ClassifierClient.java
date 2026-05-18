@@ -367,13 +367,66 @@ public class ClassifierClient {
             String predictionMapPath,
             String confidenceMapPath,
             String groundTruthMaskPath,
-            List<ConfusionPair> topConfusions) {
+            List<ConfusionPair> topConfusions,
+            long disagreementPixels,
+            List<Integer> disagreementConfHistogram) {
         /**
-         * Normalize {@code topConfusions} to an empty list (never null) so
-         * downstream code never has to null-check.
+         * Normalize {@code topConfusions} and {@code disagreementConfHistogram}
+         * to empty lists (never null) so downstream code never has to
+         * null-check. The histogram has 20 fixed bins of width 0.05 covering
+         * [0.0, 1.0]; bin i = count of disagree pixels with confidence in
+         * [i*0.05, (i+1)*0.05) (bin 19 includes confidence=1.0). When absent
+         * (legacy session, pre-feature), it's empty -- callers should fall
+         * back to {@code disagreementPixels} (raw total) or hide the column.
          */
         public TileEvaluationResult {
             topConfusions = topConfusions == null ? List.of() : List.copyOf(topConfusions);
+            disagreementConfHistogram =
+                    disagreementConfHistogram == null ? List.of() : List.copyOf(disagreementConfHistogram);
+        }
+
+        /**
+         * Back-compat constructor for callers that haven't yet started
+         * computing the disagreement-pixel count and confidence histogram.
+         */
+        public TileEvaluationResult(
+                String filename,
+                String split,
+                double loss,
+                double disagreementPct,
+                Map<String, Double> perClassIoU,
+                double meanIoU,
+                int x,
+                int y,
+                String sourceImage,
+                String sourceImageId,
+                String disagreementImagePath,
+                String lossHeatmapPath,
+                String tileImagePath,
+                String predictionMapPath,
+                String confidenceMapPath,
+                String groundTruthMaskPath,
+                List<ConfusionPair> topConfusions) {
+            this(
+                    filename,
+                    split,
+                    loss,
+                    disagreementPct,
+                    perClassIoU,
+                    meanIoU,
+                    x,
+                    y,
+                    sourceImage,
+                    sourceImageId,
+                    disagreementImagePath,
+                    lossHeatmapPath,
+                    tileImagePath,
+                    predictionMapPath,
+                    confidenceMapPath,
+                    groundTruthMaskPath,
+                    topConfusions,
+                    0L,
+                    List.of());
         }
 
         /**
