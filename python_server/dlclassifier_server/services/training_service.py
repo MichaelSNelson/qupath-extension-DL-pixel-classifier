@@ -2409,6 +2409,15 @@ class TrainingService:
             )
             logger.info("Using CrossEntropy loss")
 
+        # Snapshot the pre-OHEM criterion for VALIDATION ONLY.
+        # OHEM averages loss over only the hardest top-K pixels, so as
+        # ohem_hard_ratio anneals down, the reported val loss naturally
+        # rises even when the model is improving -- it's measuring on a
+        # smaller, harder subset. Using the unwrapped criterion in the
+        # val loop gives an honest mean loss over all labeled pixels,
+        # which also makes early-stopping on "val_loss" behave correctly.
+        eval_criterion = criterion
+
         # Wrap with OHEM if active (applies to pixel-loss component only).
         # Lovasz-based variants remain incompatible: Lovasz is not a
         # per-pixel loss, it is a Jaccard surrogate over sorted errors,
@@ -3471,11 +3480,15 @@ class TrainingService:
                         # Compute val loss in FP32 to avoid BF16 overflow.
                         # BF16 logits from confident pretrained models can
                         # overflow exp() in cross-entropy, producing inf loss.
-                        loss = criterion(outputs.float(), masks)
+                        # eval_criterion is the pre-OHEM-wrapped criterion
+                        # so val loss is measured over ALL labeled pixels
+                        # (not just OHEM's top-K), which keeps the reported
+                        # val_loss honest as OHEM anneals.
+                        loss = eval_criterion(outputs.float(), masks)
                     else:
                         outputs = model(images_padded)
                         outputs = crop_to_original(outputs, pad_h, pad_w)
-                        loss = criterion(outputs, masks)
+                        loss = eval_criterion(outputs, masks)
                     val_loss += loss.item()
 
                     _, predicted = outputs.max(1)
