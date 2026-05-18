@@ -89,6 +89,11 @@ public class AnnotationExtractor {
     private double minAnnotationCoverage = 0.0;
     private double minTileLabelFraction = 0.0;
 
+    // Per-tile overlap in output-pixel units. 0 = adjacent tiles (no overlap).
+    // Left at half a tile to match the historic hard-coded behaviour for
+    // call sites that don't set it explicitly.
+    private int tileOverlap;
+
     /**
      * Creates a new annotation extractor.
      *
@@ -183,6 +188,17 @@ public class AnnotationExtractor {
         this.downsample = downsample;
         this.contextScale = contextScale;
         this.contextPadding = contextPadding;
+        // Historic behaviour: 50% overlap when nothing else is set.
+        this.tileOverlap = patchSize / 2;
+    }
+
+    /**
+     * Sets the per-tile overlap used when generating area-tile locations,
+     * in output-resolution pixels. 0 yields adjacent (non-overlapping) tiles;
+     * {@code patchSize/2} reproduces the historic hard-coded 50% overlap.
+     */
+    public void setTileOverlap(int overlap) {
+        this.tileOverlap = Math.max(0, Math.min(overlap, patchSize - 1));
     }
 
     /**
@@ -344,8 +360,8 @@ public class AnnotationExtractor {
                 .map(a -> new PatchSampler.AnnotationGeometry(a.roi(), a.isSparse()))
                 .collect(Collectors.toList());
         List<PatchSampler.PatchLocation> patchLocations = PatchSampler.generatePatchLocations(
-                geometries, patchSize, downsample, server.getWidth(), server.getHeight());
-        logger.info("Generated {} candidate patch locations", patchLocations.size());
+                geometries, patchSize, tileOverlap, downsample, server.getWidth(), server.getHeight());
+        logger.info("Generated {} candidate patch locations (tileOverlap={}px)", patchLocations.size(), tileOverlap);
 
         // Log context-vs-image size for diagnostics
         int regionSize = (int) (patchSize * downsample);
@@ -590,7 +606,7 @@ public class AnnotationExtractor {
                 .map(a -> new PatchSampler.AnnotationGeometry(a.roi(), a.isSparse()))
                 .collect(Collectors.toList());
         List<PatchSampler.PatchLocation> patchLocations = PatchSampler.generatePatchLocations(
-                geometries, patchSize, downsample, server.getWidth(), server.getHeight());
+                geometries, patchSize, tileOverlap, downsample, server.getWidth(), server.getHeight());
         int regionSize = (int) (patchSize * downsample);
 
         // Log context-vs-image size for diagnostics
@@ -1012,7 +1028,8 @@ public class AnnotationExtractor {
                 trainOnlyImages,
                 valOnlyImages,
                 0.0,
-                0.0);
+                0.0,
+                patchSize / 2);
     }
 
     /**
@@ -1039,7 +1056,8 @@ public class AnnotationExtractor {
             Set<String> trainOnlyImages,
             Set<String> valOnlyImages,
             double minAnnotationCoverage,
-            double minTileLabelFraction)
+            double minTileLabelFraction,
+            int tileOverlap)
             throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
@@ -1111,6 +1129,7 @@ public class AnnotationExtractor {
                 AnnotationExtractor extractor = new AnnotationExtractor(
                         imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale, contextPadding);
                 extractor.setSliverFilter(minAnnotationCoverage, minTileLabelFraction);
+                extractor.setTileOverlap(tileOverlap);
 
                 // Per-image annotation diagnostics, collected before export so
                 // that a zero-patch failure can report the full picture.

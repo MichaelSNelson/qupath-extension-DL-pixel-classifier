@@ -1345,7 +1345,8 @@ public class TrainingWorkflow {
                         trainOnlyImages,
                         valOnlyImages,
                         trainingConfig.getMinAnnotationCoverage(),
-                        trainingConfig.getMinTileLabelFraction());
+                        trainingConfig.getMinTileLabelFraction(),
+                        trainingConfig.getOverlap());
                 patchCount = exportResult.totalPatches();
             } else {
                 // Single-image export
@@ -1359,6 +1360,7 @@ public class TrainingWorkflow {
                         contextPadding);
                 extractor.setSliverFilter(
                         trainingConfig.getMinAnnotationCoverage(), trainingConfig.getMinTileLabelFraction());
+                extractor.setTileOverlap(trainingConfig.getOverlap());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -1932,7 +1934,8 @@ public class TrainingWorkflow {
                         java.util.Collections.<String>emptySet(),
                         java.util.Collections.<String>emptySet(),
                         trainingConfig.getMinAnnotationCoverage(),
-                        trainingConfig.getMinTileLabelFraction());
+                        trainingConfig.getMinTileLabelFraction(),
+                        trainingConfig.getOverlap());
                 patchCount = exportResult.totalPatches();
             } else {
                 ImageData<BufferedImage> imageData = qupath.getImageData();
@@ -1946,6 +1949,7 @@ public class TrainingWorkflow {
                         contextPadding);
                 extractor.setSliverFilter(
                         trainingConfig.getMinAnnotationCoverage(), trainingConfig.getMinTileLabelFraction());
+                extractor.setTileOverlap(trainingConfig.getOverlap());
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();

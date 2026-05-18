@@ -4116,9 +4116,13 @@ public class TrainingDialog {
             // coverage and per-tile labelled fraction fall below their
             // values. Spinner values are percentages -- converted to
             // fractions before being applied to TrainingConfig.
-            minAnnotationCoveragePctSpinner = new Spinner<>(0.0, 25.0, 5.0, 0.5);
+            minAnnotationCoveragePctSpinner =
+                    new Spinner<>(0.0, 25.0, DLClassifierPreferences.getDefaultMinAnnotationCoveragePct(), 0.5);
             minAnnotationCoveragePctSpinner.setEditable(true);
             minAnnotationCoveragePctSpinner.setPrefWidth(100);
+            minAnnotationCoveragePctSpinner.valueProperty().addListener((obs, o, n) -> {
+                if (n != null) DLClassifierPreferences.setDefaultMinAnnotationCoveragePct(n);
+            });
             Label minAnnCovLabel = new Label("Min Annotation Coverage (%):");
             TooltipHelper.install(
                     "Drops 'corner sliver' tiles where only a tiny fraction of any\n"
@@ -4139,19 +4143,26 @@ public class TrainingDialog {
             grid.add(minAnnotationCoveragePctSpinner, 1, row);
             row++;
 
-            minTileLabelFractionPctSpinner = new Spinner<>(0.0, 10.0, 0.5, 0.1);
+            minTileLabelFractionPctSpinner =
+                    new Spinner<>(0.0, 100.0, DLClassifierPreferences.getDefaultMinTileLabelFractionPct(), 5.0);
             minTileLabelFractionPctSpinner.setEditable(true);
             minTileLabelFractionPctSpinner.setPrefWidth(100);
+            minTileLabelFractionPctSpinner.valueProperty().addListener((obs, o, n) -> {
+                if (n != null) DLClassifierPreferences.setDefaultMinTileLabelFractionPct(n);
+            });
             Label minTileLabelFracLabel = new Label("Min Tile Label Fraction (%):");
             TooltipHelper.install(
                     "OR escape for the sliver-tile filter: tiles whose labelled pixels\n"
                             + "cover at least this fraction of the tile are always kept,\n"
                             + "even if their per-annotation coverage is below the threshold\n"
                             + "above.\n\n"
-                            + "Default 0.5%. For a 512px tile that is 0.5% * 512 * 512 = 1310\n"
-                            + "labelled pixels -- enough to be informative.\n\n"
+                            + "Default 25%. The clause is meant to protect tiles that sit\n"
+                            + "fully inside a huge polygon (per-annotation coverage tiny but\n"
+                            + "the tile is mostly labelled). At lower values it would protect\n"
+                            + "small slivers too -- 0.5% in a 512px tile is only ~1300\n"
+                            + "labelled pixels.\n\n"
                             + "Set to 0 to disable this side of the rule and rely purely on\n"
-                            + "Min Annotation Coverage (stricter; risks over-filtering tiles\n"
+                            + "Min Annotation Coverage (strictest; may over-filter tiles\n"
                             + "deep inside huge annotations).",
                     minTileLabelFracLabel, minTileLabelFractionPctSpinner);
             minTileLabelFracLabel.visibleProperty().bind(advancedMode);

@@ -139,6 +139,13 @@ public final class DLClassifierPreferences {
     private static final IntegerProperty lastLineStrokeWidth =
             PathPrefs.createPersistentPreference("dlclassifier.lastLineStrokeWidth", 0);
 
+    // Sliver-tile filter defaults (percent, not fraction).
+    private static final DoubleProperty defaultMinAnnotationCoveragePct =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultMinAnnotationCoveragePct", 5.0);
+
+    private static final DoubleProperty defaultMinTileLabelFractionPct =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultMinTileLabelFractionPct", 25.0);
+
     // Training data export directory (empty = system temp)
     private static final StringProperty trainingExportDir =
             PathPrefs.createPersistentPreference("dlclassifier.trainingExportDir", "");
@@ -515,6 +522,22 @@ public final class DLClassifierPreferences {
 
     public static IntegerProperty tileOverlapProperty() {
         return tileOverlap;
+    }
+
+    public static double getDefaultMinAnnotationCoveragePct() {
+        return defaultMinAnnotationCoveragePct.get();
+    }
+
+    public static void setDefaultMinAnnotationCoveragePct(double pct) {
+        defaultMinAnnotationCoveragePct.set(pct);
+    }
+
+    public static double getDefaultMinTileLabelFractionPct() {
+        return defaultMinTileLabelFractionPct.get();
+    }
+
+    public static void setDefaultMinTileLabelFractionPct(double pct) {
+        defaultMinTileLabelFractionPct.set(pct);
     }
 
     public static double getTileOverlapPercent() {

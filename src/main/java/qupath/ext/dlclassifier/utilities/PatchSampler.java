@@ -12,7 +12,8 @@ import qupath.lib.roi.interfaces.ROI;
  * Handles both sparse annotations (lines, polylines) and dense annotations
  * (filled polygons). For sparse annotations, patches are centered on points
  * sampled along the ROI. For dense annotations, the bounding box is tiled
- * with 50% overlap.
+ * with stride = (patchSize - overlap) — caller-controlled, no longer
+ * hard-coded to 50%.
  *
  * @author UW-LOCI
  * @since 0.1.0
@@ -59,23 +60,32 @@ public final class PatchSampler {
      * <p>
      * For sparse annotations (lines), patches are centered on points sampled
      * along the line. For area annotations, the bounding box is tiled with
-     * 50% overlap. Duplicate locations (by grid snapping) are eliminated.
+     * stride = (patchSize - overlap), where {@code overlap} is given in
+     * output-resolution tile pixels. Duplicate locations (by grid snapping)
+     * are eliminated.
      *
      * @param annotations list of annotation geometries
      * @param patchSize   patch size in pixels (at output resolution)
+     * @param overlap     tile overlap in pixels (at output resolution); 0 = no
+     *                    overlap, patchSize/2 = 50% overlap. Clamped to
+     *                    {@code [0, patchSize-1]}.
      * @param downsample  downsample factor (patch coverage = patchSize * downsample)
      * @param imgW        image width in full-resolution pixels
      * @param imgH        image height in full-resolution pixels
      * @return deduplicated list of patch locations in full-resolution coordinates
      */
     public static List<PatchLocation> generatePatchLocations(
-            List<AnnotationGeometry> annotations, int patchSize, double downsample, int imgW, int imgH) {
+            List<AnnotationGeometry> annotations, int patchSize, int overlap, double downsample, int imgW, int imgH) {
         Set<String> locationKeys = new HashSet<>();
         List<PatchLocation> locations = new ArrayList<>();
 
         // Coverage per patch in full-res coordinates
         int coverage = (int) (patchSize * downsample);
-        int step = coverage / 2; // 50% overlap between patches
+        // Effective stride in output-resolution tile pixels.
+        int effectiveOverlap = Math.max(0, Math.min(overlap, patchSize - 1));
+        int stepOutput = Math.max(1, patchSize - effectiveOverlap);
+        // Stride in full-res coordinates for the area-tile loop.
+        int step = Math.max(1, (int) (stepOutput * downsample));
 
         for (AnnotationGeometry ann : annotations) {
             ROI roi = ann.roi();
@@ -96,8 +106,11 @@ public final class PatchSampler {
                     px = Math.max(0, Math.min(px, imgW - coverage));
                     py = Math.max(0, Math.min(py, imgH - coverage));
 
-                    // Snap to grid to avoid too many overlapping patches
-                    int snapStep = Math.max(1, step / 2);
+                    // Snap to a quarter-coverage grid so similar sampled
+                    // points dedupe -- independent of the area-tile stride
+                    // so sparse sampling density doesn't collapse when
+                    // overlap is 0.
+                    int snapStep = Math.max(1, coverage / 4);
                     px = (px / snapStep) * snapStep;
                     py = (py / snapStep) * snapStep;
 
