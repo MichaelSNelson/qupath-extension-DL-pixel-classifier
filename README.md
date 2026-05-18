@@ -60,6 +60,7 @@ Each bullet leads with what you can *do*; the algorithm or architecture name is 
 - **Run from Groovy scripts** for batch processing across a project
 - **Run headless** via the builder API, no GUI required
 - **"Copy as Script" buttons** in every dialog turn a configured run into a reproducible Groovy snippet
+- **Save and load training profiles** -- export your tuned training configuration (parameters, classes, channel setup, name/description) to a JSON file for reuse across projects without retraining
 - **Settings persist across sessions** so you don't re-enter the same training and inference parameters every time
 
 ## Installation
