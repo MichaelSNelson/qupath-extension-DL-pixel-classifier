@@ -79,6 +79,93 @@ public class DLClassifierScripts {
     }
 
     /**
+     * Re-runs training using the saved settings of an existing classifier
+     * with optional per-field overrides. Convenience for the "train at
+     * seeds 42, 43, 44 with otherwise identical config" workflow that
+     * previously required dropping into {@link
+     * qupath.ext.dlclassifier.controller.TrainingWorkflow#builder()} and
+     * re-entering every parameter.
+     *
+     * <p>The new classifier name defaults to
+     * {@code <existingId>_retrain_<timestamp>}; override the name (and any
+     * other field) by passing it through {@code overrides}. The overrides
+     * map accepts the same key names that
+     * {@link qupath.ext.dlclassifier.model.TrainingConfig.Builder#fromTrainingSettings(java.util.Map)}
+     * consumes (e.g. {@code "seed"}, {@code "epochs"}, {@code "learning_rate"}).
+     *
+     * <p>Training runs against {@code QP.getCurrentImageData()} unless the
+     * project images and per-image roles are populated separately. For a
+     * multi-image script, use the lower-level
+     * {@link qupath.ext.dlclassifier.controller.TrainingWorkflow#builder()}
+     * directly.
+     *
+     * @param existingClassifierId the saved classifier to copy settings from
+     * @param overrides            field overrides keyed by the metadata
+     *                             {@code training_settings} key names; may be
+     *                             null or empty for a pure re-run
+     * @return the training result
+     * @throws IllegalArgumentException if the classifier does not exist or
+     *                                  has no usable training settings
+     */
+    public static qupath.ext.dlclassifier.controller.TrainingWorkflow.TrainingResult retrainClassifier(
+            String existingClassifierId, Map<String, Object> overrides) {
+        ClassifierMetadata source = loadClassifier(existingClassifierId);
+        Map<String, Object> ts = source.getTrainingSettings();
+        if (ts == null || ts.isEmpty()) {
+            throw new IllegalArgumentException("Classifier '" + existingClassifierId
+                    + "' has no training_settings recorded -- cannot retrain from it.");
+        }
+        Map<String, Object> merged = new LinkedHashMap<>(ts);
+        if (overrides != null) merged.putAll(overrides);
+        qupath.ext.dlclassifier.model.TrainingConfig.Builder cb =
+                qupath.ext.dlclassifier.model.TrainingConfig.Builder.fromTrainingSettings(merged);
+        // Top-level metadata fields aren't in training_settings; copy from the
+        // source classifier so the architecture matches.
+        cb.modelType(source.getModelType())
+                .backbone(source.getBackbone())
+                .contextScale(source.getContextScale())
+                .downsample(source.getDownsample());
+        qupath.ext.dlclassifier.model.TrainingConfig config = cb.build();
+
+        ChannelConfiguration channels = ChannelConfiguration.builder()
+                .channelNames(source.getExpectedChannelNames())
+                .normalizationStrategy(source.getNormalizationStrategy())
+                .bitDepth(source.getBitDepthTrained())
+                .build();
+        List<String> classes = source.getClasses().stream()
+                .map(ClassifierMetadata.ClassInfo::name)
+                .toList();
+        String name = (overrides != null && overrides.get("name") instanceof String n && !n.isEmpty())
+                ? n
+                : existingClassifierId + "_retrain_" + System.currentTimeMillis();
+        String description =
+                (overrides != null && overrides.get("description") instanceof String d) ? d : source.getDescription();
+        logger.info(
+                "Retraining from '{}' as '{}', {} override(s)",
+                existingClassifierId,
+                name,
+                overrides == null ? 0 : overrides.size());
+        return qupath.ext.dlclassifier.controller.TrainingWorkflow.builder()
+                .name(name)
+                .description(description)
+                .config(config)
+                .channels(channels)
+                .classes(classes)
+                .build()
+                .run();
+    }
+
+    /**
+     * Convenience overload: re-trains with no overrides (true "duplicate the
+     * config and run again"). Most useful as a smoke test that the metadata
+     * round-trips cleanly.
+     */
+    public static qupath.ext.dlclassifier.controller.TrainingWorkflow.TrainingResult retrainClassifier(
+            String existingClassifierId) {
+        return retrainClassifier(existingClassifierId, Collections.emptyMap());
+    }
+
+    /**
      * Classifies regions using a loaded classifier.
      *
      * @param classifier  the classifier metadata

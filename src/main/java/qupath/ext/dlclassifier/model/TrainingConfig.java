@@ -1074,6 +1074,103 @@ public class TrainingConfig {
          * @param config the config to copy from
          * @return this builder
          */
+        /**
+         * Hydrates a Builder from the {@code training_settings} map stored in
+         * a trained model's {@code metadata.json}. Inverse of
+         * {@link qupath.ext.dlclassifier.controller.TrainingWorkflow#buildTrainingSettingsMap(TrainingConfig)}.
+         *
+         * <p>Unknown keys are ignored. Numeric coercion is best-effort
+         * ({@code Number#intValue} / {@code doubleValue}). Top-level fields
+         * not in the settings map (architecture, backbone, contextScale,
+         * downsample) must be set on the returned builder separately --
+         * normally from the surrounding {@link ClassifierMetadata}.
+         */
+        public static Builder fromTrainingSettings(Map<String, Object> ts) {
+            Builder b = new Builder();
+            if (ts == null) return b;
+            for (Map.Entry<String, Object> e : ts.entrySet()) {
+                String k = e.getKey();
+                Object v = e.getValue();
+                if (v == null) continue;
+                try {
+                    switch (k) {
+                        case "learning_rate" -> b.learningRate(((Number) v).doubleValue());
+                        case "batch_size" -> b.batchSize(((Number) v).intValue());
+                        case "weight_decay" -> b.weightDecay(((Number) v).doubleValue());
+                        case "validation_split" -> b.validationSplit(((Number) v).doubleValue());
+                        case "overlap" -> b.overlap(((Number) v).intValue());
+                        case "line_stroke_width" -> b.lineStrokeWidth(((Number) v).intValue());
+                        case "min_annotation_coverage" -> b.minAnnotationCoverage(((Number) v).doubleValue());
+                        case "min_tile_label_fraction" -> b.minTileLabelFraction(((Number) v).doubleValue());
+                        case "use_pretrained_weights" -> b.usePretrainedWeights(Boolean.TRUE.equals(v));
+                        case "freeze_encoder_layers" -> b.freezeEncoderLayers(((Number) v).intValue());
+                        case "frozen_layers" -> {
+                            if (v instanceof List<?> lst) {
+                                List<String> names = new ArrayList<>(lst.size());
+                                for (Object o : lst) names.add(String.valueOf(o));
+                                b.frozenLayers(names);
+                            }
+                        }
+                        case "scheduler_type" -> b.schedulerType(String.valueOf(v));
+                        case "loss_function" -> b.lossFunction(String.valueOf(v));
+                        case "focal_gamma" -> b.focalGamma(((Number) v).doubleValue());
+                        case "boundary_sigma" -> b.boundarySigma(((Number) v).doubleValue());
+                        case "boundary_w_min" -> b.boundaryWMin(((Number) v).doubleValue());
+                        case "ohem_hard_ratio" -> b.ohemHardRatio(((Number) v).doubleValue());
+                        case "ohem_hard_ratio_start" -> b.ohemHardRatioStart(((Number) v).doubleValue());
+                        case "ohem_schedule" -> b.ohemSchedule(String.valueOf(v));
+                        case "ohem_adaptive_floor" -> b.ohemAdaptiveFloor(Boolean.TRUE.equals(v));
+                        case "data_loader_workers" -> b.dataLoaderWorkers(((Number) v).intValue());
+                        case "in_memory_dataset" -> b.inMemoryDataset(String.valueOf(v));
+                        case "early_stopping_metric" -> b.earlyStoppingMetric(String.valueOf(v));
+                        case "early_stopping_patience" -> b.earlyStoppingPatience(((Number) v).intValue());
+                        case "mixed_precision" -> b.mixedPrecision(Boolean.TRUE.equals(v));
+                        case "augmentation_config" -> {
+                            if (v instanceof Map<?, ?> raw) {
+                                Map<String, Boolean> aug = new LinkedHashMap<>();
+                                raw.forEach((rk, rv) -> aug.put(String.valueOf(rk), Boolean.TRUE.equals(rv)));
+                                b.augmentation(aug);
+                            }
+                        }
+                        case "intensity_aug_mode" -> b.intensityAugMode(String.valueOf(v));
+                        case "class_weight_multipliers" -> {
+                            if (v instanceof Map<?, ?> raw) {
+                                Map<String, Double> mults = new LinkedHashMap<>();
+                                raw.forEach((rk, rv) -> {
+                                    if (rv instanceof Number n) mults.put(String.valueOf(rk), n.doubleValue());
+                                });
+                                b.classWeightMultipliers(mults);
+                            }
+                        }
+                        case "focus_class" -> b.focusClass(String.valueOf(v));
+                        case "focus_class_min_iou" -> b.focusClassMinIoU(((Number) v).doubleValue());
+                        case "whole_image" -> b.wholeImage(Boolean.TRUE.equals(v));
+                        case "gradient_accumulation_steps" -> b.gradientAccumulationSteps(((Number) v).intValue());
+                        case "progressive_resize" -> b.progressiveResize(Boolean.TRUE.equals(v));
+                        case "handler_parameters" -> {
+                            if (v instanceof Map<?, ?> raw) {
+                                Map<String, Object> hp = new LinkedHashMap<>();
+                                raw.forEach((rk, rv) -> hp.put(String.valueOf(rk), rv));
+                                b.handlerParameters(hp);
+                            }
+                        }
+                        case "seed" -> b.seed(((Number) v).intValue());
+                        case "discriminative_lr_ratio" -> b.discriminativeLrRatio(((Number) v).doubleValue());
+                        case "use_lr_finder" -> b.useLrFinder(Boolean.TRUE.equals(v));
+                        case "fused_optimizer" -> b.fusedOptimizer(Boolean.TRUE.equals(v));
+                        case "gpu_augmentation" -> b.gpuAugmentation(Boolean.TRUE.equals(v));
+                        case "use_torch_compile" -> b.useTorchCompile(Boolean.TRUE.equals(v));
+                        default -> {
+                            // Unknown key -- silently skip. Loader is forward-compatible.
+                        }
+                    }
+                } catch (ClassCastException | NumberFormatException coerceErr) {
+                    // Bad type in metadata; ignore this field rather than aborting the load.
+                }
+            }
+            return b;
+        }
+
         public Builder from(TrainingConfig config) {
             this.modelType = config.modelType;
             this.backbone = config.backbone;

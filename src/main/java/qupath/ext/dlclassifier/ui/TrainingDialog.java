@@ -2285,11 +2285,19 @@ public class TrainingDialog {
             basicSplitStatusLabel.setStyle("-fx-text-fill: #2a4a7a; -fx-font-size: 11px;");
             basicSplitStatusLabel.setWrapText(true);
             Button basicSplitChangeBtn = new Button("Change...");
-            basicSplitChangeBtn.setOnAction(e -> advancedMode.set(true));
+            basicSplitChangeBtn.setOnAction(e -> {
+                // Flip to advanced and focus the Validation Split spinner so
+                // the user lands on the percentage they came to change (W2-N3).
+                advancedMode.set(true);
+                if (validationSplitSpinner != null) {
+                    Platform.runLater(() -> validationSplitSpinner.requestFocus());
+                }
+            });
             TooltipHelper.install(
                     basicSplitChangeBtn,
                     "Switch to Advanced mode to override per-image roles, "
-                            + "re-run Auto-Distribute, or use All-Both.");
+                            + "re-run Auto-Distribute, change the validation split %, "
+                            + "or use All-Both.");
             HBox basicSplitBox = new HBox(8, basicSplitStatusLabel, basicSplitChangeBtn);
             basicSplitBox.setAlignment(Pos.CENTER_LEFT);
             basicSplitBox.visibleProperty().bind(advancedMode.not());
@@ -7192,8 +7200,32 @@ public class TrainingDialog {
                     .map(ClassItem::name)
                     .collect(Collectors.toList());
 
+            // Capture the image-list selection so a multi-image training run
+            // round-trips through Copy-as-Script. Without this the script
+            // would default to QP.getCurrentImageData() at runtime regardless
+            // of how many images the dialog used (scientist W2 M-1 / W2-N5).
+            List<String> selectedImageNames = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get())
+                    .map(item -> item.entry.getImageName())
+                    .collect(Collectors.toList());
+            Set<String> trainOnlyNames = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get() && item.splitRole.get() == SplitRole.TRAIN_ONLY)
+                    .map(item -> item.entry.getImageName())
+                    .collect(Collectors.toSet());
+            Set<String> valOnlyNames = imageSelectionList.getItems().stream()
+                    .filter(item -> item.selected.get() && item.splitRole.get() == SplitRole.VAL_ONLY)
+                    .map(item -> item.entry.getImageName())
+                    .collect(Collectors.toSet());
+
             String script = ScriptGenerator.generateTrainingScript(
-                    name, descriptionField.getText().trim(), config, channelConfig, selectedClasses);
+                    name,
+                    descriptionField.getText().trim(),
+                    config,
+                    channelConfig,
+                    selectedClasses,
+                    selectedImageNames,
+                    trainOnlyNames,
+                    valOnlyNames);
 
             Clipboard clipboard = Clipboard.getSystemClipboard();
             ClipboardContent content = new ClipboardContent();

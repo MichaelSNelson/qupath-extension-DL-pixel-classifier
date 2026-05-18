@@ -278,6 +278,36 @@ public class ScriptGenerator {
             TrainingConfig config,
             ChannelConfiguration channelConfig,
             List<String> selectedClasses) {
+        return generateTrainingScript(
+                classifierName,
+                description,
+                config,
+                channelConfig,
+                selectedClasses,
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptySet(),
+                java.util.Collections.emptySet());
+    }
+
+    /**
+     * Generates a Groovy training script that captures multi-image selection
+     * and per-image train/val role assignments. Use this overload from the
+     * dialog so a Copy-as-Script reproduces the dialog's actual image list.
+     *
+     * @param selectedImageNames image names selected for training; empty list
+     *                           keeps the legacy current-image behaviour
+     * @param trainOnlyImageNames image names exclusively in the training set
+     * @param valOnlyImageNames   image names exclusively in the validation set
+     */
+    public static String generateTrainingScript(
+            String classifierName,
+            String description,
+            TrainingConfig config,
+            ChannelConfiguration channelConfig,
+            List<String> selectedClasses,
+            List<String> selectedImageNames,
+            java.util.Set<String> trainOnlyImageNames,
+            java.util.Set<String> valOnlyImageNames) {
         EmissionStats stats = new EmissionStats();
         StringBuilder sb = new StringBuilder();
 
@@ -285,7 +315,9 @@ public class ScriptGenerator {
         appendTrainingConfigBlock(sb, config, stats);
         appendChannelConfig(sb, channelConfig);
         appendSelectedClasses(sb, selectedClasses);
-        appendTrainingWorkflowRun(sb, classifierName, description);
+        appendSelectedImages(sb, selectedImageNames, trainOnlyImageNames, valOnlyImageNames);
+        appendTrainingWorkflowRun(
+                sb, classifierName, description, selectedImageNames, trainOnlyImageNames, valOnlyImageNames);
 
         logger.info(
                 "Generated training script for classifier '{}' (type={}): emitted {} fields, skipped {} fields",
@@ -335,8 +367,46 @@ public class ScriptGenerator {
         appendLine(sb, "");
     }
 
+    /**
+     * Emits the project-image resolution block when the dialog was using
+     * multi-image training. Empty list yields no block (legacy single-image
+     * path applies).
+     */
+    private static void appendSelectedImages(
+            StringBuilder sb,
+            List<String> selectedImageNames,
+            java.util.Set<String> trainOnlyImageNames,
+            java.util.Set<String> valOnlyImageNames) {
+        if (selectedImageNames == null || selectedImageNames.isEmpty()) return;
+        appendLine(sb, "// Project images used for training (resolved by name)");
+        appendLine(sb, "def selectedImageNames = " + formatStringList(selectedImageNames));
+        appendLine(
+                sb,
+                "def selectedImages = getProject().getImageList().findAll { it.getImageName() in selectedImageNames }");
+        appendLine(sb, "if (selectedImages.size() < selectedImageNames.size()) {");
+        appendLine(sb, "    println \"WARN: only \" + selectedImages.size() + \" of \"");
+        appendLine(sb, "        + selectedImageNames.size() + \" training images were found in this project.\"");
+        appendLine(sb, "}");
+        if (trainOnlyImageNames != null && !trainOnlyImageNames.isEmpty()) {
+            appendLine(
+                    sb,
+                    "def trainOnlyImageNames = " + formatStringList(new ArrayList<>(trainOnlyImageNames)) + " as Set");
+        }
+        if (valOnlyImageNames != null && !valOnlyImageNames.isEmpty()) {
+            appendLine(
+                    sb, "def valOnlyImageNames = " + formatStringList(new ArrayList<>(valOnlyImageNames)) + " as Set");
+        }
+        appendLine(sb, "");
+    }
+
     /** Emits the workflow runner + result reporting at the bottom of the script. */
-    private static void appendTrainingWorkflowRun(StringBuilder sb, String classifierName, String description) {
+    private static void appendTrainingWorkflowRun(
+            StringBuilder sb,
+            String classifierName,
+            String description,
+            List<String> selectedImageNames,
+            java.util.Set<String> trainOnlyImageNames,
+            java.util.Set<String> valOnlyImageNames) {
         appendLine(sb, "// Run training");
         appendLine(sb, "def result = TrainingWorkflow.builder()");
         appendLine(sb, BUILDER_INDENT + ".name(" + quote(classifierName) + ")");
@@ -349,6 +419,15 @@ public class ScriptGenerator {
         appendLine(sb, BUILDER_INDENT + ".config(trainingConfig)");
         appendLine(sb, BUILDER_INDENT + ".channels(channelConfig)");
         appendLine(sb, BUILDER_INDENT + ".classes(selectedClasses)");
+        if (selectedImageNames != null && !selectedImageNames.isEmpty()) {
+            appendLine(sb, BUILDER_INDENT + ".projectImages(selectedImages)");
+            if (trainOnlyImageNames != null && !trainOnlyImageNames.isEmpty()) {
+                appendLine(sb, BUILDER_INDENT + ".trainOnlyImageNames(trainOnlyImageNames)");
+            }
+            if (valOnlyImageNames != null && !valOnlyImageNames.isEmpty()) {
+                appendLine(sb, BUILDER_INDENT + ".valOnlyImageNames(valOnlyImageNames)");
+            }
+        }
         appendLine(sb, BUILDER_INDENT + ".build()");
         appendLine(sb, BUILDER_INDENT + ".run()");
         appendLine(sb, "");

@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -40,6 +41,7 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.scripting.ScriptGenerator;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
@@ -300,6 +302,10 @@ public class TrainingWorkflow {
         private ChannelConfiguration channels;
         private List<String> classes;
         private ImageData<BufferedImage> imageData;
+        private List<ProjectImageEntry<BufferedImage>> projectImages;
+        private Set<String> trainOnlyImageNames = Collections.emptySet();
+        private Set<String> valOnlyImageNames = Collections.emptySet();
+        private Map<String, Integer> classColors;
 
         private TrainingBuilder() {}
 
@@ -335,10 +341,40 @@ public class TrainingWorkflow {
 
         /**
          * Sets the image data to use. If not provided, falls back to
-         * {@code QP.getCurrentImageData()} at run time.
+         * {@code QP.getCurrentImageData()} at run time. Ignored when
+         * {@link #projectImages(List)} is set (multi-image mode wins).
          */
         public TrainingBuilder imageData(ImageData<BufferedImage> imageData) {
             this.imageData = imageData;
+            return this;
+        }
+
+        /**
+         * Sets the project image entries to train on. When provided, training
+         * runs in multi-image mode -- the dialog's primary path. Use together
+         * with {@link #trainOnlyImageNames(Set)} / {@link #valOnlyImageNames(Set)}
+         * to fix per-image split roles.
+         */
+        public TrainingBuilder projectImages(List<ProjectImageEntry<BufferedImage>> images) {
+            this.projectImages = images;
+            return this;
+        }
+
+        /** Image names assigned exclusively to training. Empty = all "Both". */
+        public TrainingBuilder trainOnlyImageNames(Set<String> names) {
+            this.trainOnlyImageNames = (names == null) ? Collections.emptySet() : names;
+            return this;
+        }
+
+        /** Image names assigned exclusively to validation. Empty = all "Both". */
+        public TrainingBuilder valOnlyImageNames(Set<String> names) {
+            this.valOnlyImageNames = (names == null) ? Collections.emptySet() : names;
+            return this;
+        }
+
+        /** Map of class name to packed RGB color, or null for default palette. */
+        public TrainingBuilder classColors(Map<String, Integer> colors) {
+            this.classColors = colors;
             return this;
         }
 
@@ -355,7 +391,17 @@ public class TrainingWorkflow {
             if (classes == null || classes.size() < 2) {
                 throw new IllegalStateException("At least 2 class names are required");
             }
-            return new TrainingRunner(name, description, config, channels, classes, imageData);
+            return new TrainingRunner(
+                    name,
+                    description,
+                    config,
+                    channels,
+                    classes,
+                    imageData,
+                    projectImages,
+                    trainOnlyImageNames,
+                    valOnlyImageNames,
+                    classColors);
         }
     }
 
@@ -369,6 +415,10 @@ public class TrainingWorkflow {
         private final ChannelConfiguration channels;
         private final List<String> classes;
         private final ImageData<BufferedImage> imageData;
+        private final List<ProjectImageEntry<BufferedImage>> projectImages;
+        private final Set<String> trainOnlyImageNames;
+        private final Set<String> valOnlyImageNames;
+        private final Map<String, Integer> classColors;
 
         private TrainingRunner(
                 String name,
@@ -376,13 +426,21 @@ public class TrainingWorkflow {
                 TrainingConfig config,
                 ChannelConfiguration channels,
                 List<String> classes,
-                ImageData<BufferedImage> imageData) {
+                ImageData<BufferedImage> imageData,
+                List<ProjectImageEntry<BufferedImage>> projectImages,
+                Set<String> trainOnlyImageNames,
+                Set<String> valOnlyImageNames,
+                Map<String, Integer> classColors) {
             this.name = name;
             this.description = description;
             this.config = config;
             this.channels = channels;
             this.classes = new ArrayList<>(classes);
             this.imageData = imageData;
+            this.projectImages = projectImages;
+            this.trainOnlyImageNames = trainOnlyImageNames == null ? Collections.emptySet() : trainOnlyImageNames;
+            this.valOnlyImageNames = valOnlyImageNames == null ? Collections.emptySet() : valOnlyImageNames;
+            this.classColors = classColors;
         }
 
         /**
@@ -391,6 +449,35 @@ public class TrainingWorkflow {
          * @return the training result
          */
         public TrainingResult run() {
+            ClassifierHandler handler =
+                    ClassifierRegistry.getHandler(config.getModelType()).orElse(ClassifierRegistry.getDefaultHandler());
+
+            // Multi-image mode wins when projectImages is provided. The
+            // deepest trainCore overload accepts the per-image role sets;
+            // the single-image branch below stays for the legacy
+            // .imageData(...) path.
+            if (projectImages != null && !projectImages.isEmpty()) {
+                return trainCore(
+                        name,
+                        description,
+                        handler,
+                        config,
+                        channels,
+                        classes,
+                        null,
+                        projectImages,
+                        null,
+                        null,
+                        classColors,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        trainOnlyImageNames,
+                        valOnlyImageNames);
+            }
+
             ImageData<BufferedImage> imgData = this.imageData;
             if (imgData == null) {
                 imgData = QP.getCurrentImageData();
@@ -399,10 +486,6 @@ public class TrainingWorkflow {
                 logger.warn("No image data available for training");
                 return new TrainingResult(null, name, 0.0, 0.0, 0, 0.0, 0, false, "No image data available");
             }
-
-            ClassifierHandler handler =
-                    ClassifierRegistry.getHandler(config.getModelType()).orElse(ClassifierRegistry.getDefaultHandler());
-
             return trainCore(name, description, handler, config, channels, classes, imgData, null, null);
         }
     }
@@ -1715,16 +1798,33 @@ public class TrainingWorkflow {
                 @SuppressWarnings("unchecked")
                 ImageData<BufferedImage> currentImageData = (ImageData<BufferedImage>) QP.getCurrentImageData();
                 if (currentImageData != null) {
+                    // Use ScriptGenerator so the recorded step is a real,
+                    // re-runnable training script (scientist W2 M-3) instead
+                    // of a single loadClassifier line that loses every
+                    // hyperparameter at replay time.
+                    List<String> selectedImageNames = (selectedImages == null)
+                            ? java.util.Collections.emptyList()
+                            : selectedImages.stream()
+                                    .map(ProjectImageEntry::getImageName)
+                                    .collect(Collectors.toList());
                     String script = String.format(
-                            "import qupath.ext.dlclassifier.scripting.DLClassifierScripts%n"
-                                    + "// Trained classifier: %s%n"
+                            "// Trained classifier: %s%n"
                                     + "// Best epoch: %d / %d  best mIoU: %.4f%n"
-                                    + "def classifier = DLClassifierScripts.loadClassifier(\"%s\")",
-                            metadata.getName().replace("\\", "\\\\").replace("\"", "\\\""),
+                                    + "// Saved as: %s%n%n",
+                            metadata.getName(),
                             serverResult.bestEpoch(),
                             serverResult.lastEpoch(),
                             serverResult.bestMeanIoU(),
-                            metadata.getId().replace("\\", "\\\\").replace("\"", "\\\""));
+                            metadata.getId());
+                    script += ScriptGenerator.generateTrainingScript(
+                            metadata.getName(),
+                            metadata.getDescription(),
+                            trainingConfig,
+                            channelConfig,
+                            classNames,
+                            selectedImageNames,
+                            trainOnlyImages == null ? java.util.Collections.emptySet() : trainOnlyImages,
+                            valOnlyImages == null ? java.util.Collections.emptySet() : valOnlyImages);
                     currentImageData
                             .getHistoryWorkflow()
                             .addStep(new DefaultScriptableWorkflowStep(
