@@ -384,7 +384,11 @@ public class TrainingDialog {
             dialog.initModality(Modality.NONE);
             dialog.setTitle("Train DL Pixel Classifier");
             dialog.setResizable(true);
-            dialog.setAlwaysOnTop(true);
+            // Note: alwaysOnTop dropped per scientist W2 m-1. With it on, the
+            // dialog floats above the Script Editor and Log windows, breaking
+            // the "tune config + paste Groovy script + watch logs" workflow.
+            // Modal=NONE plus QuPath stage as owner already keeps the dialog
+            // visible while the user works with QuPath windows.
 
             // Create buttons
             Button copyScriptButton = new Button("Copy as Groovy Script");
@@ -438,9 +442,29 @@ public class TrainingDialog {
                 }
             });
 
+            // Reset to defaults: re-applies every preference-backed control to
+            // its DLClassifierPreferences default (scientist W2 m-5). Confirms
+            // first because experimentation-then-revert is the use case; an
+            // accidental click should not wipe a tuned config.
+            Button resetDefaultsButton = new Button("Reset to defaults");
+            TooltipHelper.install(
+                    resetDefaultsButton,
+                    "Reset every spinner, combo, and checkbox in this dialog to its\n"
+                            + "preference default. Does not touch image selection, class\n"
+                            + "selection, per-image train/val roles, weight initialization,\n"
+                            + "or the classifier name.");
+            resetDefaultsButton.setOnAction(e -> {
+                boolean proceed = Dialogs.showConfirmDialog(
+                        "Reset to defaults",
+                        "Reset every spinner, combo, and checkbox to its preference default?\n\n"
+                                + "Your image selection, class selection, per-image train/val roles, "
+                                + "weight initialization choice, and classifier name will NOT be touched.");
+                if (proceed) resetTrainingControlsToDefaults();
+            });
+
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
-            HBox buttonBar = new HBox(8, copyScriptButton, spacer, okButton, cancelButton);
+            HBox buttonBar = new HBox(8, copyScriptButton, resetDefaultsButton, spacer, okButton, cancelButton);
             buttonBar.setPadding(new Insets(10, 0, 0, 0));
 
             // Create content
@@ -771,9 +795,9 @@ public class TrainingDialog {
             ruoLabel.setStyle("-fx-text-fill: #888; -fx-font-size: 11px; -fx-font-style: italic;");
 
             // Basic mode hint (hidden in advanced)
-            Label basicHint = new Label("Select images, load classes, choose an encoder, pick classes, "
+            Label basicHint = new Label("Select images, load classes, pick a model size, "
                     + "name your classifier, and click Start Training. "
-                    + "Start with ResNet18 or ResNet34 -- larger models need more data and time.");
+                    + "Start with Small or Medium -- larger models need more data and time.");
             basicHint.setWrapText(true);
             basicHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
             basicHint.visibleProperty().bind(advancedMode.not());
@@ -2661,12 +2685,30 @@ public class TrainingDialog {
                 basicSplitStatusLabel.setText("No images selected.");
                 return;
             }
-            StringBuilder sb = new StringBuilder("Validation split: ");
-            sb.append(trainOnly).append(" train, ").append(valOnly).append(" val");
+            // Single-image case: auto-distribute didn't actually run for the
+            // user (we early-return when fewer than 2 images are selected),
+            // so don't claim a split was assigned (grad-student W2-N2).
+            if (totalSelected == 1) {
+                basicSplitStatusLabel.setText(
+                        "1 image selected -- too few to split, used for both training and validation.");
+                return;
+            }
+            // Auto-distribute already ran; basic-mode users never saw the
+            // verb. Surface what the Change button does instead of leaving
+            // "auto-assigned" as the only signal (grad-student W2-N1).
+            int splitPct = (validationSplitSpinner != null)
+                    ? validationSplitSpinner.getValue()
+                    : DLClassifierPreferences.getValidationSplit();
+            StringBuilder sb = new StringBuilder();
+            sb.append("Auto-assigned: ")
+                    .append(trainOnly)
+                    .append(" train, ")
+                    .append(valOnly)
+                    .append(" val");
             if (both > 0) {
                 sb.append(", ").append(both).append(" both");
             }
-            sb.append(" (auto-assigned)");
+            sb.append(" (~").append(splitPct).append("% val). Click Change... to override.");
             basicSplitStatusLabel.setText(sb.toString());
         }
 
@@ -2841,7 +2883,15 @@ public class TrainingDialog {
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> validatePretrainedModelCompatibility());
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateLayerFreezePanel());
 
-            backboneLabel = new Label("Encoder:");
+            // In basic mode the dropdown shows Small/Medium/Large -- the row
+            // label should match that vocabulary, not the advanced-mode
+            // "encoder/backbone" jargon (grad-student W2-N4).
+            backboneLabel = new Label();
+            backboneLabel
+                    .textProperty()
+                    .bind(javafx.beans.binding.Bindings.when(advancedMode)
+                            .then("Encoder:")
+                            .otherwise("Model size:"));
             TooltipHelper.installWithLink(
                     "Encoder (backbone) that extracts image features.\n"
                             + "Options depend on the selected architecture.\n\n"
@@ -5959,6 +6009,129 @@ public class TrainingDialog {
             }
         }
 
+        /**
+         * Re-applies every preference-backed control to its
+         * DLClassifierPreferences default. Does NOT touch image selection,
+         * class selection, per-image roles, weight init choice, or
+         * classifier name. Scientist W2 m-5.
+         */
+        private void resetTrainingControlsToDefaults() {
+            // Tiles & resolution
+            if (tileSizeSpinner != null) {
+                tileSizeSpinner.getValueFactory().setValue(DLClassifierPreferences.getTileSize());
+            }
+            if (overlapSpinner != null) {
+                overlapSpinner.getValueFactory().setValue(DLClassifierPreferences.getTileOverlap());
+            }
+            if (downsampleCombo != null) {
+                downsampleCombo.setValue(mapDownsampleToDisplay(DLClassifierPreferences.getDefaultDownsample()));
+            }
+            if (contextScaleCombo != null) {
+                contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
+            }
+            if (minAnnotationCoveragePctSpinner != null) {
+                minAnnotationCoveragePctSpinner
+                        .getValueFactory()
+                        .setValue(DLClassifierPreferences.getDefaultMinAnnotationCoveragePct());
+            }
+            if (minTileLabelFractionPctSpinner != null) {
+                minTileLabelFractionPctSpinner
+                        .getValueFactory()
+                        .setValue(DLClassifierPreferences.getDefaultMinTileLabelFractionPct());
+            }
+            // Duration & stopping
+            if (epochsSpinner != null) {
+                epochsSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultEpochs());
+            }
+            if (validationSplitSpinner != null) {
+                validationSplitSpinner.getValueFactory().setValue(DLClassifierPreferences.getValidationSplit());
+            }
+            String metric = DLClassifierPreferences.getDefaultEarlyStoppingMetric();
+            boolean esEnabled = !"disabled".equals(metric);
+            if (earlyStoppingEnabledCheck != null) earlyStoppingEnabledCheck.setSelected(esEnabled);
+            if (earlyStoppingMetricCombo != null) {
+                String display = esEnabled ? mapEarlyStoppingMetricToDisplay(metric) : "Mean IoU";
+                if ("Disabled".equals(display)) display = "Mean IoU";
+                earlyStoppingMetricCombo.setValue(display);
+            }
+            if (earlyStoppingPatienceSpinner != null) {
+                earlyStoppingPatienceSpinner
+                        .getValueFactory()
+                        .setValue(DLClassifierPreferences.getDefaultEarlyStoppingPatience());
+            }
+            if (seedSpinner != null) {
+                seedSpinner.getValueFactory().setValue(DLClassifierPreferences.getLastSeed());
+            }
+            // Batch / memory
+            if (batchSizeSpinner != null) {
+                batchSizeSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultBatchSize());
+            }
+            if (gradientAccumulationSpinner != null) {
+                gradientAccumulationSpinner
+                        .getValueFactory()
+                        .setValue(DLClassifierPreferences.getDefaultGradientAccumulation());
+            }
+            if (mixedPrecisionCheck != null) {
+                mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
+            }
+            // Learning rate
+            if (learningRateSpinner != null) {
+                learningRateSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultLearningRate());
+            }
+            if (weightDecaySpinner != null) {
+                weightDecaySpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultWeightDecay());
+            }
+            if (schedulerCombo != null) {
+                schedulerCombo.setValue(mapSchedulerToDisplay(DLClassifierPreferences.getDefaultScheduler()));
+            }
+            // Loss + OHEM + boundary
+            if (lossFunctionCombo != null) {
+                lossFunctionCombo.setValue(mapLossFunctionToDisplay(DLClassifierPreferences.getDefaultLossFunction()));
+            }
+            if (focalGammaSpinner != null) {
+                focalGammaSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultFocalGamma());
+            }
+            if (boundarySigmaSpinner != null) {
+                boundarySigmaSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultBoundarySigma());
+            }
+            if (boundaryWMinSpinner != null) {
+                boundaryWMinSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultBoundaryWMin());
+            }
+            if (ohemSpinner != null) {
+                ohemSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultOhemHardPixelPct());
+            }
+            if (ohemStartSpinner != null) {
+                ohemStartSpinner.getValueFactory().setValue(DLClassifierPreferences.getDefaultOhemHardPixelStartPct());
+            }
+            if (ohemAdaptiveFloorCheck != null) {
+                ohemAdaptiveFloorCheck.setSelected(DLClassifierPreferences.isDefaultOhemAdaptiveFloor());
+            }
+            // Performance toggles (the four added in wave 1)
+            if (useLrFinderCheck != null) {
+                useLrFinderCheck.setSelected(DLClassifierPreferences.isDefaultUseLrFinder());
+            }
+            if (fusedOptimizerCheck != null) {
+                fusedOptimizerCheck.setSelected(DLClassifierPreferences.isDefaultFusedOptimizer());
+            }
+            if (gpuAugmentationCheck != null) {
+                gpuAugmentationCheck.setSelected(DLClassifierPreferences.isDefaultGpuAugmentation());
+            }
+            if (useTorchCompileCheck != null && !useTorchCompileCheck.isDisable()) {
+                useTorchCompileCheck.setSelected(DLClassifierPreferences.isDefaultUseTorchCompile());
+            }
+            if (progressiveResizeCheck != null) {
+                progressiveResizeCheck.setSelected(DLClassifierPreferences.isDefaultProgressiveResize());
+            }
+            // Focus class min IoU (the focus-class combo itself stays put --
+            // it depends on loaded class names which we don't touch).
+            if (focusClassMinIoUSpinner != null) {
+                focusClassMinIoUSpinner
+                        .getValueFactory()
+                        .setValue(DLClassifierPreferences.getDefaultFocusClassMinIoU());
+            }
+            logger.info("Training dialog controls reset to preference defaults");
+        }
+
         /** Checks if any Training Strategy or Augmentation settings differ from defaults. */
         private boolean checkAdvancedSettingsDiffer() {
             // Training strategy
@@ -6986,12 +7159,31 @@ public class TrainingDialog {
         }
 
         private void copyTrainingScript(Button sourceButton) {
-            String name = classifierNameField.getText().trim();
-            if (name.isEmpty()) {
-                showCopyFeedback(sourceButton, "Enter a classifier name first");
+            // List everything that's still missing so the user fixes it in
+            // one pass instead of clicking, fixing one thing, clicking again.
+            // Grad-student W2 m-9 -- the old "Enter a classifier name first"
+            // toast hid the deeper "you also haven't loaded classes" gap.
+            List<String> missing = new ArrayList<>();
+            if (classifierNameField.getText().trim().isEmpty()) {
+                missing.add("classifier name");
+            }
+            if (!classesLoaded) {
+                missing.add("loaded classes (click 'Load Classes from Selected Images')");
+            }
+            long selectedClassCount = classListView == null
+                    ? 0L
+                    : classListView.getItems().stream()
+                            .filter(item -> item.selected().get())
+                            .count();
+            if (classesLoaded && selectedClassCount < 2) {
+                missing.add("at least 2 classes checked in the class list");
+            }
+            if (!missing.isEmpty()) {
+                showCopyFeedback(sourceButton, "Need: " + String.join("; ", missing));
                 return;
             }
 
+            String name = classifierNameField.getText().trim();
             TrainingConfig config = buildTrainingConfig();
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
 
