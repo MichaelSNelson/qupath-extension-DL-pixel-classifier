@@ -191,6 +191,7 @@ public class TrainingDialog {
         private Spinner<Integer> validationSplitSpinner;
         // Shows derived train/val counts when users have imposed per-image roles.
         private Label validationSplitObservedLabel;
+        private Label allBothBadgeLabel;
         // Stashed user-entered spinner value, restored when we leave fully-manual mode.
         private Integer lastUserValidationSplitPct;
         // Guard so our own programmatic spinner updates don't overwrite lastUserValidationSplitPct.
@@ -241,9 +242,11 @@ public class TrainingDialog {
         private CheckBox ohemAdaptiveFloorCheck;
         private ComboBox<String> ohemScheduleCombo;
         private Label ohemScheduleLabel;
+        private CheckBox earlyStoppingEnabledCheck;
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
         private Button autoDistributeBtn;
+        private Label basicSplitStatusLabel;
         private boolean inAutoDistribute = false;
         private CheckBox mixedPrecisionCheck;
         private Spinner<Integer> gradientAccumulationSpinner;
@@ -265,6 +268,7 @@ public class TrainingDialog {
         private RadioButton maeEncoderRadio;
         private RadioButton sslEncoderRadio;
         private RadioButton continueTrainingRadio;
+        private Label continueRequiresModelLabel;
         private VBox backbonePretrainedContent;
         private VBox maeEncoderContent;
         private VBox sslEncoderContent;
@@ -283,6 +287,7 @@ public class TrainingDialog {
         // Image source selection
         private ListView<ImageSelectionItem> imageSelectionList;
         private List<TitledPane> gatedSections = new ArrayList<>();
+        private Label gatedSectionsHint;
         private boolean classesLoaded = false;
         private boolean hasLineAnnotations = false;
         private Button loadClassesButton;
@@ -311,6 +316,8 @@ public class TrainingDialog {
         // flags below distinguish that from programmatic setValue calls
         // we make during init / model load).
         private boolean esMetricUserEdited = false;
+        private boolean esEnabledUserEdited = false;
+        private boolean suppressEsEnabledListener = false;
         private boolean esPatienceUserEdited = false;
         // Suppression: when true, value-change listeners skip both the
         // userEdited flip and the preference write. Wrapped around any
@@ -347,6 +354,8 @@ public class TrainingDialog {
         private Label tileAdvisoryLabel;
         private Label earlyStoppingStatusLabel;
         private Spinner<Double> discriminativeLrSpinner;
+        private Label discLrLabel;
+        private Label discLrNotApplicableHint;
         private Label effectiveLrLabel;
         private Spinner<Double> weightDecaySpinner;
         private Spinner<Integer> seedSpinner;
@@ -494,6 +503,13 @@ public class TrainingDialog {
                     classSection,
                     augmentationSection));
 
+            gatedSectionsHint = new Label("Load classes from the section above to unlock the rest of the dialog.");
+            gatedSectionsHint.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+                    + "-fx-padding: 6 10; -fx-border-color: #d39e00; "
+                    + "-fx-border-width: 0 0 0 4; -fx-font-style: italic;");
+            gatedSectionsHint.setMaxWidth(Double.MAX_VALUE);
+            gatedSectionsHint.setWrapText(true);
+
             // Build layout: header, image source, gated sections, error panel, button bar.
             // Display order groups training-time concerns (tiles/resolution -> duration ->
             // batch/memory) before deeper hyperparameters (LR, loss, performance), then
@@ -503,6 +519,7 @@ public class TrainingDialog {
                             checkpointRecoveryBanner,
                             createHeaderBox(),
                             imageSourceSection,
+                            gatedSectionsHint,
                             modelSection,
                             weightInitSection,
                             tilesResolutionSection,
@@ -1059,8 +1076,17 @@ public class TrainingDialog {
             loadedModelLabel = new Label();
             loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
 
-            continueTrainingContent =
-                    new VBox(5, new HBox(10, selectModelButton, loadCheckpointButton), loadedModelLabel);
+            continueRequiresModelLabel =
+                    new Label("No model selected -- click 'Select model...' or 'Load checkpoint...'");
+            continueRequiresModelLabel.setStyle("-fx-text-fill: #c0392b; -fx-font-weight: bold;");
+            continueRequiresModelLabel.setVisible(false);
+            continueRequiresModelLabel.setManaged(false);
+
+            continueTrainingContent = new VBox(
+                    5,
+                    continueRequiresModelLabel,
+                    new HBox(10, selectModelButton, loadCheckpointButton),
+                    loadedModelLabel);
             continueTrainingContent.setPadding(new Insets(0, 0, 0, 20));
 
             // Toggle group listener: show/hide sub-content + re-validate
@@ -1110,7 +1136,7 @@ public class TrainingDialog {
                     .orElse(ClassifierRegistry.getDefaultHandler());
             updateWeightInitOptions(architectureCombo.getValue());
 
-            TitledPane pane = new TitledPane("WEIGHT INITIALIZATION", content);
+            TitledPane pane = new TitledPane("Weight Initialization", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             TooltipHelper.install(
@@ -1195,6 +1221,21 @@ public class TrainingDialog {
             // it to fit within the architecture's max tile size.
             if (downsampleCombo != null) downsampleCombo.setDisable(continuing);
             if (contextScaleCombo != null) contextScaleCombo.setDisable(continuing || wholeImage);
+
+            updateEncoderLrApplicability();
+        }
+
+        /**
+         * Disables the Encoder LR Factor spinner when training from scratch,
+         * since with no pretrained encoder the discriminative-LR ratio has no effect.
+         */
+        private void updateEncoderLrApplicability() {
+            if (discriminativeLrSpinner == null || discLrNotApplicableHint == null) return;
+            boolean fromScratch = getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.SCRATCH;
+            boolean showHint = fromScratch && advancedMode.get();
+            discriminativeLrSpinner.setDisable(fromScratch);
+            discLrNotApplicableHint.setVisible(showHint);
+            discLrNotApplicableHint.setManaged(showHint);
         }
 
         /**
@@ -1741,10 +1782,22 @@ public class TrainingDialog {
                 // so it doesn't re-stamp the preference and mark this as a
                 // user edit.
                 if (ts.containsKey("early_stopping_metric") && !esMetricUserEdited) {
+                    String loadedMetric = (String) ts.get("early_stopping_metric");
+                    boolean loadedEnabled = !"disabled".equals(loadedMetric);
+                    suppressEsEnabledListener = true;
+                    try {
+                        if (!esEnabledUserEdited) {
+                            earlyStoppingEnabledCheck.setSelected(loadedEnabled);
+                        }
+                    } finally {
+                        suppressEsEnabledListener = false;
+                    }
                     suppressEsMetricListener = true;
                     try {
-                        earlyStoppingMetricCombo.setValue(
-                                mapEarlyStoppingMetricToDisplay((String) ts.get("early_stopping_metric")));
+                        String displayValue =
+                                loadedEnabled ? mapEarlyStoppingMetricToDisplay(loadedMetric) : "Mean IoU";
+                        if ("Disabled".equals(displayValue)) displayValue = "Mean IoU";
+                        earlyStoppingMetricCombo.setValue(displayValue);
                     } finally {
                         suppressEsMetricListener = false;
                     }
@@ -2015,7 +2068,7 @@ public class TrainingDialog {
             grid.add(descLabel, 0, row);
             grid.add(descriptionField, 1, row);
 
-            TitledPane pane = new TitledPane("NAME YOUR CLASSIFIER", grid);
+            TitledPane pane = new TitledPane("Name Your Classifier", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Name and describe your classifier.\n"
@@ -2062,9 +2115,11 @@ public class TrainingDialog {
                                 }
                                 updateWholeImageInfoLabel();
                                 updateValidationSplitSpinnerState();
+                                updateBasicSplitStatusLabel();
                             });
                             item.splitRole.addListener((obs, old, newVal) -> {
                                 updateValidationSplitSpinnerState();
+                                updateBasicSplitStatusLabel();
                                 // Any manual override clears the auto-distribute
                                 // highlight; auto-distribute itself runs inside
                                 // its own guard so it doesn't trip this.
@@ -2150,8 +2205,32 @@ public class TrainingDialog {
             tileEstimateLabel.setVisible(false);
             tileEstimateLabel.setManaged(false);
 
+            // Basic-mode-only summary of the auto-assigned train/val/both split.
+            // The per-image Train/Val dropdowns and the Auto-Distribute /
+            // All-Both buttons are advanced-only, so a basic user otherwise
+            // never sees that the split was assigned for them on dialog open.
+            basicSplitStatusLabel = new Label();
+            basicSplitStatusLabel.setStyle("-fx-text-fill: #2a4a7a; -fx-font-size: 11px;");
+            basicSplitStatusLabel.setWrapText(true);
+            Button basicSplitChangeBtn = new Button("Change...");
+            basicSplitChangeBtn.setOnAction(e -> advancedMode.set(true));
+            TooltipHelper.install(
+                    basicSplitChangeBtn,
+                    "Switch to Advanced mode to override per-image roles, "
+                            + "re-run Auto-Distribute, or use All-Both.");
+            HBox basicSplitBox = new HBox(8, basicSplitStatusLabel, basicSplitChangeBtn);
+            basicSplitBox.setAlignment(Pos.CENTER_LEFT);
+            basicSplitBox.visibleProperty().bind(advancedMode.not());
+            basicSplitBox.managedProperty().bind(advancedMode.not());
+
             content.getChildren()
-                    .addAll(info, imageSelectionList, imageButtonBox, loadClassesButton, tileEstimateLabel);
+                    .addAll(
+                            info,
+                            imageSelectionList,
+                            imageButtonBox,
+                            basicSplitBox,
+                            loadClassesButton,
+                            tileEstimateLabel);
 
             // Show a message if no annotated images found
             if (imageSelectionList.getItems().isEmpty()) {
@@ -2173,9 +2252,10 @@ public class TrainingDialog {
                 if (imageSelectionList.getItems().size() >= 2) {
                     autoDistributeSelectedImages();
                 }
+                updateBasicSplitStatusLabel();
             });
 
-            TitledPane pane = new TitledPane("TRAINING DATA SOURCE", content);
+            TitledPane pane = new TitledPane("Training Data Source", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Select project images and load classes for training"));
@@ -2220,6 +2300,21 @@ public class TrainingDialog {
                 Dialogs.showInfoNotification("All Both", "Select at least one image first.");
                 return;
             }
+            long nonBoth = selected.stream()
+                    .filter(item -> item.splitRole.get() != SplitRole.BOTH)
+                    .count();
+            // Confirmation: a single click silently invalidates val IoU as a
+            // generalization signal across every selected slide. Make sure
+            // the user actually intends to do that.
+            boolean proceed = Dialogs.showConfirmDialog(
+                    "Set every selected image to Both?",
+                    String.format(
+                            "This will overwrite the Train/Val role of %d selected image(s)%s.\n\n"
+                                    + "Validation will then run on slides the model also trained on. "
+                                    + "Val IoU becomes a smoke test, not a generalization signal.\n\n"
+                                    + "Continue?",
+                            selected.size(), nonBoth > 0 ? " (" + nonBoth + " currently train/val-only)" : ""));
+            if (!proceed) return;
             inAutoDistribute = true;
             try {
                 for (ImageSelectionItem item : selected) {
@@ -2233,8 +2328,7 @@ public class TrainingDialog {
             Dialogs.showInfoNotification(
                     "All Both",
                     String.format(
-                            "%d image(s) set to Both. The model will train on every patch and "
-                                    + "validation will run on every patch. Val IoU reflects training-set "
+                            "%d image(s) set to Both. Val IoU reflects training-set "
                                     + "performance -- use it as a smoke test, not a generalization signal.",
                             selected.size()));
         }
@@ -2498,6 +2592,37 @@ public class TrainingDialog {
         }
 
         /**
+         * Rebuild the basic-mode split summary ("Validation: N train / M val / K both").
+         * Hidden in advanced mode because the per-image dropdowns convey the same.
+         */
+        private void updateBasicSplitStatusLabel() {
+            if (basicSplitStatusLabel == null || imageSelectionList == null) return;
+            int trainOnly = 0;
+            int valOnly = 0;
+            int both = 0;
+            for (ImageSelectionItem item : imageSelectionList.getItems()) {
+                if (!item.selected.get()) continue;
+                switch (item.splitRole.get()) {
+                    case TRAIN_ONLY -> trainOnly++;
+                    case VAL_ONLY -> valOnly++;
+                    case BOTH -> both++;
+                }
+            }
+            int totalSelected = trainOnly + valOnly + both;
+            if (totalSelected == 0) {
+                basicSplitStatusLabel.setText("No images selected.");
+                return;
+            }
+            StringBuilder sb = new StringBuilder("Validation split: ");
+            sb.append(trainOnly).append(" train, ").append(valOnly).append(" val");
+            if (both > 0) {
+                sb.append(", ").append(both).append(" both");
+            }
+            sb.append(" (auto-assigned)");
+            basicSplitStatusLabel.setText(sb.toString());
+        }
+
+        /**
          * Toggle the visual highlight on the Auto-Distribute button. Highlighted
          * = "this distribution is from auto-distribute, click to reshuffle".
          * Cleared once the user makes any manual per-image role change.
@@ -2542,6 +2667,14 @@ public class TrainingDialog {
                 else nBoth++;
             }
             int fixedTotal = nTrain + nVal;
+
+            if (allBothBadgeLabel != null) {
+                // Badge visible whenever every selected slide is BOTH (and
+                // there's at least one), regardless of basic/advanced mode.
+                boolean allBoth = nBoth > 0 && fixedTotal == 0;
+                allBothBadgeLabel.setVisible(allBoth);
+                allBothBadgeLabel.setManaged(allBoth);
+            }
 
             if (nBoth == 0 && fixedTotal >= 2) {
                 // Fully-manual mode: disable spinner, show observed.
@@ -2605,6 +2738,7 @@ public class TrainingDialog {
             // Architecture selection
             List<String> architectures = new ArrayList<>(ClassifierRegistry.getAllTypes());
             architectureCombo = new ComboBox<>(FXCollections.observableArrayList(architectures));
+            architectureCombo.setMaxWidth(Double.MAX_VALUE);
             // Restore last used architecture from preferences, falling back to first in list
             String savedArchitecture = DLClassifierPreferences.getLastArchitecture();
             if (architectures.contains(savedArchitecture)) {
@@ -2649,6 +2783,7 @@ public class TrainingDialog {
 
             // Backbone selection
             backboneCombo = new ComboBox<>();
+            backboneCombo.setMaxWidth(Double.MAX_VALUE);
             // Tooltip installed after backboneLabel is created below
             updateBackboneOptions(architectureCombo.getValue());
 
@@ -2731,7 +2866,7 @@ public class TrainingDialog {
             });
 
             javafx.scene.layout.VBox modelContent = new javafx.scene.layout.VBox(5, grid, handlerUIContainer);
-            TitledPane pane = new TitledPane("MODEL ARCHITECTURE", modelContent);
+            TitledPane pane = new TitledPane("Model Architecture", modelContent);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             TooltipHelper.install(
@@ -2832,7 +2967,7 @@ public class TrainingDialog {
                     .ohemSchedule(ohemStartSpinner.getValue() > ohemSpinner.getValue() ? "anneal" : "fixed")
                     .ohemAdaptiveFloor(ohemAdaptiveFloorCheck.isSelected())
                     .inMemoryDataset(DLClassifierPreferences.getDefaultInMemoryDataset())
-                    .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
+                    .earlyStoppingMetric(currentEarlyStoppingMetricValue())
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
                     .fusedOptimizer(fusedOptimizerCheck != null ? fusedOptimizerCheck.isSelected() : true)
@@ -2991,11 +3126,22 @@ public class TrainingDialog {
             }
         }
 
-        private void updateEarlyStoppingStatusLabel() {
-            if (earlyStoppingStatusLabel == null) return;
-            String metric = earlyStoppingMetricCombo != null
+        /**
+         * Effective early-stopping metric for the backend: "disabled" when the
+         * enable checkbox is off, otherwise the metric the user picked.
+         */
+        private String currentEarlyStoppingMetricValue() {
+            if (earlyStoppingEnabledCheck != null && !earlyStoppingEnabledCheck.isSelected()) {
+                return "disabled";
+            }
+            return earlyStoppingMetricCombo != null
                     ? mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue())
                     : "mean_iou";
+        }
+
+        private void updateEarlyStoppingStatusLabel() {
+            if (earlyStoppingStatusLabel == null) return;
+            String metric = currentEarlyStoppingMetricValue();
             if ("disabled".equals(metric)) {
                 earlyStoppingStatusLabel.setText("Early stopping disabled (will train all configured epochs)");
                 return;
@@ -3196,17 +3342,51 @@ public class TrainingDialog {
             grid.add(validationSplitObservedLabel, 1, row, 2, 1);
             row++;
 
-            // Early stopping metric
-            earlyStoppingMetricCombo =
-                    new ComboBox<>(FXCollections.observableArrayList("Mean IoU", "Validation Loss", "Disabled"));
+            allBothBadgeLabel = new Label("All-Both is active: val IoU is a smoke test, not a generalization signal.");
+            allBothBadgeLabel.setWrapText(true);
+            allBothBadgeLabel.setMaxWidth(360);
+            allBothBadgeLabel.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+                    + "-fx-padding: 4 8; -fx-border-color: #d39e00; "
+                    + "-fx-border-width: 0 0 0 4; -fx-font-size: 11px;");
+            allBothBadgeLabel.setVisible(false);
+            allBothBadgeLabel.setManaged(false);
+            grid.add(allBothBadgeLabel, 0, row, 3, 1);
+            row++;
+
+            // Early stopping enable + metric. The checkbox lets users toggle
+            // early stopping cleanly without having to pick "Disabled" from
+            // the metric combo (which conflated "what metric" with "is it on").
+            String storedMetric = DLClassifierPreferences.getDefaultEarlyStoppingMetric();
+            boolean storedEnabled = !"disabled".equals(storedMetric);
+            earlyStoppingEnabledCheck = new CheckBox("Enable early stopping");
+            suppressEsEnabledListener = true;
+            try {
+                earlyStoppingEnabledCheck.setSelected(storedEnabled);
+            } finally {
+                suppressEsEnabledListener = false;
+            }
+            TooltipHelper.install(
+                    earlyStoppingEnabledCheck,
+                    "When on, training stops automatically once the chosen metric\n"
+                            + "stops improving for the given patience. When off, training\n"
+                            + "runs for the full epoch count regardless of metric progress\n"
+                            + "(best-model selection still applies).");
+            earlyStoppingEnabledCheck.visibleProperty().bind(advancedMode);
+            earlyStoppingEnabledCheck.managedProperty().bind(advancedMode);
+            grid.add(earlyStoppingEnabledCheck, 0, row, 2, 1);
+            row++;
+
+            earlyStoppingMetricCombo = new ComboBox<>(FXCollections.observableArrayList("Mean IoU", "Validation Loss"));
+            earlyStoppingMetricCombo.setMaxWidth(Double.MAX_VALUE);
             // Suppress the listener: initial preference load is not a user
             // edit, so it must not flip esMetricUserEdited (which would then
             // block legitimate model-load overwrites later) and must not
             // re-write the same value back to the preference.
             suppressEsMetricListener = true;
             try {
-                earlyStoppingMetricCombo.setValue(
-                        mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
+                String displayValue = storedEnabled ? mapEarlyStoppingMetricToDisplay(storedMetric) : "Mean IoU";
+                if ("Disabled".equals(displayValue)) displayValue = "Mean IoU";
+                earlyStoppingMetricCombo.setValue(displayValue);
             } finally {
                 suppressEsMetricListener = false;
             }
@@ -3263,6 +3443,7 @@ public class TrainingDialog {
 
             // Focus class
             focusClassCombo = new ComboBox<>(FXCollections.observableArrayList("None (use Mean IoU)"));
+            focusClassCombo.setMaxWidth(Double.MAX_VALUE);
             focusClassCombo.setValue("None (use Mean IoU)");
             Label focusClassLabel = new Label("Focus Class:");
             TooltipHelper.install(
@@ -3365,14 +3546,29 @@ public class TrainingDialog {
             seedLabel.managedProperty().bind(advancedMode);
             seedSpinner.visibleProperty().bind(advancedMode);
             seedSpinner.managedProperty().bind(advancedMode);
+            Label seedRandomHint = new Label("(non-deterministic)");
+            seedRandomHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            Runnable updateSeedHint = () -> {
+                Integer v = seedSpinner.getValue();
+                boolean show = v != null && v == 0 && advancedMode.get();
+                seedRandomHint.setVisible(show);
+                seedRandomHint.setManaged(show);
+            };
+            seedSpinner.valueProperty().addListener((obs, o, n) -> updateSeedHint.run());
+            advancedMode.addListener((obs, o, n) -> updateSeedHint.run());
+            updateSeedHint.run();
+            HBox seedBox = new HBox(8, seedSpinner, seedRandomHint);
+            seedBox.setAlignment(Pos.CENTER_LEFT);
             grid.add(seedLabel, 0, row);
-            grid.add(seedSpinner, 1, row);
+            grid.add(seedBox, 1, row);
             row++;
 
             // Update the basic-mode early stopping status label when these controls change,
-            // and grey out the patience spinner when early stopping is disabled.
+            // and grey out the metric + patience controls when early stopping is disabled.
             Runnable applyEarlyStoppingDisableState = () -> {
-                boolean disabled = "Disabled".equals(earlyStoppingMetricCombo.getValue());
+                boolean disabled = !earlyStoppingEnabledCheck.isSelected();
+                earlyStoppingMetricCombo.setDisable(disabled);
+                esMetricLabel.setDisable(disabled);
                 earlyStoppingPatienceSpinner.setDisable(disabled);
                 esPatienceLabel.setDisable(disabled);
             };
@@ -3384,7 +3580,7 @@ public class TrainingDialog {
             earlyStoppingMetricCombo.valueProperty().addListener((obs, o, n) -> {
                 updateEarlyStoppingStatusLabel();
                 applyEarlyStoppingDisableState.run();
-                if (n != null && !suppressEsMetricListener) {
+                if (n != null && !suppressEsMetricListener && earlyStoppingEnabledCheck.isSelected()) {
                     DLClassifierPreferences.setDefaultEarlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(n));
                     esMetricUserEdited = true;
                 }
@@ -3396,9 +3592,23 @@ public class TrainingDialog {
                     esPatienceUserEdited = true;
                 }
             });
+            earlyStoppingEnabledCheck.selectedProperty().addListener((obs, o, n) -> {
+                updateEarlyStoppingStatusLabel();
+                applyEarlyStoppingDisableState.run();
+                if (n != null && !suppressEsEnabledListener) {
+                    if (n) {
+                        DLClassifierPreferences.setDefaultEarlyStoppingMetric(
+                                mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()));
+                    } else {
+                        DLClassifierPreferences.setDefaultEarlyStoppingMetric("disabled");
+                    }
+                    esEnabledUserEdited = true;
+                    esMetricUserEdited = true;
+                }
+            });
             applyEarlyStoppingDisableState.run();
 
-            TitledPane pane = new TitledPane("DURATION & STOPPING", grid);
+            TitledPane pane = new TitledPane("Duration & Stopping", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("How long to train and when to stop: epochs, validation split, "
@@ -3503,7 +3713,7 @@ public class TrainingDialog {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
 
-            TitledPane pane = new TitledPane("BATCH SIZE & MEMORY", grid);
+            TitledPane pane = new TitledPane("Batch Size & Memory", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create(
@@ -3529,6 +3739,16 @@ public class TrainingDialog {
                             + "1024: Maximum context but requires large GPU VRAM.",
                     tileSizeLabel,
                     tileSizeSpinner);
+            Label tileSizeRecommendedHint = new Label("(recommended: 512)");
+            tileSizeRecommendedHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            Runnable updateTileSizeHint = () -> {
+                Integer v = tileSizeSpinner.getValue();
+                boolean show = v != null && v != 512;
+                tileSizeRecommendedHint.setVisible(show);
+                tileSizeRecommendedHint.setManaged(show);
+            };
+            tileSizeSpinner.valueProperty().addListener((obs, o, n) -> updateTileSizeHint.run());
+            updateTileSizeHint.run();
 
             // Whole-image checkbox
             wholeImageCheck = new CheckBox("Whole image\n(small images only)");
@@ -3577,7 +3797,9 @@ public class TrainingDialog {
             wholeImageCheck.managedProperty().bind(advancedMode);
 
             grid.add(tileSizeLabel, 0, row);
-            grid.add(tileSizeSpinner, 1, row);
+            HBox tileSizeBox = new HBox(8, tileSizeSpinner, tileSizeRecommendedHint);
+            tileSizeBox.setAlignment(Pos.CENTER_LEFT);
+            grid.add(tileSizeBox, 1, row);
             grid.add(wholeImageCheck, 2, row);
             row++;
             grid.add(wholeImageInfoLabel, 0, row, 3, 1);
@@ -3599,6 +3821,7 @@ public class TrainingDialog {
                     "4x (Quarter resolution)",
                     "8x (1/8 resolution)",
                     "16x (1/16 resolution)"));
+            downsampleCombo.setMaxWidth(Double.MAX_VALUE);
             downsampleCombo.setValue(mapDownsampleToDisplay(DLClassifierPreferences.getDefaultDownsample()));
             Label resLabel = new Label("Resolution:");
             TooltipHelper.install(
@@ -3657,8 +3880,19 @@ public class TrainingDialog {
                             + "selected downsample level. This is what the model\n"
                             + "will see during training.");
 
+            Label resRecommendedHint = new Label("(recommended)");
+            resRecommendedHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            Runnable updateResHint = () -> {
+                String v = downsampleCombo.getValue();
+                boolean show = v != null && v.startsWith("1x");
+                resRecommendedHint.setVisible(show);
+                resRecommendedHint.setManaged(show);
+            };
+            downsampleCombo.valueProperty().addListener((obs, o, n) -> updateResHint.run());
+            updateResHint.run();
+
             grid.add(resLabel, 0, row);
-            HBox dsBox = new HBox(8, downsampleCombo, previewBtn);
+            HBox dsBox = new HBox(8, downsampleCombo, previewBtn, resRecommendedHint);
             dsBox.setAlignment(Pos.CENTER_LEFT);
             grid.add(dsBox, 1, row);
             row++;
@@ -3673,6 +3907,7 @@ public class TrainingDialog {
             // Context scale
             contextScaleCombo = new ComboBox<>(FXCollections.observableArrayList(
                     "None (single scale)", "2x context", "4x context (Recommended)", "8x context", "16x context"));
+            contextScaleCombo.setMaxWidth(Double.MAX_VALUE);
             contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
             contextScaleLabel = new Label("Surrounding context:");
             TooltipHelper.install(
@@ -3926,7 +4161,7 @@ public class TrainingDialog {
             grid.add(minTileLabelFracLabel, 0, row);
             grid.add(minTileLabelFractionPctSpinner, 1, row);
 
-            TitledPane pane = new TitledPane("TILES & RESOLUTION", grid);
+            TitledPane pane = new TitledPane("Tiles & Resolution", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create(
@@ -4012,7 +4247,7 @@ public class TrainingDialog {
                     }
                 }
             });
-            Label discLrLabel = new Label("Encoder LR Factor:");
+            discLrLabel = new Label("Encoder LR Factor:");
             TooltipHelper.install(
                     "Ratio applied to the base learning rate for encoder layers.\n\n"
                             + "0.1 (default): Encoder trains at 1/10th the decoder LR.\n"
@@ -4028,9 +4263,16 @@ public class TrainingDialog {
             discLrLabel.managedProperty().bind(advancedMode);
             discriminativeLrSpinner.visibleProperty().bind(advancedMode);
             discriminativeLrSpinner.managedProperty().bind(advancedMode);
+            discLrNotApplicableHint = new Label("(N/A from scratch)");
+            discLrNotApplicableHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            discLrNotApplicableHint.setVisible(false);
+            discLrNotApplicableHint.setManaged(false);
+            HBox discLrBox = new HBox(8, discriminativeLrSpinner, discLrNotApplicableHint);
+            discLrBox.setAlignment(Pos.CENTER_LEFT);
             grid.add(discLrLabel, 0, row);
-            grid.add(discriminativeLrSpinner, 1, row);
+            grid.add(discLrBox, 1, row);
             row++;
+            updateEncoderLrApplicability();
 
             // Effective per-group LR display (advanced only)
             effectiveLrLabel = new Label();
@@ -4086,6 +4328,7 @@ public class TrainingDialog {
             // LR Scheduler
             schedulerCombo = new ComboBox<>(FXCollections.observableArrayList(
                     "One Cycle", "Cosine Annealing", "Reduce on Plateau", "Step Decay", "None"));
+            schedulerCombo.setMaxWidth(Double.MAX_VALUE);
             schedulerCombo.setValue(mapSchedulerToDisplay(DLClassifierPreferences.getDefaultScheduler()));
             Label schedulerLabel = new Label("LR Scheduler:");
             TooltipHelper.installWithLink(
@@ -4174,7 +4417,7 @@ public class TrainingDialog {
             grid.add(useLrFinderCheck, 0, row, 2, 1);
             row++;
 
-            TitledPane pane = new TitledPane("LEARNING RATE & OPTIMIZER", grid);
+            TitledPane pane = new TitledPane("Learning Rate & Optimizer", grid);
             pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(
@@ -4192,6 +4435,7 @@ public class TrainingDialog {
                     "Focal + Dice", "Focal",
                     "Boundary-softened CE", "Boundary-softened CE + Dice",
                     "Lovasz-Softmax", "CE + Lovasz-Softmax"));
+            lossFunctionCombo.setMaxWidth(Double.MAX_VALUE);
             lossFunctionCombo.setValue(mapLossFunctionToDisplay(DLClassifierPreferences.getDefaultLossFunction()));
             Label lossLabel = new Label("Loss Function:");
             TooltipHelper.installWithLink(
@@ -4232,8 +4476,21 @@ public class TrainingDialog {
                     lossLabel,
                     lossFunctionCombo);
 
+            Label lossRecommendedHint = new Label("(recommended)");
+            lossRecommendedHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            Runnable updateLossHint = () -> {
+                String v = lossFunctionCombo.getValue();
+                boolean show = "Cross Entropy + Dice".equals(v);
+                lossRecommendedHint.setVisible(show);
+                lossRecommendedHint.setManaged(show);
+            };
+            lossFunctionCombo.valueProperty().addListener((obs, o, n) -> updateLossHint.run());
+            updateLossHint.run();
+
             grid.add(lossLabel, 0, row);
-            grid.add(lossFunctionCombo, 1, row);
+            HBox lossBox = new HBox(8, lossFunctionCombo, lossRecommendedHint);
+            lossBox.setAlignment(Pos.CENTER_LEFT);
+            grid.add(lossBox, 1, row);
             row++;
 
             // Focal gamma (visible only when focal variant selected)
@@ -4466,7 +4723,7 @@ public class TrainingDialog {
             grid.add(ohemAdaptiveFloorCheck, 0, row, 2, 1);
             row++;
 
-            TitledPane pane = new TitledPane("LOSS FUNCTION", grid);
+            TitledPane pane = new TitledPane("Loss Function", grid);
             pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create(
@@ -4564,7 +4821,7 @@ public class TrainingDialog {
                     "https://pytorch.org/docs/stable/generated/torch.compile.html");
             grid.add(useTorchCompileCheck, 0, row, 2, 1);
 
-            TitledPane pane = new TitledPane("PERFORMANCE", grid);
+            TitledPane pane = new TitledPane("Performance", grid);
             pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(
@@ -4583,7 +4840,7 @@ public class TrainingDialog {
                 }
             });
 
-            TitledPane pane = new TitledPane("CHANNEL CONFIGURATION", channelPanel);
+            TitledPane pane = new TitledPane("Channel Configuration", channelPanel);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Select and order image channels for model input"));
@@ -4673,7 +4930,7 @@ public class TrainingDialog {
             content.getChildren()
                     .addAll(infoLabel, classDistributionChart, classListView, rebalanceByDefaultCheck, buttonBox);
 
-            TitledPane pane = new TitledPane("ANNOTATION CLASSES", content);
+            TitledPane pane = new TitledPane("Annotation Classes", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Select which annotation classes to include in training"));
@@ -4714,7 +4971,7 @@ public class TrainingDialog {
             intensityAugCombo = new ComboBox<>(FXCollections.observableArrayList(
                     "None", "Brightfield (color jitter)", "Fluorescence (per-channel)"));
             intensityAugCombo.setValue(mapIntensityModeToDisplay(DLClassifierPreferences.getAugIntensityMode()));
-            intensityAugCombo.setPrefWidth(220);
+            intensityAugCombo.setMaxWidth(Double.MAX_VALUE);
             // Track manual user changes so auto-detection doesn't override
             intensityAugCombo.setOnAction(e -> intensityAugUserModified = true);
             TooltipHelper.install(
@@ -4770,7 +5027,7 @@ public class TrainingDialog {
                             elasticCheck,
                             advancedAugButton);
 
-            TitledPane pane = new TitledPane("DATA AUGMENTATION", content);
+            TitledPane pane = new TitledPane("Data Augmentation", content);
             pane.setExpanded(false); // Collapsed by default
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create("Configure data augmentation to improve model generalization"));
@@ -5155,6 +5412,10 @@ public class TrainingDialog {
                 if (!enabled) {
                     pane.setExpanded(false);
                 }
+            }
+            if (gatedSectionsHint != null) {
+                gatedSectionsHint.setVisible(!enabled);
+                gatedSectionsHint.setManaged(!enabled);
             }
         }
 
@@ -5624,7 +5885,7 @@ public class TrainingDialog {
             if (schedulerCombo != null && !"One Cycle".equals(schedulerCombo.getValue())) return true;
             if (lossFunctionCombo != null && !"Cross Entropy + Dice".equals(lossFunctionCombo.getValue())) return true;
             if (earlyStoppingPatienceSpinner != null && earlyStoppingPatienceSpinner.getValue() != 15) return true;
-            if (earlyStoppingMetricCombo != null && "Disabled".equals(earlyStoppingMetricCombo.getValue())) return true;
+            if (earlyStoppingEnabledCheck != null && !earlyStoppingEnabledCheck.isSelected()) return true;
             if (mixedPrecisionCheck != null && !mixedPrecisionCheck.isSelected()) return true;
             if (gradientAccumulationSpinner != null && gradientAccumulationSpinner.getValue() != 1) return true;
             if (progressiveResizeCheck != null && progressiveResizeCheck.isSelected()) return true;
@@ -5713,8 +5974,9 @@ public class TrainingDialog {
 
             // Check weight init: CONTINUE_TRAINING requires a loaded model
             ClassifierHandler.WeightInitStrategy weightStrategy = getSelectedWeightInitStrategy();
-            if (weightStrategy == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING
-                    && (pretrainedModelPtPath == null || pretrainedModelPtPath.isEmpty())) {
+            boolean continueMissingModel = weightStrategy == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING
+                    && (pretrainedModelPtPath == null || pretrainedModelPtPath.isEmpty());
+            if (continueMissingModel) {
                 validationErrors.put(
                         "weightInit",
                         "Continue training requires a model -- click 'Select model...' or 'Load checkpoint...'");
@@ -5725,6 +5987,10 @@ public class TrainingDialog {
                         "weightInit", "MAE encoder requires a .pt file -- click 'Browse...' to select one");
             } else {
                 validationErrors.remove("weightInit");
+            }
+            if (continueRequiresModelLabel != null) {
+                continueRequiresModelLabel.setVisible(continueMissingModel);
+                continueRequiresModelLabel.setManaged(continueMissingModel);
             }
 
             updateErrorSummary();
@@ -5905,8 +6171,7 @@ public class TrainingDialog {
             // Save training strategy preferences
             DLClassifierPreferences.setDefaultScheduler(mapSchedulerFromDisplay(schedulerCombo.getValue()));
             DLClassifierPreferences.setDefaultLossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()));
-            DLClassifierPreferences.setDefaultEarlyStoppingMetric(
-                    mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()));
+            DLClassifierPreferences.setDefaultEarlyStoppingMetric(currentEarlyStoppingMetricValue());
             DLClassifierPreferences.setDefaultEarlyStoppingPatience(earlyStoppingPatienceSpinner.getValue());
             DLClassifierPreferences.setDefaultMixedPrecision(mixedPrecisionCheck.isSelected());
             DLClassifierPreferences.setDefaultGradientAccumulation(gradientAccumulationSpinner.getValue());
