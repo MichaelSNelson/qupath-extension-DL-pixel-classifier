@@ -742,6 +742,14 @@ public class TrainingAreaIssuesDialog {
             return;
         }
 
+        // Pre-save the current image's hierarchy so QuPath's "Save changes?"
+        // dialog never appears mid-switch. That dialog uses showAndWait(),
+        // which spins a nested FX event loop -- our fallback PauseTransition
+        // keeps ticking, fires while the OLD image is still loaded, and
+        // centers on the wrong slide. By eliminating the dialog, the image
+        // switch is non-interactive and the listener fires cleanly.
+        autoSaveCurrentImage(qupath);
+
         var imageDataProp = viewer.imageDataProperty();
         java.util.concurrent.atomic.AtomicReference<
                         ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>>>
@@ -781,20 +789,61 @@ public class TrainingAreaIssuesDialog {
             return;
         }
 
-        // Two-second fallback: if the install never fires (failed open, no
-        // viewer event), still center using whatever is loaded so the click
-        // does something rather than appearing to be a no-op.
+        // Defense-in-depth fallback (15s). If auto-save fails and QuPath still
+        // shows the save dialog, this gives the user time to handle it. We
+        // only center if the target image is actually loaded -- otherwise we
+        // would center on the wrong slide.
         javafx.animation.PauseTransition fallback =
-                new javafx.animation.PauseTransition(javafx.util.Duration.seconds(2));
+                new javafx.animation.PauseTransition(javafx.util.Duration.seconds(15));
         fallback.setOnFinished(e -> {
             var current = listenerRef.getAndSet(null);
-            if (current != null) {
-                imageDataProp.removeListener(current);
-                logger.debug("Image-switch wait timed out; centering with whatever is loaded");
+            if (current == null) return; // listener already fired; nothing to do
+            imageDataProp.removeListener(current);
+
+            var loaded = viewer.getImageData();
+            String loadedName = loaded != null
+                            && loaded.getServer() != null
+                            && loaded.getServer().getMetadata() != null
+                    ? loaded.getServer().getMetadata().getName()
+                    : null;
+            if (targetImageName != null && targetImageName.equals(loadedName)) {
+                logger.debug("Image-switch listener didn't fire but target is loaded; centering");
                 centerViewerOnTile(qupath, row);
+            } else {
+                logger.warn(
+                        "Image-switch wait timed out; target='{}' did not load (loaded='{}'). "
+                                + "If a save-changes dialog appeared, click the row again after handling it.",
+                        targetImageName,
+                        loadedName);
             }
         });
         fallback.play();
+    }
+
+    /**
+     * Saves the currently-loaded image's hierarchy to its project entry, if
+     * it has unsaved changes. Same pattern as {@code TrainingWorkflow.checkUnsavedChanges()}.
+     * Failure is logged but not fatal -- the caller proceeds either way.
+     */
+    private void autoSaveCurrentImage(QuPathGUI qupath) {
+        var currentImageData = qupath.getImageData();
+        if (currentImageData == null || !currentImageData.isChanged()) {
+            return;
+        }
+        var project = qupath.getProject();
+        if (project == null) {
+            return;
+        }
+        var currentEntry = project.getEntry(currentImageData);
+        if (currentEntry == null) {
+            return;
+        }
+        try {
+            currentEntry.saveImageData(currentImageData);
+            logger.debug("Auto-saved image '{}' before navigating to a different image", currentEntry.getImageName());
+        } catch (Exception e) {
+            logger.warn("Could not auto-save current image before switching: {}", e.getMessage());
+        }
     }
 
     private void centerViewerOnTile(QuPathGUI qupath, TileRow row) {
